@@ -7,24 +7,30 @@ SUPABASE_PUBLISHABLE_KEY=sb_publishable_lXsFGKaDGVkLDCBMC2Ul1g_oggGf4Ln
 Secret received but must never be committed:
 SUPABASE_SERVICE_ROLE_KEY=use env only
 
-Current DB status:
-- public.organizations does not exist yet.
-- Run schema.sql first in Supabase SQL Editor.
-
 Files:
 - schema.sql: tables, enums, RLS policies
 - seed.sql: Solgläntan test school data
+- 002_invites.sql: invitation codes and accept_invitation() flow
+- seed-invites.sql: demo invite codes for org/staff/parent
 - seed-auth.mjs: creates auth users and links them to public.profiles
 
-Setup order:
+Setup order for a new empty database:
 1. Supabase Dashboard -> SQL Editor -> New query.
 2. Paste and run all of schema.sql.
 3. Paste and run all of seed.sql.
-4. Run seed-auth.mjs locally with env:
+4. Paste and run all of 002_invites.sql.
+5. Paste and run all of seed-invites.sql.
+6. Run seed-auth.mjs locally with env:
 
    SUPABASE_URL=https://esorbueghucqgyxzohrk.supabase.co \
    SUPABASE_SERVICE_ROLE_KEY=<secret> \
    node supabase/seed-auth.mjs
+
+Current project status:
+- schema.sql has been run.
+- seed.sql has been run.
+- auth test users have been created and linked.
+- 002_invites.sql and seed-invites.sql still need to be run if invite codes are needed.
 
 Recommended first test accounts:
 - sam@arthur.test / Arthur123! / parent
@@ -32,6 +38,12 @@ Recommended first test accounts:
 - jon@arthur.test / Arthur123! / staff
 - maja@arthur.test / Arthur123! / staff
 - admin@arthur.test / Arthur123! / admin
+
+Demo invite codes after seed-invites.sql:
+- ORG-SOLGLANTAN -> admin/organization
+- TEACHER-EKEN -> staff for Eken
+- PARENT-ELSA -> parent for Elsa
+- PARENT-LOVE -> parent for Love
 
 Next after setup:
 1. Add login UI.
