@@ -1,20 +1,30 @@
 Arthur Supabase pilot setup
 
-Already configured:
+Configured:
 SUPABASE_URL=https://esorbueghucqgyxzohrk.supabase.co
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_lXsFGKaDGVkLDCBMC2Ul1g_oggGf4Ln
 
-Still needed from Supabase Project Settings -> API:
-SUPABASE_SERVICE_ROLE_KEY=<secret service_role key>
+Secret received but must never be committed:
+SUPABASE_SERVICE_ROLE_KEY=use env only
 
-Why it is needed:
-- create auth test users
-- link auth.users to public.profiles
-- run admin seed safely
+Current DB status:
+- public.organizations does not exist yet.
+- Run schema.sql first in Supabase SQL Editor.
 
 Files:
 - schema.sql: tables, enums, RLS policies
 - seed.sql: Solgläntan test school data
+- seed-auth.mjs: creates auth users and links them to public.profiles
+
+Setup order:
+1. Supabase Dashboard -> SQL Editor -> New query.
+2. Paste and run all of schema.sql.
+3. Paste and run all of seed.sql.
+4. Run seed-auth.mjs locally with env:
+
+   SUPABASE_URL=https://esorbueghucqgyxzohrk.supabase.co \
+   SUPABASE_SERVICE_ROLE_KEY=<secret> \
+   node supabase/seed-auth.mjs
 
 Recommended first test accounts:
 - sam@arthur.test / Arthur123! / parent
@@ -23,9 +33,9 @@ Recommended first test accounts:
 - maja@arthur.test / Arthur123! / staff
 - admin@arthur.test / Arthur123! / admin
 
-Next step after service role key:
-1. Apply schema.sql.
-2. Create auth users.
-3. Link auth user IDs to profiles.
-4. Apply seed.sql.
-5. Add login UI and connect reads/writes.
+Next after setup:
+1. Add login UI.
+2. Load profile from Supabase.
+3. Replace static child/hylla/attendance reads with Supabase queries.
+4. Add writes for absence, shelf, posts, playdates.
+5. Add calendar ICS endpoint.
