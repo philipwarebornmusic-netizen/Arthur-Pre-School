@@ -4,6 +4,10 @@ const ownerTypes = {
   kooperativ: { label: "Kooperativ", org: "Eken föräldrakooperativ", unit: "Eken", needs: ["Styrelseroll", "Jourlistor", "Dokument", "Vårdnadshavare + personal"] },
 };
 
+const SUPABASE_URL = "https://esorbueghucqgyxzohrk.supabase.co";
+const SUPABASE_KEY = "sb_publishable_lXsFGKaDGVkLDCBMC2Ul1g_oggGf4Ln";
+
+
 const children = [
   {
     id: "elsa",
@@ -74,6 +78,12 @@ const pickers = ["Du", "Sam", "Morfar", "Farmor"];
 const playdateChildren = ["Noa", "Signe", "Otto"];
 
 const state = {
+  session: JSON.parse(localStorage.getItem("arthur.session") || "null"),
+  profile: null,
+  authMode: "login",
+  authError: "",
+  loading: false,
+  usingSupabase: false,
   mode: "parent",
   ownerType: "kommun",
   screen: "home",
@@ -86,7 +96,7 @@ const state = {
   pickupBy: { elsa: "Du", love: "Sam" },
   playdateOptIn: false,
   playdateRequests: [],
-  completedTasks: {},
+  completedTasks: JSON.parse(localStorage.getItem("arthur.completedTasks") || "{}"),
   notes: [
     { id: "close", target: "all", important: true, title: "Stängning imorgon", body: "Björkbacken stänger klockan 15. Personalutbildning.", from: "Förskolan" },
   ],
@@ -150,6 +160,178 @@ const state = {
 const screen = document.querySelector("#screen");
 const nav = document.querySelector("#bottomNav");
 const modeButton = document.querySelector('[data-action="open-mode"]');
+
+function authHeaders() {
+  return {
+    apikey: SUPABASE_KEY,
+    Authorization: `Bearer ${state.session?.access_token || SUPABASE_KEY}`,
+    "Content-Type": "application/json",
+  };
+}
+
+async function supabaseFetch(path, options = {}) {
+  const res = await fetch(`${SUPABASE_URL}${path}`, {
+    ...options,
+    headers: { ...authHeaders(), ...(options.headers || {}) },
+  });
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!res.ok) throw new Error(body?.message || body?.error_description || body?.hint || text || "Supabase-fel");
+  return body;
+}
+
+async function login(email, password) {
+  const body = await supabaseFetch("/auth/v1/token?grant_type=password", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  state.session = body;
+  localStorage.setItem("arthur.session", JSON.stringify(body));
+  await loadPilotData();
+}
+
+async function register(email, password, name) {
+  const body = await supabaseFetch("/auth/v1/signup", {
+    method: "POST",
+    body: JSON.stringify({ email, password, data: { name } }),
+  });
+  if (body.access_token) {
+    state.session = body;
+    localStorage.setItem("arthur.session", JSON.stringify(body));
+  }
+  state.authMode = "invite";
+  state.authError = "Konto skapat. Ange inbjudningskod för att koppla rätt barn eller skola.";
+}
+
+async function logout() {
+  localStorage.removeItem("arthur.session");
+  state.session = null;
+  state.profile = null;
+  state.usingSupabase = false;
+}
+
+async function acceptInvite(code) {
+  await supabaseFetch("/rest/v1/rpc/accept_invitation", {
+    method: "POST",
+    body: JSON.stringify({ invite_code: code.trim().toUpperCase() }),
+  });
+  await loadPilotData();
+}
+
+function dbStatus(row) {
+  if (!row) return "Inne";
+  if (row.status === "absent_sick") return "Sjuk";
+  if (row.status === "absent_leave") return "Ledig";
+  if (row.status === "picked_up") return "Hämtad";
+  return "Inne";
+}
+
+function shelfStatus(status) {
+  if (status === "missing") return "Saknas";
+  if (status === "low") return "Lågt";
+  return "Finns";
+}
+
+async function loadPilotData() {
+  if (!state.session?.access_token) return;
+  state.loading = true;
+  state.authError = "";
+  try {
+    const profiles = await supabaseFetch("/rest/v1/profiles?select=id,email,name,role&limit=1");
+    state.profile = profiles[0] || null;
+    if (!state.profile) {
+      state.authMode = "invite";
+      state.authError = "Konto saknar profil. Ange inbjudningskod.";
+      return;
+    }
+    state.mode = state.profile.role === "staff" ? "staff" : state.profile.role === "admin" ? "admin" : "parent";
+    const dbChildren = await supabaseFetch("/rest/v1/children?select=id,name,birth_year,avatar_color,departments(name),child_health(*),child_contacts(*),consents(*),attendance(*),shelf_items(*)");
+    children.splice(0, children.length, ...dbChildren.map(row => {
+      const health = row.child_health || {};
+      const contacts = row.child_contacts || [];
+      const consentRows = row.consents || [];
+      const attendance = (row.attendance || [])[0];
+      return {
+        id: row.id,
+        name: row.name,
+        dept: row.departments?.name || "Avdelning",
+        age: row.birth_year ? `${new Date().getFullYear() - row.birth_year} år` : "",
+        pickup: attendance?.pickup_at?.slice(0, 5) || "16:00",
+        dropoff: attendance?.dropoff_at?.slice(0, 5) || "08:00",
+        avatar: row.name.slice(0, 1),
+        avatarColor: row.avatar_color || "#F7B733",
+        photoUploaded: true,
+        guardians: contacts.filter(c => c.relation === "Vårdnadshavare").map(c => ({ name: c.name, relation: c.relation, phone: c.phone || "", primary: c.is_primary, pickup: c.can_pickup })),
+        relatives: contacts.filter(c => c.relation !== "Vårdnadshavare").map(c => ({ name: c.name, relation: c.relation, phone: c.phone || "", primary: c.is_primary, pickup: c.can_pickup })),
+        consent: {
+          appBlog: !!consentRows.find(c => c.type === "app_images")?.allowed,
+          groupPhoto: !!consentRows.find(c => c.type === "group_images")?.allowed,
+          socialMedia: !!consentRows.find(c => c.type === "social_media")?.allowed,
+        },
+        critical: {
+          allergies: health.allergies || [],
+          diet: health.diet || "",
+          conditions: health.conditions || [],
+          medication: health.medication || "Ingen medicin registrerad.",
+          emergency: health.emergency || "",
+          updated: "Från Supabase",
+        },
+      };
+    }));
+    if (!children.find(c => c.id === state.childId)) state.childId = children[0]?.id || state.childId;
+    floor.splice(0, floor.length, ...children.map(c => ({ id: c.id, name: c.name, dept: c.dept })));
+    state.absence = {};
+    state.pickedUp = {};
+    dbChildren.forEach(row => {
+      const a = (row.attendance || [])[0];
+      if (!a) return;
+      if (a.status === "absent_sick") state.absence[row.id] = "sjuk";
+      if (a.status === "absent_leave") state.absence[row.id] = "ledig";
+      if (a.status === "picked_up") state.pickedUp[row.id] = true;
+      if (a.pickup_by) state.pickupBy[row.id] = a.pickup_by;
+    });
+    state.boxItems = dbChildren.flatMap(row => (row.shelf_items || []).map(item => ({
+      id: item.id,
+      childId: row.id,
+      title: item.title,
+      status: shelfStatus(item.status),
+      note: item.note || "",
+    })));
+    state.usingSupabase = true;
+  } catch (error) {
+    state.authError = error.message;
+  } finally {
+    state.loading = false;
+  }
+}
+
+async function writeAttendance(childId, statusValue) {
+  await supabaseFetch("/rest/v1/attendance?on_conflict=child_id,date", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([{ child_id: childId, date: new Date().toISOString().slice(0, 10), status: statusValue }]),
+  });
+  await loadPilotData();
+}
+
+function renderAuth() {
+  const invite = state.authMode === "invite";
+  return `<section class="hero-card auth-card">${arthurMascot(invite ? "read" : "wave")}<p class="kicker">Arthur pilot</p><h1 class="h1">${invite ? "Inbjudan" : state.authMode === "register" ? "Skapa konto" : "Logga in"}</h1><p class="sub">${invite ? "Ange kod från förskolan för att kopplas till rätt barn, avdelning eller organisation." : "Testa med Sam, Jon, Maja eller Admin."}</p></section>
+  <article class="card auth-form">
+    ${!invite ? `<label>E-post<input id="authEmail" autocomplete="email" value="${state.authMode === "login" ? "sam@arthur.test" : ""}"></label><label>Lösenord<input id="authPassword" type="password" autocomplete="current-password" value="${state.authMode === "login" ? "Arthur123!" : ""}"></label>` : ""}
+    ${state.authMode === "register" ? `<label>Namn<input id="authName" autocomplete="name" placeholder="Ditt namn"></label>` : ""}
+    ${invite ? `<label>Inbjudningskod<input id="inviteCode" placeholder="PARENT-ELSA"></label>` : ""}
+    ${state.authError ? `<p class="status bad">${esc(state.authError)}</p>` : ""}
+    <div class="actions">
+      ${invite ? `<button class="primary" data-action="accept-invite">Koppla konto</button>` : `<button class="primary" data-action="${state.authMode === "register" ? "register" : "login"}">${state.authMode === "register" ? "Skapa konto" : "Logga in"}</button>`}
+    </div>
+    <div class="auth-switch">
+      <button data-action="auth-mode" data-mode="login">Logga in</button>
+      <button data-action="auth-mode" data-mode="register">Skapa konto</button>
+      <button data-action="auth-mode" data-mode="invite">Ange kod</button>
+    </div>
+  </article>`;
+}
 
 function esc(v) { return String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function child() { return children.find(c => c.id === state.childId); }
@@ -352,7 +534,7 @@ function renderBox() {
   const items = state.boxItems.filter(item => item.childId === c.id);
   const needs = items.filter(item => item.status !== "Finns");
   const notice = needs.length ? `${c.name}s hylla behöver fyllas på – ta med ${needs.map(item => item.title.replace(/^Saknar\s+/i, "").replace(/ börjar ta slut$/i, "").toLowerCase()).join(", ")}.` : `${c.name}s hylla är komplett.`;
-  return `${childTabs()}<section class="hero-card shelf-hero"><div><p class="kicker">Hylla</p><h1 class="h1">${esc(c.name)}s hylla</h1><p class="sub">Barnets plats på förskolan – oavsett om det är låda, korg, fack eller krok.</p></div>${arthurMascot("walk")}</section>${arthurCoach("Jag håller koll på hyllan", notice, "wave")}<ul class="rows">${items.map(item => `<li><span><strong>${esc(item.title)}</strong><br><small>${esc(item.note)}</small></span><span class="status ${item.status === "Saknas" || item.status === "Lågt" ? "bad" : "good"}">${item.status === "Finns" ? "✓" : esc(item.status)}</span></li>`).join("")}</ul><div class="actions"><button class="primary" data-action="toast" data-message="Personalen ser att du har läst hyllan.">Jag har koll</button></div>`;
+  return `${childTabs()}<section class="hero-card shelf-hero"><div><p class="kicker">Hylla</p><h1 class="h1">${esc(c.name)}s hylla</h1><p class="sub">Barnets plats på förskolan – oavsett om det är låda, korg, fack eller krok.</p></div>${arthurMascot("walk")}</section>${arthurCoach("Jag håller koll på hyllan", notice, "wave")}<ul class="rows">${items.map(item => `<li><span><strong>${esc(item.title)}</strong><br><small>${esc(item.note)}</small></span><span class="status ${item.status === "Saknas" || item.status === "Lågt" ? "bad" : "good"}">${item.status === "Finns" ? "✓" : esc(item.status)}</span></li>`).join("")}</ul><div class="actions"><button class="primary" data-action="complete-task" data-id="shelf-${esc(c.id)}">Jag har koll</button></div>`;
 }
 
 function renderGallery() {
@@ -466,9 +648,14 @@ function renderChoiceModal() {
   return `<div class="modal-backdrop"><section class="modal"><h2>${esc(c.name)} är ${word} idag</h2><p class="sub">Hämtningen tas bort och personalen ser det direkt.</p><div class="actions"><button class="danger" data-action="confirm-absence">Bekräfta</button><button class="secondary" data-action="close-modal">Avbryt</button></div></section></div>`;
 }
 function renderModeButton() {
+  if (!state.session) {
+    modeButton.innerHTML = `<span>🔐</span><strong>Logga in</strong><small>Pilot</small>`;
+    modeButton.setAttribute("aria-label", "Arthur pilot login");
+    return;
+  }
   const labels = { parent: "Förälder", staff: "Personal", admin: "Huvudman" };
   const icons = { parent: "🏠", staff: "✓", admin: "⚙" };
-  modeButton.innerHTML = `<span>${icons[state.mode]}</span><strong>${labels[state.mode]}</strong><small>Läge</small>`;
+  modeButton.innerHTML = `<span>${icons[state.mode]}</span><strong>${labels[state.mode]}</strong><small>${state.profile?.name || "Läge"}</small>`;
   modeButton.setAttribute("aria-label", `Byt läge. Nu valt: ${labels[state.mode]}`);
 }
 
@@ -480,6 +667,13 @@ function renderBottomNav() {
 }
 function render() {
   let html = "";
+  if (!state.session) {
+    html = renderAuth();
+    nav.innerHTML = `<button data-action="auth-mode" data-mode="login" aria-current="${state.authMode === "login" ? "page" : "false"}"><span class="ico">🔐</span>Logga in</button><button data-action="auth-mode" data-mode="register" aria-current="${state.authMode === "register" ? "page" : "false"}"><span class="ico">＋</span>Skapa</button><button data-action="auth-mode" data-mode="invite" aria-current="${state.authMode === "invite" ? "page" : "false"}"><span class="ico">✉</span>Kod</button><button data-action="toast" data-message="Testa sam@arthur.test eller jon@arthur.test."><span class="ico">?</span>Hjälp</button>`;
+    screen.innerHTML = html + renderChoiceModal();
+    renderModeButton();
+    return;
+  }
   if (state.mode === "staff") html = renderStaff();
   else if (state.mode === "admin") html = renderAdmin();
   else if (state.screen === "child") html = renderParentBarn();
@@ -504,57 +698,85 @@ function render() {
   else if (state.screen === "notes") html = renderPlaceholder("Anteckningar", "Barnets interna och delade notiser.");
   else if (state.screen === "settings") html = renderPlaceholder("Inställningar", "Språk, notiser och huvudman.");
   else html = renderParentHome();
-  screen.innerHTML = html + renderModeModal() + renderChoiceModal();
+  const pilotBar = `<article class="pilot-bar"><span>${state.usingSupabase ? "Supabase live" : "Demo"}</span><strong>${esc(state.profile?.name || state.profile?.email || "")}</strong><button data-action="logout">Logga ut</button></article>`;
+  screen.innerHTML = pilotBar + html + renderModeModal() + renderChoiceModal();
   renderModeButton();
   renderBottomNav();
 }
 
-document.body.addEventListener("click", event => {
+document.body.addEventListener("click", async event => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
-  if (action === "go") state.screen = target.dataset.screen;
-  else if (action === "child") state.childId = target.dataset.id;
-  else if (action === "open-mode") state.modal = "mode";
-  else if (action === "close-modal") state.modal = null;
-  else if (action === "mode") { state.mode = target.dataset.mode; state.modal = null; }
-  else if (action === "staff-nav") state.staffScreen = target.dataset.screen;
-  else if (action === "owner") state.ownerType = target.dataset.id;
-  else if (action === "pickup") state.modal = "pickup";
-  else if (action === "set-pickup") { state.pickupBy[state.childId] = target.dataset.name; state.modal = null; }
-  else if (action === "absence") { state.modal = "absence"; state.modalKind = target.dataset.kind; }
-  else if (action === "confirm-absence") { state.absence[state.childId] = state.modalKind; state.modal = null; }
-  else if (action === "undo-absence") delete state.absence[state.childId];
-  else if (action === "toggle-picked") { const id = target.dataset.id; if (!state.absence[id]) state.pickedUp[id] = !state.pickedUp[id]; }
-  else if (action === "publish") { const textarea = document.querySelector("#staffMessage"); const body = textarea?.value.trim(); if (body) { state.notes.unshift({ id: Date.now(), target: "eken", important: false, title: "Eken", body, from: "Jon" }); textarea.value = ""; } }
-  else if (action === "toggle-playdate") state.playdateOptIn = !state.playdateOptIn;
-  else if (action === "claim-lost") {
-    const item = state.lostItems.find(found => found.id === target.dataset.id);
-    if (item) item.claimed = true;
+  try {
+    if (action === "auth-mode") state.authMode = target.dataset.mode;
+    else if (action === "login") await login(document.querySelector("#authEmail")?.value.trim(), document.querySelector("#authPassword")?.value);
+    else if (action === "register") await register(document.querySelector("#authEmail")?.value.trim(), document.querySelector("#authPassword")?.value, document.querySelector("#authName")?.value.trim());
+    else if (action === "accept-invite") await acceptInvite(document.querySelector("#inviteCode")?.value || "");
+    else if (action === "logout") await logout();
+    else if (action === "go") state.screen = target.dataset.screen;
+    else if (action === "child") state.childId = target.dataset.id;
+    else if (action === "open-mode") state.modal = "mode";
+    else if (action === "close-modal") state.modal = null;
+    else if (action === "mode") { state.mode = target.dataset.mode; state.modal = null; }
+    else if (action === "staff-nav") state.staffScreen = target.dataset.screen;
+    else if (action === "owner") state.ownerType = target.dataset.id;
+    else if (action === "pickup") state.modal = "pickup";
+    else if (action === "set-pickup") { state.pickupBy[state.childId] = target.dataset.name; state.modal = null; }
+    else if (action === "absence") { state.modal = "absence"; state.modalKind = target.dataset.kind; }
+    else if (action === "confirm-absence") {
+      state.absence[state.childId] = state.modalKind;
+      const wanted = state.modalKind === "sjuk" ? "absent_sick" : "absent_leave";
+      state.modal = null;
+      if (state.usingSupabase) await writeAttendance(state.childId, wanted);
+    }
+    else if (action === "undo-absence") {
+      delete state.absence[state.childId];
+      if (state.usingSupabase) await writeAttendance(state.childId, "in");
+    }
+    else if (action === "toggle-picked") {
+      const id = target.dataset.id;
+      if (!state.absence[id]) {
+        state.pickedUp[id] = !state.pickedUp[id];
+        if (state.usingSupabase) await writeAttendance(id, state.pickedUp[id] ? "picked_up" : "in");
+      }
+    }
+    else if (action === "publish") { const textarea = document.querySelector("#staffMessage"); const body = textarea?.value.trim(); if (body) { state.notes.unshift({ id: Date.now(), target: "eken", important: false, title: "Eken", body, from: "Jon" }); textarea.value = ""; } }
+    else if (action === "toggle-playdate") state.playdateOptIn = !state.playdateOptIn;
+    else if (action === "claim-lost") {
+      const item = state.lostItems.find(found => found.id === target.dataset.id);
+      if (item) item.claimed = true;
+      state.modal = "toast";
+      state.modalMessage = "Markerat som ert. Personalen ser det.";
+    }
+    else if (action === "complete-task") {
+      state.completedTasks[target.dataset.id] = true;
+      localStorage.setItem("arthur.completedTasks", JSON.stringify(state.completedTasks));
+      state.modal = "toast";
+      state.modalMessage = "Klart. Arthur bockar av det.";
+    }
+    else if (action === "request-playdate") state.playdateRequests.unshift({ child: target.dataset.child, when: "Idag" });
+    else if (action === "sign-docs") { state.documents = state.documents.map(d => d.status === "Att signera" ? { ...d, status: "Signerad", important: false } : d); state.modal = "toast"; state.modalMessage = "Dokument signerade."; }
+    else if (action === "toast") { state.modal = "toast"; state.modalMessage = target.dataset.message; }
+    else if (action === "open-health") state.modal = "health";
+    else if (action === "toggle-consent") {
+      const c = child();
+      c.consent[target.dataset.consent] = !c.consent[target.dataset.consent];
+    }
+    else if (action === "change-photo") {
+      const c = child();
+      c.photoUploaded = true;
+      c.avatar = c.name.slice(0, 1);
+      state.modal = "toast";
+      state.modalMessage = "Profilbild uppdaterad i prototypen.";
+    }
+  } catch (error) {
+    state.authError = error.message;
     state.modal = "toast";
-    state.modalMessage = "Markerat som ert. Personalen ser det.";
-  }
-  else if (action === "complete-task") {
-    state.completedTasks[target.dataset.id] = true;
-    state.modal = "toast";
-    state.modalMessage = "Klart. Arthur bockar av det.";
-  }
-  else if (action === "request-playdate") state.playdateRequests.unshift({ child: target.dataset.child, when: "Idag" });
-  else if (action === "sign-docs") { state.documents = state.documents.map(d => d.status === "Att signera" ? { ...d, status: "Signerad", important: false } : d); state.modal = "toast"; state.modalMessage = "Dokument signerade."; }
-  else if (action === "toast") { state.modal = "toast"; state.modalMessage = target.dataset.message; }
-  else if (action === "open-health") state.modal = "health";
-  else if (action === "toggle-consent") {
-    const c = child();
-    c.consent[target.dataset.consent] = !c.consent[target.dataset.consent];
-  }
-  else if (action === "change-photo") {
-    const c = child();
-    c.photoUploaded = true;
-    c.avatar = c.name.slice(0, 1);
-    state.modal = "toast";
-    state.modalMessage = "Profilbild uppdaterad i prototypen.";
+    state.modalMessage = error.message;
   }
   render();
 });
 
-render();
+if (state.session) loadPilotData().finally(render);
+else render();
