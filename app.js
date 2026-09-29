@@ -316,9 +316,9 @@ async function writeAttendance(childId, statusValue) {
 
 function renderAuth() {
   const invite = state.authMode === "invite";
-  return `<section class="hero-card auth-card">${arthurMascot(invite ? "read" : "wave")}<p class="kicker">Arthur pilot</p><h1 class="h1">${invite ? "Inbjudan" : state.authMode === "register" ? "Skapa konto" : "Logga in"}</h1><p class="sub">${invite ? "Ange kod från förskolan för att kopplas till rätt barn, avdelning eller organisation." : "Förälder: philip@arthur.test. Lärare: larare@arthur.test. Lösenord: Arthur 123!"}</p></section>
+  return `<section class="hero-card auth-card">${arthurMascot(invite ? "read" : "wave")}<p class="kicker">Arthur pilot</p><h1 class="h1">${invite ? "Inbjudan" : state.authMode === "register" ? "Skapa konto" : "Logga in"}</h1><p class="sub">${invite ? "Ange kod från förskolan för att kopplas till rätt barn, avdelning eller organisation." : "Logga in med uppgifterna du fått av Arthur-teamet."}</p></section>
   <article class="card auth-form">
-    ${!invite ? `<label>E-post<input id="authEmail" autocomplete="email" value="${state.authMode === "login" ? "philip@arthur.test" : ""}"></label><label>Lösenord<input id="authPassword" type="password" autocomplete="current-password" value="${state.authMode === "login" ? "Arthur 123!" : ""}"></label>` : ""}
+    ${!invite ? `<label>E-post<input id="authEmail" autocomplete="email" placeholder="namn@arthur.test"></label><label>Lösenord<input id="authPassword" type="password" autocomplete="current-password" placeholder="Lösenord"></label>` : ""}
     ${state.authMode === "register" ? `<label>Namn<input id="authName" autocomplete="name" placeholder="Ditt namn"></label>` : ""}
     ${invite ? `<label>Inbjudningskod<input id="inviteCode" placeholder="PARENT-ELSA"></label>` : ""}
     ${state.authError ? `<p class="status bad">${esc(state.authError)}</p>` : ""}
@@ -669,7 +669,7 @@ function render() {
   let html = "";
   if (!state.session) {
     html = renderAuth();
-    nav.innerHTML = `<button data-action="auth-mode" data-mode="login" aria-current="${state.authMode === "login" ? "page" : "false"}"><span class="ico">🔐</span>Logga in</button><button data-action="auth-mode" data-mode="register" aria-current="${state.authMode === "register" ? "page" : "false"}"><span class="ico">＋</span>Skapa</button><button data-action="auth-mode" data-mode="invite" aria-current="${state.authMode === "invite" ? "page" : "false"}"><span class="ico">✉</span>Kod</button><button data-action="toast" data-message="Förälder: philip@arthur.test. Lärare: larare@arthur.test. Lösenord: Arthur 123!"><span class="ico">?</span>Hjälp</button>`;
+    nav.innerHTML = `<button data-action="auth-mode" data-mode="login" aria-current="${state.authMode === "login" ? "page" : "false"}"><span class="ico">🔐</span>Logga in</button><button data-action="auth-mode" data-mode="register" aria-current="${state.authMode === "register" ? "page" : "false"}"><span class="ico">＋</span>Skapa</button><button data-action="auth-mode" data-mode="invite" aria-current="${state.authMode === "invite" ? "page" : "false"}"><span class="ico">✉</span>Kod</button><button data-action="toast" data-message="Använd kontot du fått separat."><span class="ico">?</span>Hjälp</button>`;
     screen.innerHTML = html + renderChoiceModal();
     renderModeButton();
     return;
