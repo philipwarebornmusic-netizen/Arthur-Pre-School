@@ -1,0 +1,31 @@
+Arthur Supabase pilot setup
+
+Already configured:
+SUPABASE_URL=https://esorbueghucqgyxzohrk.supabase.co
+SUPABASE_PUBLISHABLE_KEY=sb_publishable_lXsFGKaDGVkLDCBMC2Ul1g_oggGf4Ln
+
+Still needed from Supabase Project Settings -> API:
+SUPABASE_SERVICE_ROLE_KEY=<secret service_role key>
+
+Why it is needed:
+- create auth test users
+- link auth.users to public.profiles
+- run admin seed safely
+
+Files:
+- schema.sql: tables, enums, RLS policies
+- seed.sql: Solgläntan test school data
+
+Recommended first test accounts:
+- sam@arthur.test / Arthur123! / parent
+- johanna@arthur.test / Arthur123! / parent
+- jon@arthur.test / Arthur123! / staff
+- maja@arthur.test / Arthur123! / staff
+- admin@arthur.test / Arthur123! / admin
+
+Next step after service role key:
+1. Apply schema.sql.
+2. Create auth users.
+3. Link auth user IDs to profiles.
+4. Apply seed.sql.
+5. Add login UI and connect reads/writes.

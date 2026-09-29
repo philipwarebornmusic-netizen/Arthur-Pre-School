@@ -1,0 +1,560 @@
+const ownerTypes = {
+  kommun: { label: "Kommun", org: "Solängen kommun", unit: "Björkbacken", needs: ["BankID/SSO", "Åtkomstlogg", "PUB-avtal", "Flera enheter"] },
+  privat: { label: "Privat", org: "Björkbacken AB", unit: "Björkbacken", needs: ["BankID", "Snabb onboarding", "Fakturaunderlag", "Flera roller"] },
+  kooperativ: { label: "Kooperativ", org: "Eken föräldrakooperativ", unit: "Eken", needs: ["Styrelseroll", "Jourlistor", "Dokument", "Vårdnadshavare + personal"] },
+};
+
+const children = [
+  {
+    id: "elsa",
+    name: "Elsa",
+    dept: "Eken",
+    age: "4 år",
+    pickup: "16:00",
+    dropoff: "08:00",
+    avatar: "E",
+    avatarColor: "#F7B733",
+    photoUploaded: true,
+    guardians: [
+      { name: "Sam Andersson", relation: "Vårdnadshavare", phone: "070-000 00 01", primary: true },
+      { name: "Johanna Talus", relation: "Vårdnadshavare", phone: "070-000 00 02", primary: false },
+    ],
+    relatives: [
+      { name: "Morfar Lars", relation: "Morfar", phone: "070-000 00 03", pickup: true },
+      { name: "Farmor Eva", relation: "Farmor", phone: "070-000 00 04", pickup: false },
+    ],
+    consent: {
+      appBlog: true,
+      socialMedia: false,
+      groupPhoto: true,
+    },
+    critical: {
+      allergies: ["Jordnötter", "Hasselnötter"],
+      diet: "Nötfri kost. Ingen mandelmjölk.",
+      conditions: ["Astma vid förkylning"],
+      medication: "Airomir vid behov. Förvaras i medicinskåp märkt Elsa.",
+      emergency: "Ring 112 vid nötreaktion. Kontakta Sam 070-000 00 01.",
+      updated: "Uppdaterad 18 sep av vårdnadshavare",
+    },
+  },
+  {
+    id: "love",
+    name: "Love",
+    dept: "Linden",
+    age: "2 år",
+    pickup: "15:30",
+    dropoff: "08:30",
+    avatar: "L",
+    avatarColor: "#8EC5E8",
+    photoUploaded: false,
+    guardians: [
+      { name: "Sam Andersson", relation: "Vårdnadshavare", phone: "070-000 00 01", primary: true },
+      { name: "Johanna Talus", relation: "Vårdnadshavare", phone: "070-000 00 02", primary: false },
+    ],
+    relatives: [
+      { name: "Mormor Karin", relation: "Mormor", phone: "070-000 00 05", pickup: true },
+    ],
+    consent: {
+      appBlog: false,
+      socialMedia: false,
+      groupPhoto: false,
+    },
+    critical: {
+      allergies: [],
+      diet: "Vegetarisk kost.",
+      conditions: [],
+      medication: "Ingen medicin registrerad.",
+      emergency: "Kontakta vårdnadshavare vid feber.",
+      updated: "Uppdaterad 4 sep av vårdnadshavare",
+    },
+  },
+];
+const floor = ["Elsa", "Noa", "Signe", "Otto", "Maj", "Vera", "Edvin", "Selma"].map((name, i) => ({ id: name.toLowerCase(), name, dept: i < 4 ? "Eken" : "Linden" }));
+const pickers = ["Du", "Sam", "Morfar", "Farmor"];
+const playdateChildren = ["Noa", "Signe", "Otto"];
+
+const state = {
+  mode: "parent",
+  ownerType: "kommun",
+  screen: "home",
+  childId: "elsa",
+  staffScreen: "attendance",
+  modal: null,
+  modalKind: null,
+  absence: {},
+  pickedUp: {},
+  pickupBy: { elsa: "Du", love: "Sam" },
+  playdateOptIn: false,
+  playdateRequests: [],
+  completedTasks: {},
+  notes: [
+    { id: "close", target: "all", important: true, title: "Stängning imorgon", body: "Björkbacken stänger klockan 15. Personalutbildning.", from: "Förskolan" },
+  ],
+  documents: [
+    { id: "photo", title: "Samtycke bildpublicering", status: "Att signera", important: true },
+    { id: "policy", title: "Rutiner vid sjukdom", status: "Läst", important: false },
+  ],
+  schedule: [
+    { day: "Mån", dropoff: "08:00", pickup: "16:00" },
+    { day: "Tis", dropoff: "08:00", pickup: "16:00" },
+    { day: "Ons", dropoff: "08:30", pickup: "15:30" },
+    { day: "Tor", dropoff: "08:00", pickup: "16:00", today: true },
+    { day: "Fre", dropoff: "Ledig", pickup: "" },
+  ],
+  moments: [
+    { childId: "elsa", dept: "Eken", title: "Kottar", body: "Elsa och Noa lade en bana av kottar.", time: "11:40", by: "Jon" },
+    { childId: "love", dept: "Linden", title: "Vatten", body: "Love hällde vatten i samma skål, om och om igen.", time: "10:15", by: "Maja" },
+  ],
+  meals: [
+    {
+      day: "Idag",
+      lunch: "Fiskgryta med potatis",
+      snack: "Yoghurt, banan och smörgås",
+      allergens: ["Fisk", "Mjölk"],
+      image: "🍲",
+      special: {
+        elsa: "Nötfri. Samma rätt.",
+        love: "Vegetarisk gryta med potatis.",
+      },
+    },
+    {
+      day: "Imorgon",
+      lunch: "Pasta med tomatsås och linser",
+      snack: "Frukt och knäckebröd",
+      allergens: ["Gluten"],
+      image: "🍝",
+      special: {
+        elsa: "Nötfri. Samma rätt.",
+        love: "Samma rätt.",
+      },
+    },
+  ],
+  lostItems: [
+    { id: "hat", title: "Blå mössa", where: "Eken hall", date: "Idag", claimed: false },
+    { id: "mitten", title: "Randig vante", where: "Torkskåpet", date: "Igår", claimed: false },
+  ],
+  boxItems: [
+    { id: "socks", childId: "elsa", title: "Saknar extra strumpor", status: "Saknas", note: "Lägg gärna ett par på hyllan." },
+    { id: "rain", childId: "elsa", title: "Regnkläder", status: "Finns", note: "Hänger på kroken." },
+    { id: "extra", childId: "elsa", title: "Extrakläder", status: "Finns", note: "Tröja och byxor finns." },
+    { id: "diapers", childId: "love", title: "Blöjor börjar ta slut", status: "Lågt", note: "3 kvar på hyllan." },
+    { id: "mittens", childId: "love", title: "Vantar", status: "Finns", note: "Ligger i korgen." },
+  ],
+  gallery: [
+    { id: "forest", childId: "elsa", dept: "Eken", emoji: "🌲", title: "Skogen", body: "Barnen letade efter småkryp och jämförde pinnar.", date: "Idag", visible: true },
+    { id: "paint", childId: "elsa", dept: "Eken", emoji: "🎨", title: "Målarbordet", body: "Färg, vatten och stora rörelser.", date: "Igår", visible: true },
+    { id: "song", childId: "love", dept: "Linden", emoji: "🎵", title: "Sångsamling", body: "Love ville höra Imse Vimse tre gånger.", date: "Igår", visible: false },
+  ],
+};
+
+const screen = document.querySelector("#screen");
+const nav = document.querySelector("#bottomNav");
+const modeButton = document.querySelector('[data-action="open-mode"]');
+
+function esc(v) { return String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function child() { return children.find(c => c.id === state.childId); }
+function cfg() { return ownerTypes[state.ownerType]; }
+function absent(id) { return state.absence[id]; }
+function status(id) { if (absent(id)) return absent(id) === "sjuk" ? "Sjuk" : "Ledig"; if (state.pickedUp[id]) return "Hämtad"; return "Inne"; }
+function today() { return "torsdag 24 september"; }
+function signedCount() { return state.documents.filter(d => d.status === "Att signera").length; }
+function criticalFor(id) { return children.find(c => c.id === id)?.critical; }
+function criticalCount(info) {
+  if (!info) return 0;
+  return (info.allergies?.length || 0) + (info.conditions?.length || 0) + (info.medication && !info.medication.startsWith("Ingen") ? 1 : 0) + (info.diet ? 1 : 0);
+}
+function criticalCard(c) {
+  const info = c.critical;
+  const count = criticalCount(info);
+  if (!count) return `<article class="safe-card"><strong>Ingen kritisk varning</strong><span>Specialkost eller medicin saknas.</span></article>`;
+  const allergies = info.allergies.length ? info.allergies.join(", ") : "Inga registrerade";
+  return `
+    <article class="critical-card">
+      <div>
+        <p class="kicker">Superviktig info</p>
+        <h2>${esc(count)} kritiska punkter</h2>
+        <p>Allergier: ${esc(allergies)}</p>
+      </div>
+      <button type="button" data-action="open-health">Öppna</button>
+    </article>`;
+}
+function avatar(c) {
+  return `<div class="avatar" style="--avatar:${esc(c.avatarColor)}">${esc(c.avatar)}</div>`;
+}
+function contactsBlock(title, items) {
+  return `<article class="card"><p class="kicker">${esc(title)}</p><ul class="contact-list">${items.map(item => `<li><div><strong>${esc(item.name)}</strong><span>${esc(item.relation)}${item.primary ? " · primär" : ""}${item.pickup ? " · får hämta" : ""}</span></div><a href="tel:${esc(item.phone.replaceAll(" ", ""))}">${esc(item.phone)}</a></li>`).join("")}</ul></article>`;
+}
+function consentText(value) { return value ? "OK" : "Inte OK"; }
+function consentClass(value) { return value ? "good" : "bad"; }
+function consentBlock(c) {
+  const items = [
+    ["appBlog", "Bild i Arthur-blogg", "Pedagoger får publicera bilder i appen."],
+    ["groupPhoto", "Gruppbild i appen", "Barnet får synas i gruppbild i appen."],
+    ["socialMedia", "Sociala medier", "Barnet får synas på extern kanal."],
+  ];
+  return `<article class="card"><p class="kicker">Samtycken</p><div class="consent-grid">${items.map(([key, title, desc]) => `<button type="button" data-action="toggle-consent" data-consent="${key}" class="consent ${consentClass(c.consent[key])}"><strong>${esc(title)}</strong><span>${esc(desc)}</span><b>${consentText(c.consent[key])}</b></button>`).join("")}</div></article>`;
+}
+function childTabs() { return `<div class="child-tabs">${children.map(c => `<button type="button" data-action="child" data-id="${c.id}" aria-pressed="${state.childId === c.id}">${esc(c.name)}<br><small>${esc(c.dept)}</small></button>`).join("")}</div>`; }
+
+function arthurMascot(variant = "wave") {
+  const backpack = variant === "walk";
+  const book = variant === "read";
+  return `<svg class="arthur-mascot ${esc(variant)}" viewBox="0 0 140 130" role="img" aria-label="Arthur-maskot">
+    <ellipse class="mascot-shadow" cx="72" cy="119" rx="38" ry="7"/>
+    ${backpack ? `<rect class="mascot-bag" x="26" y="59" width="28" height="38" rx="12"/><path class="mascot-strap" d="M49 63c12 11 12 30 1 39"/>` : ""}
+    <circle class="mascot-body" cx="71" cy="58" r="37"/>
+    <path class="mascot-leg" d="M54 91c-6 7-11 13-18 19"/>
+    <path class="mascot-leg" d="M82 93c7 3 14 7 23 14"/>
+    <path class="mascot-arm" d="M38 66c-10 4-16 10-20 18"/>
+    <path class="mascot-arm" d="${variant === "wave" ? "M101 61c12-6 19-14 23-25" : "M100 68c11 3 19 8 25 16"}"/>
+    <circle class="mascot-eye-white" cx="59" cy="49" r="11"/>
+    <circle class="mascot-eye-white" cx="83" cy="47" r="11"/>
+    <circle class="mascot-eye" cx="62" cy="50" r="6"/>
+    <circle class="mascot-eye" cx="86" cy="48" r="6"/>
+    <path class="mascot-smile" d="M65 70c5 4 11 4 16 0"/>
+    ${book ? `<path class="mascot-book left" d="M42 78c14-8 25-6 31 4v31c-8-9-18-11-31-5z"/><path class="mascot-book right" d="M73 82c8-10 20-12 34-4v30c-13-6-23-4-34 5z"/>` : ""}
+  </svg>`;
+}
+
+function arthurCoach(title, body, variant = "wave") {
+  return `<article class="coach-card">${arthurMascot(variant)}<div><p class="kicker">Arthur hjälper till</p><h3>${esc(title)}</h3><p>${esc(body)}</p></div></article>`;
+}
+
+function arthurTasks(c = child()) {
+  const tasks = [];
+  const shelfNeeds = state.boxItems.filter(item => item.childId === c.id && item.status !== "Finns");
+  const docs = signedCount();
+  if (shelfNeeds.length) tasks.push({
+    id: `shelf-${c.id}`,
+    screen: "box",
+    title: "Fyll på hyllan",
+    body: shelfNeeds.map(item => item.title.replace(/^Saknar\s+/i, "").replace(/ börjar ta slut$/i, "").toLowerCase()).join(", "),
+    action: "Öppna hyllan",
+  });
+  if (docs) tasks.push({
+    id: "docs",
+    screen: "documents",
+    title: "Signera dokument",
+    body: `${docs} dokument väntar på dig.`,
+    action: "Öppna dokument",
+  });
+  if (criticalCount(c.critical)) tasks.push({
+    id: `health-${c.id}`,
+    screen: "health",
+    title: "Kolla viktig info",
+    body: `${criticalCount(c.critical)} punkter om ${c.name}.`,
+    action: "Visa info",
+  });
+  return tasks.map(task => ({ ...task, done: !!state.completedTasks[task.id] }));
+}
+
+function arthurProgress(c = child()) {
+  const tasks = arthurTasks(c);
+  const done = tasks.filter(task => task.done).length;
+  return { tasks, done, total: tasks.length, percent: tasks.length ? Math.round((done / tasks.length) * 100) : 100 };
+}
+
+function renderArthurTasks(limit = 3) {
+  const { tasks, done, total, percent } = arthurProgress();
+  const visible = tasks.slice(0, limit);
+  return `<article class="task-card">
+    <div class="task-head">${arthurMascot(percent === 100 ? "wave" : "walk")}<div><p class="kicker">Arthur idag</p><h3>${total ? `${done}/${total} klart` : "Allt klart"}</h3><p>${total ? "Jag håller koll på dagens småsaker." : "Inget behöver göras just nu."}</p></div></div>
+    <div class="progress"><i style="width:${percent}%"></i></div>
+    ${visible.length ? `<div class="task-list">${visible.map(task => `<button class="task-row ${task.done ? "done" : ""}" data-action="${task.done ? "go" : "complete-task"}" data-screen="${esc(task.screen)}" data-id="${esc(task.id)}"><span>${task.done ? "✓" : "○"}</span><strong>${esc(task.title)}</strong><small>${esc(task.body)}</small></button>`).join("")}</div>` : `<div class="empty">Arthur ger tummen upp.</div>`}
+  </article>`;
+}
+
+
+
+function scheduleMini(c) {
+  return `<div class="timeline"><div><span>Lämnas</span><strong>${esc(c.dropoff)}</strong></div><i></i><div><span>Hämtas</span><strong>${esc(c.pickup)}</strong></div></div>`;
+}
+function renderDiary() {
+  const c = child();
+  const entries = state.moments.map(moment => {
+    const childForEntry = children.find(kid => kid.id === moment.childId);
+    const consentOk = childForEntry?.consent.appBlog;
+    return `<article class="diary-card ${consentOk ? "" : "blocked"}">
+      <div class="diary-photo">${consentOk ? "📷" : "🔒"}</div>
+      <p class="kicker">${esc(moment.dept)}</p>
+      <h3>${esc(moment.title)}</h3>
+      <p>${consentOk ? esc(moment.body) : "Bild och barnnamn döljs eftersom samtycke saknas."}</p>
+      <p class="meta">${esc(moment.time)} · ${esc(moment.by)}${consentOk ? "" : " · samtycke krävs"}</p>
+    </article>`;
+  }).join("");
+  return `${childTabs()}<section class="hero-card"><p class="kicker">Dagbok</p><h1 class="h1">Dagen på ${esc(c.dept)}</h1><p class="sub">Pedagogernas inlägg. Bildsamtycken styr vad som får synas.</p></section>${entries}`;
+}
+
+function renderFood() {
+  const c = child();
+  const todayMeal = state.meals[0];
+  return `<section class="hero-card food-hero"><p class="kicker">Mat</p><div class="food-emoji">${esc(todayMeal.image)}</div><h1 class="h1">${esc(todayMeal.lunch)}</h1><p class="sub">Mellanmål: ${esc(todayMeal.snack)}</p></section>
+    <article class="card"><p class="kicker">För ${esc(c.name)}</p><h3>${esc(todayMeal.special[c.id] || "Ingen specialkost registrerad.")}</h3><p class="meta">Kopplat till barnets specialkost och allergier.</p></article>
+    <article class="card"><p class="kicker">Allergener</p><div class="tag-row">${todayMeal.allergens.map(item => `<span>${esc(item)}</span>`).join("")}</div></article>
+    <section class="week">${state.meals.map(meal => `<article class="day"><strong>${esc(meal.day)}</strong><span>${esc(meal.lunch)}</span></article>`).join("")}</section>`;
+}
+
+function renderMore() {
+  const c = child();
+  const overview = [
+    { screen: "assistant", icon: "🙂", title: "Arthur idag", text: `${arthurProgress(c).done}/${arthurProgress(c).total} klart`, tone: "sun", badge: arthurProgress(c).total - arthurProgress(c).done },
+    { screen: "inbox", icon: "📥", title: "Meddelanden", text: `${state.notes.length} nytt`, tone: "sky", badge: state.notes.length },
+    { screen: "diary", icon: "📷", title: "Min dag", text: "Vardag och berättelser", tone: "sun" },
+    { screen: "schedule", icon: "📅", title: "Kalender", text: `${c.dropoff}–${c.pickup} idag`, tone: "sage" },
+    { screen: "absence", icon: "➕", title: "Frånvaro", text: status(c.id), tone: "coral" },
+    { screen: "food", icon: "🍲", title: "Mat", text: state.meals[0].lunch, tone: "sun" },
+    { screen: "documents", icon: "📄", title: "Dokument", text: `${signedCount()} att signera`, tone: "sky", badge: signedCount() },
+    { screen: "health", icon: "⚕️", title: "Viktigt om barnet", text: `${criticalCount(c.critical)} punkter`, tone: "coral", badge: criticalCount(c.critical) },
+    { screen: "contacts", icon: "☎️", title: "Kontakter", text: `${c.guardians.length + c.relatives.length} personer`, tone: "sage" },
+    { screen: "preschool", icon: "🏫", title: "Förskolan", text: `${cfg().unit} · ${c.dept}`, tone: "plain" },
+    { screen: "classlist", icon: "👥", title: "Gruppen", text: `${floor.filter(kid => kid.dept === c.dept).length} barn på ${c.dept}`, tone: "sage" },
+    { screen: "box", icon: "🧺", title: "Hylla", text: `${state.boxItems.filter(item => item.childId === c.id && item.status !== "Finns").length} att fylla på`, tone: "coral", badge: state.boxItems.filter(item => item.childId === c.id && item.status !== "Finns").length },
+    { screen: "gallery", icon: "🖼️", title: "Bilder", text: `${state.gallery.filter(item => item.childId === c.id && item.visible).length} nya`, tone: "sun" },
+    { screen: "playdate", icon: "🤝", title: "Lekträff", text: state.playdateOptIn ? "Opt-in på" : "Av", tone: "sky" },
+    { screen: "development", icon: "🌱", title: "Utveckling", text: "Portfolio och samtal", tone: "sage" },
+    { screen: "notes", icon: "📝", title: "Anteckningar", text: "Barnets notiser", tone: "plain" },
+    { screen: "activities", icon: "🎨", title: "Aktiviteter", text: "Skog, skapande, vila", tone: "sun" },
+    { screen: "lost", icon: "🧦", title: "Upphittat", text: `${state.lostItems.filter(item => !item.claimed).length} saker`, tone: "coral", badge: state.lostItems.filter(item => !item.claimed).length },
+    { screen: "settings", icon: "⚙️", title: "Inställningar", text: cfg().label, tone: "plain" },
+  ];
+  return `<section class="hero-card"><p class="kicker">Översikt</p><h1 class="h1">Allt i Arthur</h1><p class="sub">Samma täckning som konkurrentens rutnät, men med Arthur som hjälper dig prioritera.</p></section>${renderArthurTasks(2)}<div class="overview-grid">${overview.map(item => `<button class="overview-card ${item.tone}" data-action="go" data-screen="${item.screen}">${item.badge ? `<b>${item.badge}</b>` : ""}<span class="overview-icon">${item.icon}</span><strong>${esc(item.title)}</strong><small>${esc(item.text)}</small></button>`).join("")}</div>`;
+}
+
+function renderAssistant() {
+  const c = child();
+  const { done, total, percent } = arthurProgress(c);
+  return `${childTabs()}<section class="hero-card shelf-hero"><div><p class="kicker">Arthur idag</p><h1 class="h1">${done}/${total} klart</h1><p class="sub">Progression, uppgifter och små påminnelser samlat på ett ställe.</p></div>${arthurMascot(percent === 100 ? "wave" : "read")}</section>${renderArthurTasks(12)}<article class="card"><p class="kicker">Arthur-röst</p><h3>Varm, konkret och lugn</h3><p>Arthur rapporterar inte allt. Bara det som hjälper dagen framåt.</p></article>`;
+}
+
+
+function renderAbsence() {
+  const c = child();
+  return `${childTabs()}<section class="hero-card"><p class="kicker">Frånvaro</p><h1 class="h1">${esc(c.name)}</h1><p class="sub">Registrera sjuk eller ledig. Personal ser ändringen direkt.</p><div class="actions"><button class="danger" data-action="absence" data-kind="sjuk">Sjuk idag</button><button class="secondary" data-action="absence" data-kind="ledig">Ledig idag</button></div></section><ul class="rows"><li><span>Dagens status</span><span class="status">${esc(status(c.id))}</span></li><li><span>Senaste sjukfrånvaro</span><span class="status">12 sep</span></li></ul>`;
+}
+
+function renderHealthSummary() {
+  const c = child();
+  return `${childTabs()}${criticalCard(c)}<article class="card"><p class="kicker">Detaljer</p><ul class="rows"><li><span>Allergier</span><span class="status bad">${esc(c.critical.allergies.length ? c.critical.allergies.join(", ") : "Inga")}</span></li><li><span>Specialkost</span><span class="status">${esc(c.critical.diet)}</span></li><li><span>Medicin</span><span class="status">${esc(c.critical.medication)}</span></li></ul></article>`;
+}
+
+function renderContacts() {
+  const c = child();
+  return `${childTabs()}<section class="hero-card"><p class="kicker">Kontakter</p><h1 class="h1">${esc(c.name)}</h1><p class="sub">Vårdnadshavare och närstående som förskolan får kontakta.</p></section>${contactsBlock("Vårdnadshavare", c.guardians)}${contactsBlock("Närstående och hämtare", c.relatives)}`;
+}
+
+function renderLost() {
+  const openItems = state.lostItems.filter(item => !item.claimed);
+  return `<section class="hero-card"><p class="kicker">Upphittat</p><h1 class="h1">${openItems.length} saker väntar</h1><p class="sub">Kläder och saker som personalen lagt upp från avdelningen.</p></section>${openItems.map(item => `<article class="card lost-card"><div class="lost-emoji">🧦</div><p class="kicker">${esc(item.date)} · ${esc(item.where)}</p><h3>${esc(item.title)}</h3><p>Tror du den är din? Markera så ser personalen det.</p><div class="actions"><button class="primary" data-action="claim-lost" data-id="${esc(item.id)}">Det är vår</button></div></article>`).join("") || `<div class="empty">Inget upphittat just nu.</div>`}`;
+}
+
+function renderBox() {
+  const c = child();
+  const items = state.boxItems.filter(item => item.childId === c.id);
+  const needs = items.filter(item => item.status !== "Finns");
+  const notice = needs.length ? `${c.name}s hylla behöver fyllas på – ta med ${needs.map(item => item.title.replace(/^Saknar\s+/i, "").replace(/ börjar ta slut$/i, "").toLowerCase()).join(", ")}.` : `${c.name}s hylla är komplett.`;
+  return `${childTabs()}<section class="hero-card shelf-hero"><div><p class="kicker">Hylla</p><h1 class="h1">${esc(c.name)}s hylla</h1><p class="sub">Barnets plats på förskolan – oavsett om det är låda, korg, fack eller krok.</p></div>${arthurMascot("walk")}</section>${arthurCoach("Jag håller koll på hyllan", notice, "wave")}<ul class="rows">${items.map(item => `<li><span><strong>${esc(item.title)}</strong><br><small>${esc(item.note)}</small></span><span class="status ${item.status === "Saknas" || item.status === "Lågt" ? "bad" : "good"}">${item.status === "Finns" ? "✓" : esc(item.status)}</span></li>`).join("")}</ul><div class="actions"><button class="primary" data-action="toast" data-message="Personalen ser att du har läst hyllan.">Jag har koll</button></div>`;
+}
+
+function renderGallery() {
+  const c = child();
+  const items = state.gallery.filter(item => item.childId === c.id && item.visible);
+  const locked = state.gallery.filter(item => item.childId === c.id && !item.visible);
+  return `${childTabs()}<section class="hero-card"><p class="kicker">Bilder</p><h1 class="h1">Bilder från vardagen</h1><p class="sub">Barnspecifikt och samtyckesstyrt. Inget delas externt.</p></section>${items.map(item => `<article class="diary-card"><div class="diary-photo">${esc(item.emoji)}</div><p class="kicker">${esc(item.date)} · ${esc(item.dept)}</p><h3>${esc(item.title)}</h3><p>${esc(item.body)}</p></article>`).join("")}${locked.length ? `<article class="card important"><p class="kicker">Dolt av samtycke</p><h3>${locked.length} inlägg visas inte</h3><p>Bilder respekterar barnets bildsamtycke.</p></article>` : ""}`;
+}
+
+function renderClassList() {
+  const c = child();
+  const kids = floor.filter(kid => kid.dept === c.dept);
+  return `<section class="hero-card"><p class="kicker">Gruppen</p><h1 class="h1">${esc(c.dept)}</h1><p class="sub">Barn i samma avdelning. Kontaktuppgifter visas bara där familjer aktivt valt att dela.</p></section><ul class="rows">${kids.map(kid => `<li><span><strong>${esc(kid.name)}</strong><br><small>${kid.name === c.name ? "Ditt barn" : "Vårdnadshavare kan kontaktas via lekträff"}</small></span><span class="status">${kid.name === c.name ? "Du" : "Privat"}</span></li>`).join("")}</ul><article class="card"><p class="kicker">Sekretess</p><h3>Inga telefonnummer som default</h3><p>Arthur visar gruppen utan att läcka kontaktlistor. Lekträff kräver opt-in från båda familjer.</p></article>`;
+}
+
+
+function renderPlaceholder(title, text) {
+  return `<section class="hero-card"><p class="kicker">Arthur</p><h1 class="h1">${esc(title)}</h1><p class="sub">${esc(text)}</p></section><div class="empty">Den här modulen byggs ut i nästa steg.</div>`;
+}
+
+function renderParentHome() {
+  const c = child();
+  const isAbsent = absent(c.id);
+  const latestMoment = state.moments.find(m => m.childId === c.id);
+  return `
+    ${childTabs()}
+    <section class="hero-card home-hero">
+      <div>
+        <p class="kicker">${esc(today())}</p>
+        <h1 class="h1">Hej ${esc(c.name)}</h1>
+        ${isAbsent ? `<p class="big-time exception">${isAbsent === "sjuk" ? "Sjuk" : "Ledig"}</p><p class="sub">Schemat är avbokat. ${esc(c.dept)} ser det direkt.</p><div class="actions"><button class="secondary" data-action="undo-absence">Ångra</button></div>` : `${scheduleMini(c)}<p class="kicker" style="margin-top:18px">Hämtas</p><p class="big-time">${esc(c.pickup)}</p><p class="sub">${esc(state.pickupBy[c.id])} hämtar</p><div class="actions"><button class="secondary" data-action="pickup">Ändra hämtare</button><button class="danger" data-action="absence" data-kind="sjuk">Sjuk idag</button></div>`}
+      </div>
+      ${arthurMascot("wave")}
+    </section>
+    ${arthurCoach("Små steg idag", `${c.name}s dag är igång. Jag säger till om hyllan, dokument eller viktiga ändringar.`, "walk")}
+    ${renderArthurTasks(3)}
+    <div class="quick-row"><button data-action="go" data-screen="schedule">📅 Kalender</button><button data-action="go" data-screen="documents">📄 Dokument ${signedCount() ? `<b>${signedCount()}</b>` : ""}</button><button data-action="go" data-screen="box">🧺 Hylla</button></div>
+    ${state.notes.map(note => `<article class="card ${note.important ? "important" : ""}"><p class="kicker">${note.important ? "Viktigt" : "Meddelande"}</p><h3>${esc(note.title)}</h3><p>${esc(note.body)}</p><p class="meta">${esc(note.from)}</p></article>`).join("")}
+    ${!isAbsent && latestMoment ? `<article class="card"><p class="kicker">${esc(latestMoment.dept)}</p><h3>${esc(latestMoment.title)}</h3><p>${esc(latestMoment.body)}</p><p class="meta">${esc(latestMoment.time)} · ${esc(latestMoment.by)}</p></article>` : ""}
+  `;
+}
+
+function renderParentBarn() {
+  const c = child();
+  const rows = [["Ålder", c.age], ["Avdelning", c.dept], ["Dagens status", status(c.id)], ["Syns i klasslista", "Nej som default"], ["Lekträff", state.playdateOptIn ? "Opt-in på" : "Av"]];
+  return `${childTabs()}<section class="profile-card">${avatar(c)}<div><p class="kicker">Barnet</p><h1 class="h1">${esc(c.name)}</h1><p class="sub">${esc(cfg().unit)} · ${esc(cfg().label)}</p><button class="link" type="button" data-action="change-photo">${c.photoUploaded ? "Byt profilbild" : "Lägg till profilbild"}</button></div></section>${criticalCard(c)}${contactsBlock("Vårdnadshavare", c.guardians)}${contactsBlock("Närstående och hämtare", c.relatives)}${consentBlock(c)}<article class="card"><p class="kicker">Övrigt</p><ul class="rows">${rows.map(([a,b]) => `<li><span>${esc(a)}</span><span class="status">${esc(b)}</span></li>`).join("")}</ul></article>`;
+}
+function renderParentInbox() { return `<section class="hero-card"><p class="kicker">Inkorg</p><h1 class="h1">Meddelanden</h1><p class="sub">Bara sådant som gäller dig och dina barn.</p></section>${state.notes.map(note => `<article class="card"><h3>${esc(note.title)}</h3><p>${esc(note.body)}</p><p class="meta">${esc(note.from)}</p></article>`).join("")}`; }
+function renderPreschool() { const c = child(); return `<section class="hero-card"><p class="kicker">Förskolan</p><h1 class="h1">${esc(cfg().unit)}</h1><p class="sub">${esc(cfg().org)} · ${esc(cfg().label)}</p></section><div class="grid"><button class="tile sun" data-action="go" data-screen="inbox">✉️<strong>Meddelanden</strong><span>${state.notes.length} aktuella</span></button><button class="tile sage" data-action="go" data-screen="schedule">📅<strong>Schema</strong><span>${esc(c.pickup)} idag</span></button><button class="tile sky" data-action="go" data-screen="documents">📄<strong>Dokument</strong><span>${signedCount()} att signera</span></button><button class="tile coral" data-action="go" data-screen="playdate">🤝<strong>Lekträff</strong><span>${state.playdateOptIn ? "På" : "Av"}</span></button></div><article class="card"><p class="kicker">Kontakt</p><ul class="rows"><li><span>Avdelning</span><span class="status">${esc(c.dept)}</span></li><li><span>Telefon</span><span class="status">08-400 00 10</span></li><li><span>Öppet</span><span class="status">06:30–17:30</span></li></ul></article>`; }
+
+function renderSchedule() {
+  return `${childTabs()}<section class="hero-card"><p class="kicker">Schema</p><h1 class="h1">Veckan</h1><p class="sub">Tiderna används för planering och hämtning.</p></section><div class="week">${state.schedule.map(d => `<article class="day ${d.today ? "today" : ""}"><strong>${esc(d.day)}</strong><span>${esc(d.dropoff)}${d.pickup ? `–${esc(d.pickup)}` : ""}</span></article>`).join("")}</div><article class="card"><h3>Ändra schema</h3><p>Schemaändring kräver bekräftelse av personal i pilotversionen.</p><div class="actions"><button class="primary" data-action="toast" data-message="Schemaförslag sparat">Föreslå ändring</button></div></article>`;
+}
+
+function renderDocuments() {
+  return `<section class="hero-card"><p class="kicker">Dokument</p><h1 class="h1">Att läsa och signera</h1><p class="sub">Allt som kräver vårdnadshavares godkännande samlas här.</p></section><ul class="rows">${state.documents.map(doc => `<li><span>${esc(doc.title)}</span><span class="status ${doc.important ? "bad" : "good"}">${esc(doc.status)}</span></li>`).join("")}</ul><div class="actions"><button class="primary" data-action="sign-docs">Signera markerade</button></div>`;
+}
+
+function renderPlaydate() {
+  const requests = state.playdateRequests.map(r => `<article class="card"><p class="kicker">Förfrågan skickad</p><h3>${esc(r.child)}</h3><p>${esc(r.when)} efter förskolan.</p><p class="meta">Telefon delas inte förrän båda accepterar.</p></article>`).join("");
+  return `${childTabs()}<section class="hero-card"><p class="kicker">Lekträff</p><h1 class="h1">Tillsammans efter förskolan</h1><p class="sub">Opt-in. Inga klasslistor, inga telefonnummer före accept.</p><div class="actions"><button class="${state.playdateOptIn ? "secondary" : "primary"}" data-action="toggle-playdate">${state.playdateOptIn ? "Stäng av" : "Slå på opt-in"}</button></div></section>${state.playdateOptIn ? `<article class="card"><p class="kicker">Föreslå lekträff</p><div class="mode-grid">${playdateChildren.map(name => `<button data-action="request-playdate" data-child="${esc(name)}">${esc(name)}<small>Förfrågan till vårdnadshavare</small></button>`).join("")}</div></article>` : `<div class="empty">Slå på opt-in för att kunna skicka och ta emot förfrågningar.</div>`}${requests}`;
+}
+
+function renderStaffAttendance() {
+  const rows = floor.map(kid => {
+    const s = status(kid.id);
+    const info = criticalFor(kid.id);
+    const count = criticalCount(info);
+    return `<button class="row" data-action="toggle-picked" data-id="${kid.id}"><span>${esc(kid.name)}<br><small>${esc(kid.dept)}${count ? ` · ⚠ ${count}` : ""}</small></span><span class="status ${s === "Sjuk" || s === "Ledig" ? "bad" : s === "Hämtad" ? "good" : ""}">${esc(s)}</span></button>`;
+  }).join("");
+  return `<section class="hero-card"><p class="kicker">Personal</p><h1 class="h1">Närvaro</h1><p class="sub">${floor.filter(k => status(k.id) === "Inne").length} inne · ${floor.length} barn</p></section><div class="quick-row"><button data-action="staff-filter" data-filter="all">Alla</button><button data-action="staff-filter" data-filter="inside">Inne</button><button data-action="staff-filter" data-filter="absence">Frånvaro</button></div><ul class="rows">${rows}</ul>`;
+}
+
+function renderStaffPublish() {
+  return `<section class="hero-card"><p class="kicker">Personal</p><h1 class="h1">Publicera</h1><p class="sub">Skicka kort uppdatering till vårdnadshavare på avdelningen.</p></section><article class="card"><p class="kicker">Meddelande</p><textarea id="staffMessage" placeholder="Vi är kvar i skogen till 14."></textarea><div class="actions"><button class="primary" data-action="publish">Skicka till Eken</button></div></article><article class="card"><p class="kicker">Bilder</p><h3>Lägg upp dagens ögonblick</h3><p>Bildflödet respekterar samtycken automatiskt.</p><div class="actions"><button class="secondary" data-action="toast" data-message="Bildutkast sparat.">Skapa bildinlägg</button></div></article>`;
+}
+
+function renderStaffShelf() {
+  const needs = state.boxItems.filter(item => item.status !== "Finns");
+  return `<section class="hero-card"><p class="kicker">Personal</p><h1 class="h1">Hylla</h1><p class="sub">Uppdatera vad som finns och vad familjen behöver ta med.</p></section><ul class="rows">${needs.map(item => { const c = children.find(child => child.id === item.childId); return `<li><span><strong>${esc(c?.name || "Barn")}</strong><br><small>${esc(item.title)} · ${esc(item.note)}</small></span><span class="status bad">${esc(item.status)}</span></li>`; }).join("")}</ul><article class="card"><p class="kicker">Snabbnotis</p><h3>Arthur formulerar åt dig</h3><p>“Hyllan behöver fyllas på – ta med blöjor.”</p></article>`;
+}
+
+function renderStaffFound() {
+  const openItems = state.lostItems.filter(item => !item.claimed);
+  return `<section class="hero-card"><p class="kicker">Personal</p><h1 class="h1">Upphittat</h1><p class="sub">Saker som väntar på ägare.</p></section>${openItems.map(item => `<article class="card"><p class="kicker">${esc(item.date)} · ${esc(item.where)}</p><h3>${esc(item.title)}</h3><p>Syns för vårdnadshavare i Upphittat.</p></article>`).join("")}<div class="actions"><button class="primary" data-action="toast" data-message="Ny sak tillagd i Upphittat.">Lägg till sak</button></div>`;
+}
+
+function renderStaff() {
+  if (state.staffScreen === "publish") return renderStaffPublish();
+  if (state.staffScreen === "shelf") return renderStaffShelf();
+  if (state.staffScreen === "found") return renderStaffFound();
+  return renderStaffAttendance();
+}
+
+function renderAdmin() {
+  const current = cfg();
+  return `<section class="hero-card"><p class="kicker">Huvudman</p><h1 class="h1">${esc(current.org)}</h1><p class="sub">Konfigurerad som ${esc(current.label.toLowerCase())}</p></section><div class="owner-tabs">${Object.entries(ownerTypes).map(([id, o]) => `<button data-action="owner" data-id="${id}" aria-pressed="${state.ownerType === id}">${esc(o.label)}</button>`).join("")}</div><div class="metric-grid"><article class="metric"><strong>${children.length}</strong><span>Barn i pilot</span></article><article class="metric"><strong>${floor.length}</strong><span>Barn på golvet</span></article><article class="metric"><strong>${Object.keys(state.absence).length}</strong><span>Frånvaro idag</span></article><article class="metric"><strong>${signedCount()}</strong><span>Att signera</span></article></div><article class="card"><p class="kicker">Krav</p><ul class="rows">${current.needs.map(n => `<li><span>${esc(n)}</span><span class="status good">På</span></li>`).join("")}</ul></article>`;
+}
+
+function renderModeModal() { if (state.modal !== "mode") return ""; return `<div class="modal-backdrop"><section class="modal"><h2>Välj läge</h2><p class="sub">Byt perspektiv utan att byta app.</p><div class="mode-grid"><button data-action="mode" data-mode="parent">Förälder<small>Hämtning, frånvaro, meddelanden</small></button><button data-action="mode" data-mode="staff">Personal<small>Närvaro och publicering</small></button><button data-action="mode" data-mode="admin">Huvudman<small>Kommun, privat, kooperativ</small></button></div><div class="actions"><button class="secondary" data-action="close-modal">Stäng</button></div></section></div>`; }
+function renderChoiceModal() {
+  if (state.modal !== "pickup" && state.modal !== "absence" && state.modal !== "toast" && state.modal !== "health") return "";
+  const c = child();
+  if (state.modal === "health") {
+    const info = c.critical;
+    return `<div class="modal-backdrop"><section class="modal health-modal"><h2>Superviktig info</h2><p class="sub">${esc(c.name)} · ${esc(info.updated)}</p><dl><dt>Allergier</dt><dd>${info.allergies.length ? esc(info.allergies.join(", ")) : "Inga registrerade"}</dd><dt>Specialkost</dt><dd>${esc(info.diet)}</dd><dt>Sjukdomar/tillstånd</dt><dd>${info.conditions.length ? esc(info.conditions.join(", ")) : "Inga registrerade"}</dd><dt>Medicin</dt><dd>${esc(info.medication)}</dd><dt>Akut instruktion</dt><dd>${esc(info.emergency)}</dd></dl><div class="actions"><button class="primary" data-action="close-modal">Jag har läst</button></div></section></div>`;
+  }
+  if (state.modal === "toast") return `<div class="modal-backdrop"><section class="modal"><h2>Klart</h2><p class="sub">${esc(state.modalMessage || "Sparat")}</p><div class="actions"><button class="primary" data-action="close-modal">OK</button></div></section></div>`;
+  if (state.modal === "pickup") return `<div class="modal-backdrop"><section class="modal"><h2>Vem hämtar ${esc(c.name)}?</h2><div class="mode-grid">${pickers.map(p => `<button data-action="set-pickup" data-name="${esc(p)}">${esc(p)}</button>`).join("")}</div><div class="actions"><button class="secondary" data-action="close-modal">Avbryt</button></div></section></div>`;
+  const word = state.modalKind === "sjuk" ? "sjuk" : "ledig";
+  return `<div class="modal-backdrop"><section class="modal"><h2>${esc(c.name)} är ${word} idag</h2><p class="sub">Hämtningen tas bort och personalen ser det direkt.</p><div class="actions"><button class="danger" data-action="confirm-absence">Bekräfta</button><button class="secondary" data-action="close-modal">Avbryt</button></div></section></div>`;
+}
+function renderModeButton() {
+  const labels = { parent: "Förälder", staff: "Personal", admin: "Huvudman" };
+  const icons = { parent: "🏠", staff: "✓", admin: "⚙" };
+  modeButton.innerHTML = `<span>${icons[state.mode]}</span><strong>${labels[state.mode]}</strong><small>Läge</small>`;
+  modeButton.setAttribute("aria-label", `Byt läge. Nu valt: ${labels[state.mode]}`);
+}
+
+function renderBottomNav() {
+  if (state.mode === "staff") { const items = [["attendance", "✓", "Närvaro"], ["publish", "✎", "Publicera"], ["shelf", "🧺", "Hylla"], ["found", "🧦", "Upphittat"]]; nav.innerHTML = items.map(([id, icon, label]) => `<button data-action="staff-nav" data-screen="${id}" aria-current="${state.staffScreen === id ? "page" : "false"}"><span class="ico">${icon}</span>${label}</button>`).join(""); return; }
+  if (state.mode === "admin") { nav.innerHTML = `<button data-action="mode" data-mode="admin" aria-current="page"><span class="ico">⚙</span>Huvudman</button><button data-action="toast" data-message="Enheter byggs ut i huvudmannavyn."><span class="ico">🏫</span>Enheter</button><button data-action="toast" data-message="Roller byggs ut i huvudmannavyn."><span class="ico">👥</span>Roller</button><button data-action="open-mode"><span class="ico">⋯</span>Läge</button>`; return; }
+  const items = [["home", "🏠", "Min dag"], ["child", "●", "Barn"], ["diary", "📷", "Bilder"], ["more", "▦", "Mer"]];
+  nav.innerHTML = items.map(([id, icon, label]) => `<button data-action="go" data-screen="${id}" aria-current="${state.screen === id ? "page" : "false"}"><span class="ico">${icon}</span>${label}</button>`).join("");
+}
+function render() {
+  let html = "";
+  if (state.mode === "staff") html = renderStaff();
+  else if (state.mode === "admin") html = renderAdmin();
+  else if (state.screen === "child") html = renderParentBarn();
+  else if (state.screen === "diary") html = renderDiary();
+  else if (state.screen === "more") html = renderMore();
+  else if (state.screen === "assistant") html = renderAssistant();
+  else if (state.screen === "inbox") html = renderParentInbox();
+  else if (state.screen === "preschool" || state.screen === "unit") html = renderPreschool();
+  else if (state.screen === "schedule") html = renderSchedule();
+  else if (state.screen === "documents") html = renderDocuments();
+  else if (state.screen === "playdate") html = renderPlaydate();
+  else if (state.screen === "food") html = renderFood();
+  else if (state.screen === "contacts") html = renderContacts();
+  else if (state.screen === "absence") html = renderAbsence();
+  else if (state.screen === "health") html = renderHealthSummary();
+  else if (state.screen === "lost") html = renderLost();
+  else if (state.screen === "box") html = renderBox();
+  else if (state.screen === "gallery") html = renderGallery();
+  else if (state.screen === "classlist") html = renderClassList();
+  else if (state.screen === "activities") html = renderPlaceholder("Aktiviteter", "Planerade aktiviteter och utflykter.");
+  else if (state.screen === "development") html = renderPlaceholder("Utveckling", "Portfolio, lärlogg och utvecklingssamtal.");
+  else if (state.screen === "notes") html = renderPlaceholder("Anteckningar", "Barnets interna och delade notiser.");
+  else if (state.screen === "settings") html = renderPlaceholder("Inställningar", "Språk, notiser och huvudman.");
+  else html = renderParentHome();
+  screen.innerHTML = html + renderModeModal() + renderChoiceModal();
+  renderModeButton();
+  renderBottomNav();
+}
+
+document.body.addEventListener("click", event => {
+  const target = event.target.closest("[data-action]");
+  if (!target) return;
+  const action = target.dataset.action;
+  if (action === "go") state.screen = target.dataset.screen;
+  else if (action === "child") state.childId = target.dataset.id;
+  else if (action === "open-mode") state.modal = "mode";
+  else if (action === "close-modal") state.modal = null;
+  else if (action === "mode") { state.mode = target.dataset.mode; state.modal = null; }
+  else if (action === "staff-nav") state.staffScreen = target.dataset.screen;
+  else if (action === "owner") state.ownerType = target.dataset.id;
+  else if (action === "pickup") state.modal = "pickup";
+  else if (action === "set-pickup") { state.pickupBy[state.childId] = target.dataset.name; state.modal = null; }
+  else if (action === "absence") { state.modal = "absence"; state.modalKind = target.dataset.kind; }
+  else if (action === "confirm-absence") { state.absence[state.childId] = state.modalKind; state.modal = null; }
+  else if (action === "undo-absence") delete state.absence[state.childId];
+  else if (action === "toggle-picked") { const id = target.dataset.id; if (!state.absence[id]) state.pickedUp[id] = !state.pickedUp[id]; }
+  else if (action === "publish") { const textarea = document.querySelector("#staffMessage"); const body = textarea?.value.trim(); if (body) { state.notes.unshift({ id: Date.now(), target: "eken", important: false, title: "Eken", body, from: "Jon" }); textarea.value = ""; } }
+  else if (action === "toggle-playdate") state.playdateOptIn = !state.playdateOptIn;
+  else if (action === "claim-lost") {
+    const item = state.lostItems.find(found => found.id === target.dataset.id);
+    if (item) item.claimed = true;
+    state.modal = "toast";
+    state.modalMessage = "Markerat som ert. Personalen ser det.";
+  }
+  else if (action === "complete-task") {
+    state.completedTasks[target.dataset.id] = true;
+    state.modal = "toast";
+    state.modalMessage = "Klart. Arthur bockar av det.";
+  }
+  else if (action === "request-playdate") state.playdateRequests.unshift({ child: target.dataset.child, when: "Idag" });
+  else if (action === "sign-docs") { state.documents = state.documents.map(d => d.status === "Att signera" ? { ...d, status: "Signerad", important: false } : d); state.modal = "toast"; state.modalMessage = "Dokument signerade."; }
+  else if (action === "toast") { state.modal = "toast"; state.modalMessage = target.dataset.message; }
+  else if (action === "open-health") state.modal = "health";
+  else if (action === "toggle-consent") {
+    const c = child();
+    c.consent[target.dataset.consent] = !c.consent[target.dataset.consent];
+  }
+  else if (action === "change-photo") {
+    const c = child();
+    c.photoUploaded = true;
+    c.avatar = c.name.slice(0, 1);
+    state.modal = "toast";
+    state.modalMessage = "Profilbild uppdaterad i prototypen.";
+  }
+  render();
+});
+
+render();
