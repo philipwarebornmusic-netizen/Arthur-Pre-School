@@ -52,6 +52,18 @@ create table public.children (
   created_at timestamptz not null default now()
 );
 
+create table public.child_health (
+  child_id uuid primary key references public.children(id) on delete cascade,
+  allergies text[] not null default '{}',
+  diet text,
+  conditions text[] not null default '{}',
+  medication text,
+  emergency text,
+  updated_by uuid references public.profiles(id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+
+
 create table public.child_guardians (
   child_id uuid not null references public.children(id) on delete cascade,
   profile_id uuid not null references public.profiles(id) on delete cascade,
@@ -59,6 +71,18 @@ create table public.child_guardians (
   can_pickup boolean not null default true,
   primary key (child_id, profile_id)
 );
+
+create table public.child_contacts (
+  id uuid primary key default gen_random_uuid(),
+  child_id uuid not null references public.children(id) on delete cascade,
+  name text not null,
+  relation text not null,
+  phone text,
+  can_pickup boolean not null default false,
+  is_primary boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
 
 create table public.staff_departments (
   staff_id uuid not null references public.profiles(id) on delete cascade,
@@ -186,6 +210,17 @@ create table public.calendar_events (
   updated_at timestamptz not null default now()
 );
 
+create index idx_profiles_auth_user_id on public.profiles(auth_user_id);
+create index idx_children_department_id on public.children(department_id);
+create index idx_child_contacts_child_id on public.child_contacts(child_id);
+create index idx_attendance_child_date on public.attendance(child_id, date);
+create index idx_shelf_items_child_id on public.shelf_items(child_id);
+create index idx_posts_child_id on public.posts(child_id);
+create index idx_posts_department_id on public.posts(department_id);
+create index idx_lost_items_department_id on public.lost_items(department_id);
+create index idx_calendar_events_child_time on public.calendar_events(child_id, starts_at);
+
+
 -- Helper functions for RLS.
 create or replace function public.current_profile_id()
 returns uuid language sql stable security definer set search_path = public as $$
@@ -233,7 +268,9 @@ alter table public.preschools enable row level security;
 alter table public.departments enable row level security;
 alter table public.profiles enable row level security;
 alter table public.children enable row level security;
+alter table public.child_health enable row level security;
 alter table public.child_guardians enable row level security;
+alter table public.child_contacts enable row level security;
 alter table public.staff_departments enable row level security;
 alter table public.attendance enable row level security;
 alter table public.shelf_items enable row level security;
@@ -258,8 +295,14 @@ create policy "departments visible to signed in" on public.departments for selec
 create policy "children guardian staff admin read" on public.children for select using (public.is_admin() or public.is_guardian(id) or public.is_staff_for_child(id));
 create policy "children admin write" on public.children for all using (public.is_admin()) with check (public.is_admin());
 
+create policy "child health read" on public.child_health for select using (public.is_admin() or public.is_guardian(child_id) or public.is_staff_for_child(child_id));
+create policy "child health guardian staff write" on public.child_health for all using (public.is_admin() or public.is_guardian(child_id) or public.is_staff_for_child(child_id)) with check (public.is_admin() or public.is_guardian(child_id) or public.is_staff_for_child(child_id));
+
 create policy "guardian links readable" on public.child_guardians for select using (public.is_admin() or profile_id = public.current_profile_id() or public.is_staff_for_child(child_id));
 create policy "staff departments readable" on public.staff_departments for select using (public.is_admin() or staff_id = public.current_profile_id());
+
+create policy "child contacts read" on public.child_contacts for select using (public.is_admin() or public.is_guardian(child_id) or public.is_staff_for_child(child_id));
+create policy "child contacts guardian write" on public.child_contacts for all using (public.is_admin() or public.is_guardian(child_id)) with check (public.is_admin() or public.is_guardian(child_id));
 
 create policy "attendance read" on public.attendance for select using (public.is_admin() or public.is_guardian(child_id) or public.is_staff_for_child(child_id));
 create policy "attendance parent staff update" on public.attendance for all using (public.is_admin() or public.is_guardian(child_id) or public.is_staff_for_child(child_id)) with check (public.is_admin() or public.is_guardian(child_id) or public.is_staff_for_child(child_id));
