@@ -237,7 +237,7 @@ async function loadPilotData() {
   state.loading = true;
   state.authError = "";
   try {
-    const profiles = await supabaseFetch("/rest/v1/profiles?select=id,email,name,role&limit=1");
+    const profiles = await supabaseFetch(`/rest/v1/profiles?select=id,email,name,role&auth_user_id=eq.${encodeURIComponent(state.session.user.id)}&limit=1`);
     state.profile = profiles[0] || null;
     if (!state.profile) {
       state.authMode = "invite";
