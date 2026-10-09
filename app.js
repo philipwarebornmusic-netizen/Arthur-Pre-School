@@ -1,782 +1,736 @@
-const ownerTypes = {
-  kommun: { label: "Kommun", org: "Solängen kommun", unit: "Björkbacken", needs: ["BankID/SSO", "Åtkomstlogg", "PUB-avtal", "Flera enheter"] },
-  privat: { label: "Privat", org: "Björkbacken AB", unit: "Björkbacken", needs: ["BankID", "Snabb onboarding", "Fakturaunderlag", "Flera roller"] },
-  kooperativ: { label: "Kooperativ", org: "Eken föräldrakooperativ", unit: "Eken", needs: ["Styrelseroll", "Jourlistor", "Dokument", "Vårdnadshavare + personal"] },
-};
-
-const SUPABASE_URL = "https://esorbueghucqgyxzohrk.supabase.co";
-const SUPABASE_KEY = "sb_publishable_lXsFGKaDGVkLDCBMC2Ul1g_oggGf4Ln";
-
-
-const children = [
-  {
-    id: "elsa",
-    name: "Elsa",
-    dept: "Eken",
-    age: "4 år",
-    pickup: "16:00",
-    dropoff: "08:00",
-    avatar: "E",
-    avatarColor: "#F7B733",
-    photoUploaded: true,
-    guardians: [
-      { name: "Sam Andersson", relation: "Vårdnadshavare", phone: "070-000 00 01", primary: true },
-      { name: "Johanna Talus", relation: "Vårdnadshavare", phone: "070-000 00 02", primary: false },
-    ],
-    relatives: [
-      { name: "Morfar Lars", relation: "Morfar", phone: "070-000 00 03", pickup: true },
-      { name: "Farmor Eva", relation: "Farmor", phone: "070-000 00 04", pickup: false },
-    ],
-    consent: {
-      appBlog: true,
-      socialMedia: false,
-      groupPhoto: true,
-    },
-    critical: {
-      allergies: ["Jordnötter", "Hasselnötter"],
-      diet: "Nötfri kost. Ingen mandelmjölk.",
-      conditions: ["Astma vid förkylning"],
-      medication: "Airomir vid behov. Förvaras i medicinskåp märkt Elsa.",
-      emergency: "Ring 112 vid nötreaktion. Kontakta Sam 070-000 00 01.",
-      updated: "Uppdaterad 18 sep av vårdnadshavare",
-    },
-  },
-  {
-    id: "love",
-    name: "Love",
-    dept: "Linden",
-    age: "2 år",
-    pickup: "15:30",
-    dropoff: "08:30",
-    avatar: "L",
-    avatarColor: "#8EC5E8",
-    photoUploaded: false,
-    guardians: [
-      { name: "Sam Andersson", relation: "Vårdnadshavare", phone: "070-000 00 01", primary: true },
-      { name: "Johanna Talus", relation: "Vårdnadshavare", phone: "070-000 00 02", primary: false },
-    ],
-    relatives: [
-      { name: "Mormor Karin", relation: "Mormor", phone: "070-000 00 05", pickup: true },
-    ],
-    consent: {
-      appBlog: false,
-      socialMedia: false,
-      groupPhoto: false,
-    },
-    critical: {
-      allergies: [],
-      diet: "Vegetarisk kost.",
-      conditions: [],
-      medication: "Ingen medicin registrerad.",
-      emergency: "Kontakta vårdnadshavare vid feber.",
-      updated: "Uppdaterad 4 sep av vårdnadshavare",
-    },
-  },
-];
-const floor = ["Elsa", "Noa", "Signe", "Otto", "Maj", "Vera", "Edvin", "Selma"].map((name, i) => ({ id: name.toLowerCase(), name, dept: i < 4 ? "Eken" : "Linden" }));
-const pickers = ["Du", "Sam", "Morfar", "Farmor"];
-const playdateChildren = ["Noa", "Signe", "Otto"];
+const APP_NAME = "ärtan";
+const STORAGE_KEY = "artan.session";
+const config = window.ARTAN_SUPABASE || {};
+const inviteFromUrl = new URLSearchParams(location.search).get("invite")?.trim().toUpperCase() || "";
 
 const state = {
-  session: JSON.parse(localStorage.getItem("arthur.session") || "null"),
+  session: JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"),
   profile: null,
-  authMode: "login",
-  authError: "",
-  loading: false,
-  usingSupabase: false,
-  mode: "parent",
-  ownerType: "kommun",
-  screen: "home",
-  childId: "elsa",
-  staffScreen: "attendance",
-  modal: null,
-  modalKind: null,
-  absence: {},
-  pickedUp: {},
-  pickupBy: { elsa: "Du", love: "Sam" },
-  playdateOptIn: false,
-  playdateRequests: [],
-  completedTasks: JSON.parse(localStorage.getItem("arthur.completedTasks") || "{}"),
-  notes: [
-    { id: "close", target: "all", important: true, title: "Stängning imorgon", body: "Björkbacken stänger klockan 15. Personalutbildning.", from: "Förskolan" },
-  ],
-  documents: [
-    { id: "photo", title: "Samtycke bildpublicering", status: "Att signera", important: true },
-    { id: "policy", title: "Rutiner vid sjukdom", status: "Läst", important: false },
-  ],
-  schedule: [
-    { day: "Mån", dropoff: "08:00", pickup: "16:00" },
-    { day: "Tis", dropoff: "08:00", pickup: "16:00" },
-    { day: "Ons", dropoff: "08:30", pickup: "15:30" },
-    { day: "Tor", dropoff: "08:00", pickup: "16:00", today: true },
-    { day: "Fre", dropoff: "Ledig", pickup: "" },
-  ],
-  moments: [
-    { childId: "elsa", dept: "Eken", title: "Kottar", body: "Elsa och Noa lade en bana av kottar.", time: "11:40", by: "Jon" },
-    { childId: "love", dept: "Linden", title: "Vatten", body: "Love hällde vatten i samma skål, om och om igen.", time: "10:15", by: "Maja" },
-  ],
-  meals: [
-    {
-      day: "Idag",
-      lunch: "Fiskgryta med potatis",
-      snack: "Yoghurt, banan och smörgås",
-      allergens: ["Fisk", "Mjölk"],
-      image: "🍲",
-      special: {
-        elsa: "Nötfri. Samma rätt.",
-        love: "Vegetarisk gryta med potatis.",
-      },
-    },
-    {
-      day: "Imorgon",
-      lunch: "Pasta med tomatsås och linser",
-      snack: "Frukt och knäckebröd",
-      allergens: ["Gluten"],
-      image: "🍝",
-      special: {
-        elsa: "Nötfri. Samma rätt.",
-        love: "Samma rätt.",
-      },
-    },
-  ],
-  lostItems: [
-    { id: "hat", title: "Blå mössa", where: "Eken hall", date: "Idag", claimed: false },
-    { id: "mitten", title: "Randig vante", where: "Torkskåpet", date: "Igår", claimed: false },
-  ],
-  boxItems: [
-    { id: "socks", childId: "elsa", title: "Saknar extra strumpor", status: "Saknas", note: "Lägg gärna ett par på hyllan." },
-    { id: "rain", childId: "elsa", title: "Regnkläder", status: "Finns", note: "Hänger på kroken." },
-    { id: "extra", childId: "elsa", title: "Extrakläder", status: "Finns", note: "Tröja och byxor finns." },
-    { id: "diapers", childId: "love", title: "Blöjor börjar ta slut", status: "Lågt", note: "3 kvar på hyllan." },
-    { id: "mittens", childId: "love", title: "Vantar", status: "Finns", note: "Ligger i korgen." },
-  ],
-  gallery: [
-    { id: "forest", childId: "elsa", dept: "Eken", emoji: "🌲", title: "Skogen", body: "Barnen letade efter småkryp och jämförde pinnar.", date: "Idag", visible: true },
-    { id: "paint", childId: "elsa", dept: "Eken", emoji: "🎨", title: "Målarbordet", body: "Färg, vatten och stora rörelser.", date: "Igår", visible: true },
-    { id: "song", childId: "love", dept: "Linden", emoji: "🎵", title: "Sångsamling", body: "Love ville höra Imse Vimse tre gånger.", date: "Igår", visible: false },
-  ],
+  organization: null,
+  schools: [],
+  departments: [],
+  staffAssignments: [],
+  children: [],
+  health: [],
+  contacts: [],
+  consents: [],
+  attendance: [],
+  posts: [],
+  invitations: [],
+  selectedChildId: null,
+  view: inviteFromUrl ? "join" : "home",
+  authView: inviteFromUrl ? "register" : "login",
+  inviteCode: inviteFromUrl,
+  inviteResult: null,
+  notice: null,
+  busy: false,
 };
 
 const screen = document.querySelector("#screen");
 const nav = document.querySelector("#bottomNav");
-const modeButton = document.querySelector('[data-action="open-mode"]');
+const accountButton = document.querySelector('[data-action="account"]');
 
-function authHeaders() {
-  return {
-    apikey: SUPABASE_KEY,
-    Authorization: `Bearer ${state.session?.access_token || SUPABASE_KEY}`,
-    "Content-Type": "application/json",
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
+
+function compact(values) {
+  return values.filter(Boolean);
+}
+
+function csv(value) {
+  return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function todayIso() {
+  return new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" });
+}
+
+function formatDate(value) {
+  if (!value) return "–";
+  return new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium" }).format(new Date(`${value}T12:00:00`));
+}
+
+function formatTimestamp(value) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function roleLabel(role) {
+  return { admin: "Organisation", staff: "Personal", parent: "Förälder" }[role] || role;
+}
+
+function attendanceLabel(status) {
+  return { in: "Inne", absent_sick: "Sjuk", absent_leave: "Ledig", picked_up: "Hämtad" }[status] || "Ej registrerad";
+}
+
+function selectedChild() {
+  return state.children.find((child) => child.id === state.selectedChildId) || state.children[0] || null;
+}
+
+function departmentName(id) {
+  return state.departments.find((department) => department.id === id)?.name || "Okänd avdelning";
+}
+
+function schoolName(id) {
+  return state.schools.find((school) => school.id === id)?.name || "Okänd skola";
+}
+
+function healthFor(childId) {
+  return state.health.find((health) => health.child_id === childId) || {
+    child_id: childId,
+    allergies: [],
+    diet: "",
+    conditions: [],
+    medication: "",
+    emergency: "",
   };
 }
 
-async function supabaseFetch(path, options = {}) {
-  const res = await fetch(`${SUPABASE_URL}${path}`, {
+function attendanceFor(childId) {
+  return state.attendance.find((row) => row.child_id === childId) || null;
+}
+
+function contactsFor(childId) {
+  return state.contacts.filter((contact) => contact.child_id === childId);
+}
+
+function consentFor(childId, type) {
+  return state.consents.find((consent) => consent.child_id === childId && consent.type === type)?.allowed || false;
+}
+
+function saveSession(session) {
+  if (session?.access_token) {
+    const expiresAt = session.expires_at || Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600);
+    state.session = { ...session, expires_at: expiresAt };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.session));
+  } else {
+    state.session = null;
+    localStorage.removeItem(STORAGE_KEY);
+  }
+}
+
+async function request(path, options = {}, authenticated = true) {
+  if (!config.enabled || !config.url || !config.publishableKey) throw new Error("Supabase är inte konfigurerat.");
+  const token = authenticated ? state.session?.access_token : config.publishableKey;
+  const response = await fetch(`${config.url}${path}`, {
     ...options,
-    headers: { ...authHeaders(), ...(options.headers || {}) },
+    headers: {
+      apikey: config.publishableKey,
+      Authorization: `Bearer ${token || config.publishableKey}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
   });
-  const text = await res.text();
-  const body = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new Error(body?.message || body?.error_description || body?.hint || text || "Supabase-fel");
+  const text = await response.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+  if (!response.ok) {
+    const message = body?.message || body?.error_description || body?.msg || body?.hint || text || `HTTP ${response.status}`;
+    throw new Error(message);
+  }
   return body;
 }
 
+async function rpc(name, args = {}) {
+  return request(`/rest/v1/rpc/${name}`, { method: "POST", body: JSON.stringify(args) });
+}
+
+async function refreshSessionIfNeeded() {
+  if (!state.session?.refresh_token) return;
+  if (Number(state.session.expires_at || 0) > Math.floor(Date.now() / 1000) + 60) return;
+  try {
+    const session = await request("/auth/v1/token?grant_type=refresh_token", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: state.session.refresh_token }),
+    }, false);
+    saveSession(session);
+  } catch {
+    saveSession(null);
+  }
+}
+
 async function login(email, password) {
-  const body = await supabaseFetch("/auth/v1/token?grant_type=password", {
+  const session = await request("/auth/v1/token?grant_type=password", {
     method: "POST",
     body: JSON.stringify({ email, password }),
-  });
-  state.session = body;
-  localStorage.setItem("arthur.session", JSON.stringify(body));
-  await loadPilotData();
+  }, false);
+  saveSession(session);
+  await loadData();
 }
 
 async function register(email, password, name) {
-  const body = await supabaseFetch("/auth/v1/signup", {
+  const result = await request("/auth/v1/signup", {
     method: "POST",
     body: JSON.stringify({ email, password, data: { name } }),
-  });
-  if (body.access_token) {
-    state.session = body;
-    localStorage.setItem("arthur.session", JSON.stringify(body));
+  }, false);
+  if (!result.access_token) {
+    state.notice = { type: "success", text: "Kontot är skapat. Bekräfta e-postadressen och logga sedan in." };
+    state.authView = "login";
+    return;
   }
-  state.authMode = "invite";
-  state.authError = "Konto skapat. Ange inbjudningskod för att koppla rätt barn eller skola.";
+  saveSession(result);
+  if (state.inviteCode) await acceptInvitation(state.inviteCode);
+  else await loadData();
 }
 
 async function logout() {
-  localStorage.removeItem("arthur.session");
-  state.session = null;
-  state.profile = null;
-  state.usingSupabase = false;
-}
-
-async function acceptInvite(code) {
-  await supabaseFetch("/rest/v1/rpc/accept_invitation", {
-    method: "POST",
-    body: JSON.stringify({ invite_code: code.trim().toUpperCase() }),
-  });
-  await loadPilotData();
-}
-
-function dbStatus(row) {
-  if (!row) return "Inne";
-  if (row.status === "absent_sick") return "Sjuk";
-  if (row.status === "absent_leave") return "Ledig";
-  if (row.status === "picked_up") return "Hämtad";
-  return "Inne";
-}
-
-function shelfStatus(status) {
-  if (status === "missing") return "Saknas";
-  if (status === "low") return "Lågt";
-  return "Finns";
-}
-
-async function loadPilotData() {
-  if (!state.session?.access_token) return;
-  state.loading = true;
-  state.authError = "";
   try {
-    const profiles = await supabaseFetch(`/rest/v1/profiles?select=id,email,name,role&auth_user_id=eq.${encodeURIComponent(state.session.user.id)}&limit=1`);
-    state.profile = profiles[0] || null;
-    if (!state.profile) {
-      state.authMode = "invite";
-      state.authError = "Konto saknar profil. Ange inbjudningskod.";
-      return;
-    }
-    state.mode = state.profile.role === "staff" ? "staff" : state.profile.role === "admin" ? "admin" : "parent";
-    const dbChildren = await supabaseFetch("/rest/v1/children?select=id,name,birth_year,avatar_color,departments(name),child_health(*),child_contacts(*),consents(*),attendance(*),shelf_items(*)");
-    children.splice(0, children.length, ...dbChildren.map(row => {
-      const health = row.child_health || {};
-      const contacts = row.child_contacts || [];
-      const consentRows = row.consents || [];
-      const attendance = (row.attendance || [])[0];
-      return {
-        id: row.id,
-        name: row.name,
-        dept: row.departments?.name || "Avdelning",
-        age: row.birth_year ? `${new Date().getFullYear() - row.birth_year} år` : "",
-        pickup: attendance?.pickup_at?.slice(0, 5) || "16:00",
-        dropoff: attendance?.dropoff_at?.slice(0, 5) || "08:00",
-        avatar: row.name.slice(0, 1),
-        avatarColor: row.avatar_color || "#F7B733",
-        photoUploaded: true,
-        guardians: contacts.filter(c => c.relation === "Vårdnadshavare").map(c => ({ name: c.name, relation: c.relation, phone: c.phone || "", primary: c.is_primary, pickup: c.can_pickup })),
-        relatives: contacts.filter(c => c.relation !== "Vårdnadshavare").map(c => ({ name: c.name, relation: c.relation, phone: c.phone || "", primary: c.is_primary, pickup: c.can_pickup })),
-        consent: {
-          appBlog: !!consentRows.find(c => c.type === "app_images")?.allowed,
-          groupPhoto: !!consentRows.find(c => c.type === "group_images")?.allowed,
-          socialMedia: !!consentRows.find(c => c.type === "social_media")?.allowed,
-        },
-        critical: {
-          allergies: health.allergies || [],
-          diet: health.diet || "",
-          conditions: health.conditions || [],
-          medication: health.medication || "Ingen medicin registrerad.",
-          emergency: health.emergency || "",
-          updated: "Från Supabase",
-        },
-      };
-    }));
-    if (!children.find(c => c.id === state.childId)) state.childId = children[0]?.id || state.childId;
-    floor.splice(0, floor.length, ...children.map(c => ({ id: c.id, name: c.name, dept: c.dept })));
-    state.absence = {};
-    state.pickedUp = {};
-    dbChildren.forEach(row => {
-      const a = (row.attendance || [])[0];
-      if (!a) return;
-      if (a.status === "absent_sick") state.absence[row.id] = "sjuk";
-      if (a.status === "absent_leave") state.absence[row.id] = "ledig";
-      if (a.status === "picked_up") state.pickedUp[row.id] = true;
-      if (a.pickup_by) state.pickupBy[row.id] = a.pickup_by;
-    });
-    state.boxItems = dbChildren.flatMap(row => (row.shelf_items || []).map(item => ({
-      id: item.id,
-      childId: row.id,
-      title: item.title,
-      status: shelfStatus(item.status),
-      note: item.note || "",
-    })));
-    state.usingSupabase = true;
-  } catch (error) {
-    state.authError = error.message;
+    if (state.session) await request("/auth/v1/logout", { method: "POST" });
   } finally {
-    state.loading = false;
+    saveSession(null);
+    Object.assign(state, {
+      profile: null,
+      organization: null,
+      schools: [],
+      departments: [],
+      staffAssignments: [],
+      children: [],
+      health: [],
+      contacts: [],
+      consents: [],
+      attendance: [],
+      posts: [],
+      invitations: [],
+      selectedChildId: null,
+      view: "home",
+      notice: null,
+    });
   }
 }
 
-async function writeAttendance(childId, statusValue) {
-  await supabaseFetch("/rest/v1/attendance?on_conflict=child_id,date", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify([{ child_id: childId, date: new Date().toISOString().slice(0, 10), status: statusValue }]),
-  });
-  await loadPilotData();
+async function loadData() {
+  await refreshSessionIfNeeded();
+  if (!state.session?.access_token) return;
+  const userId = state.session.user?.id;
+  if (!userId) throw new Error("Sessionen saknar användar-id.");
+  const profiles = await request(`/rest/v1/profiles?select=id,auth_user_id,organization_id,name,email,phone,role&auth_user_id=eq.${encodeURIComponent(userId)}&limit=1`);
+  state.profile = profiles[0] || null;
+  if (!state.profile) {
+    state.organization = null;
+    state.view = state.inviteCode ? "join" : "onboarding";
+    return;
+  }
+
+  const organizationId = encodeURIComponent(state.profile.organization_id);
+  const date = todayIso();
+  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, posts, invitations] = await Promise.all([
+    request(`/rest/v1/organizations?select=id,name,type,created_at&id=eq.${organizationId}&limit=1`),
+    request(`/rest/v1/preschools?select=id,organization_id,name,phone,address,postal_code,city,opening_hours,created_at&organization_id=eq.${organizationId}&order=name.asc`),
+    request("/rest/v1/departments?select=id,preschool_id,name,created_at&order=name.asc"),
+    request("/rest/v1/staff_departments?select=staff_id,department_id"),
+    request("/rest/v1/children?select=id,department_id,name,birth_date,notes,avatar_color,created_at&order=name.asc"),
+    request("/rest/v1/child_health?select=child_id,allergies,diet,conditions,medication,emergency,updated_at"),
+    request("/rest/v1/child_contacts?select=id,child_id,name,relation,phone,can_pickup,is_primary,created_at&order=name.asc"),
+    request("/rest/v1/consents?select=child_id,type,allowed,updated_at"),
+    request(`/rest/v1/attendance?select=id,child_id,date,status,dropoff_at,pickup_at,pickup_by,updated_at&date=eq.${date}`),
+    request("/rest/v1/posts?select=id,department_id,child_id,type,title,body,created_at&order=created_at.desc&limit=100"),
+    request("/rest/v1/invitations?select=id,email,role,relation,code,status,department_id,child_id,expires_at,created_at&order=created_at.desc&limit=100"),
+  ]);
+
+  state.organization = organizations[0] || null;
+  state.schools = schools;
+  state.departments = departments;
+  state.staffAssignments = staffAssignments;
+  state.children = children;
+  state.health = health;
+  state.contacts = contacts;
+  state.consents = consents;
+  state.attendance = attendance;
+  state.posts = posts;
+  state.invitations = invitations;
+  if (!state.children.some((child) => child.id === state.selectedChildId)) state.selectedChildId = state.children[0]?.id || null;
+  const allowedViews = {
+    admin: ["overview", "schools", "people", "account"],
+    staff: ["attendance", "messages", "people", "account"],
+    parent: ["home", "child", "messages", "account"],
+  };
+  const roleViews = allowedViews[state.profile.role] || allowedViews.parent;
+  if (!roleViews.includes(state.view)) state.view = roleViews[0];
 }
 
-function renderAuth() {
-  const invite = state.authMode === "invite";
-  return `<section class="hero-card auth-card">${arthurMascot(invite ? "read" : "wave")}<p class="kicker">Arthur pilot</p><h1 class="h1">${invite ? "Inbjudan" : state.authMode === "register" ? "Skapa konto" : "Logga in"}</h1><p class="sub">${invite ? "Ange kod från förskolan för att kopplas till rätt barn, avdelning eller organisation." : "Logga in med uppgifterna du fått av Arthur-teamet."}</p></section>
-  <article class="card auth-form">
-    ${!invite ? `<label>E-post<input id="authEmail" autocomplete="email" placeholder="namn@arthur.test"></label><label>Lösenord<input id="authPassword" type="password" autocomplete="current-password" placeholder="Lösenord"></label>` : ""}
-    ${state.authMode === "register" ? `<label>Namn<input id="authName" autocomplete="name" placeholder="Ditt namn"></label>` : ""}
-    ${invite ? `<label>Inbjudningskod<input id="inviteCode" placeholder="PARENT-ELSA"></label>` : ""}
-    ${state.authError ? `<p class="status bad">${esc(state.authError)}</p>` : ""}
-    <div class="actions">
-      ${invite ? `<button class="primary" data-action="accept-invite">Koppla konto</button>` : `<button class="primary" data-action="${state.authMode === "register" ? "register" : "login"}">${state.authMode === "register" ? "Skapa konto" : "Logga in"}</button>`}
-    </div>
-    <div class="auth-switch">
-      <button data-action="auth-mode" data-mode="login">Logga in</button>
-      <button data-action="auth-mode" data-mode="register">Skapa konto</button>
-      <button data-action="auth-mode" data-mode="invite">Ange kod</button>
-    </div>
-  </article>`;
+async function acceptInvitation(code) {
+  await rpc("accept_invitation", { invite_code: code.trim().toUpperCase() });
+  state.inviteCode = "";
+  history.replaceState({}, "", `${location.pathname}${location.hash}`);
+  await loadData();
+  state.notice = { type: "success", text: "Inbjudan är accepterad. Välkommen till ärtan!" };
 }
 
-function esc(v) { return String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
-function child() { return children.find(c => c.id === state.childId); }
-function cfg() { return ownerTypes[state.ownerType]; }
-function absent(id) { return state.absence[id]; }
-function status(id) { if (absent(id)) return absent(id) === "sjuk" ? "Sjuk" : "Ledig"; if (state.pickedUp[id]) return "Hämtad"; return "Inne"; }
-function today() { return "torsdag 24 september"; }
-function signedCount() { return state.documents.filter(d => d.status === "Att signera").length; }
-function criticalFor(id) { return children.find(c => c.id === id)?.critical; }
-function criticalCount(info) {
-  if (!info) return 0;
-  return (info.allergies?.length || 0) + (info.conditions?.length || 0) + (info.medication && !info.medication.startsWith("Ingen") ? 1 : 0) + (info.diet ? 1 : 0);
+function noticeHtml() {
+  if (!state.notice) return "";
+  return `<div class="notice ${esc(state.notice.type)}" role="status">${esc(state.notice.text)}</div>`;
 }
-function criticalCard(c) {
-  const info = c.critical;
-  const count = criticalCount(info);
-  if (!count) return `<article class="safe-card"><strong>Ingen kritisk varning</strong><span>Specialkost eller medicin saknas.</span></article>`;
-  const allergies = info.allergies.length ? info.allergies.join(", ") : "Inga registrerade";
-  return `
-    <article class="critical-card">
-      <div>
-        <p class="kicker">Superviktig info</p>
-        <h2>${esc(count)} kritiska punkter</h2>
-        <p>Allergier: ${esc(allergies)}</p>
-      </div>
-      <button type="button" data-action="open-health">Öppna</button>
-    </article>`;
-}
-function avatar(c) {
-  return `<div class="avatar" style="--avatar:${esc(c.avatarColor)}">${esc(c.avatar)}</div>`;
-}
-function contactsBlock(title, items) {
-  return `<article class="card"><p class="kicker">${esc(title)}</p><ul class="contact-list">${items.map(item => `<li><div><strong>${esc(item.name)}</strong><span>${esc(item.relation)}${item.primary ? " · primär" : ""}${item.pickup ? " · får hämta" : ""}</span></div><a href="tel:${esc(item.phone.replaceAll(" ", ""))}">${esc(item.phone)}</a></li>`).join("")}</ul></article>`;
-}
-function consentText(value) { return value ? "OK" : "Inte OK"; }
-function consentClass(value) { return value ? "good" : "bad"; }
-function consentBlock(c) {
-  const items = [
-    ["appBlog", "Bild i Arthur-blogg", "Pedagoger får publicera bilder i appen."],
-    ["groupPhoto", "Gruppbild i appen", "Barnet får synas i gruppbild i appen."],
-    ["socialMedia", "Sociala medier", "Barnet får synas på extern kanal."],
-  ];
-  return `<article class="card"><p class="kicker">Samtycken</p><div class="consent-grid">${items.map(([key, title, desc]) => `<button type="button" data-action="toggle-consent" data-consent="${key}" class="consent ${consentClass(c.consent[key])}"><strong>${esc(title)}</strong><span>${esc(desc)}</span><b>${consentText(c.consent[key])}</b></button>`).join("")}</div></article>`;
-}
-function childTabs() { return `<div class="child-tabs">${children.map(c => `<button type="button" data-action="child" data-id="${c.id}" aria-pressed="${state.childId === c.id}">${esc(c.name)}<br><small>${esc(c.dept)}</small></button>`).join("")}</div>`; }
 
-function arthurMascot(variant = "wave") {
-  const backpack = variant === "walk";
-  const book = variant === "read";
-  return `<svg class="arthur-mascot ${esc(variant)}" viewBox="0 0 140 130" role="img" aria-label="Arthur-maskot">
+function peaMascot() {
+  return `<svg class="pea-mascot" viewBox="0 0 140 130" role="img" aria-label="ärtans maskot">
     <ellipse class="mascot-shadow" cx="72" cy="119" rx="38" ry="7"/>
-    ${backpack ? `<rect class="mascot-bag" x="26" y="59" width="28" height="38" rx="12"/><path class="mascot-strap" d="M49 63c12 11 12 30 1 39"/>` : ""}
     <circle class="mascot-body" cx="71" cy="58" r="37"/>
-    <path class="mascot-leg" d="M54 91c-6 7-11 13-18 19"/>
-    <path class="mascot-leg" d="M82 93c7 3 14 7 23 14"/>
-    <path class="mascot-arm" d="M38 66c-10 4-16 10-20 18"/>
-    <path class="mascot-arm" d="${variant === "wave" ? "M101 61c12-6 19-14 23-25" : "M100 68c11 3 19 8 25 16"}"/>
-    <circle class="mascot-eye-white" cx="59" cy="49" r="11"/>
-    <circle class="mascot-eye-white" cx="83" cy="47" r="11"/>
-    <circle class="mascot-eye" cx="62" cy="50" r="6"/>
-    <circle class="mascot-eye" cx="86" cy="48" r="6"/>
+    <path class="mascot-leg" d="M54 91c-6 7-11 13-18 19"/><path class="mascot-leg" d="M82 93c7 3 14 7 23 14"/>
+    <path class="mascot-arm" d="M38 66c-10 4-16 10-20 18"/><path class="mascot-arm" d="M101 61c12-6 19-14 23-25"/>
+    <circle class="mascot-eye-white" cx="59" cy="49" r="11"/><circle class="mascot-eye-white" cx="83" cy="47" r="11"/>
+    <circle class="mascot-eye" cx="62" cy="50" r="6"/><circle class="mascot-eye" cx="86" cy="48" r="6"/>
     <path class="mascot-smile" d="M65 70c5 4 11 4 16 0"/>
-    ${book ? `<path class="mascot-book left" d="M42 78c14-8 25-6 31 4v31c-8-9-18-11-31-5z"/><path class="mascot-book right" d="M73 82c8-10 20-12 34-4v30c-13-6-23-4-34 5z"/>` : ""}
   </svg>`;
 }
 
-function arthurCoach(title, body, variant = "wave") {
-  return `<article class="coach-card">${arthurMascot(variant)}<div><p class="kicker">Arthur hjälper till</p><h3>${esc(title)}</h3><p>${esc(body)}</p></div></article>`;
+function emptyState(title, text) {
+  return `<article class="empty-card"><h3>${esc(title)}</h3><p>${esc(text)}</p></article>`;
 }
 
-function arthurTasks(c = child()) {
-  const tasks = [];
-  const shelfNeeds = state.boxItems.filter(item => item.childId === c.id && item.status !== "Finns");
-  const docs = signedCount();
-  if (shelfNeeds.length) tasks.push({
-    id: `shelf-${c.id}`,
-    screen: "box",
-    title: "Fyll på hyllan",
-    body: shelfNeeds.map(item => item.title.replace(/^Saknar\s+/i, "").replace(/ börjar ta slut$/i, "").toLowerCase()).join(", "),
-    action: "Öppna hyllan",
-  });
-  if (docs) tasks.push({
-    id: "docs",
-    screen: "documents",
-    title: "Signera dokument",
-    body: `${docs} dokument väntar på dig.`,
-    action: "Öppna dokument",
-  });
-  if (criticalCount(c.critical)) tasks.push({
-    id: `health-${c.id}`,
-    screen: "health",
-    title: "Kolla viktig info",
-    body: `${criticalCount(c.critical)} punkter om ${c.name}.`,
-    action: "Visa info",
-  });
-  return tasks.map(task => ({ ...task, done: !!state.completedTasks[task.id] }));
+function field(label, name, value = "", options = {}) {
+  const { type = "text", required = false, placeholder = "", autocomplete = "", min = "", max = "", minlength = "" } = options;
+  return `<label>${esc(label)}<input name="${esc(name)}" type="${esc(type)}" value="${esc(value)}" ${required ? "required" : ""} ${placeholder ? `placeholder="${esc(placeholder)}"` : ""} ${autocomplete ? `autocomplete="${esc(autocomplete)}"` : ""} ${min ? `min="${esc(min)}"` : ""} ${max ? `max="${esc(max)}"` : ""} ${minlength ? `minlength="${esc(minlength)}"` : ""}></label>`;
 }
 
-function arthurProgress(c = child()) {
-  const tasks = arthurTasks(c);
-  const done = tasks.filter(task => task.done).length;
-  return { tasks, done, total: tasks.length, percent: tasks.length ? Math.round((done / tasks.length) * 100) : 100 };
+function textareaField(label, name, value = "", placeholder = "", required = false) {
+  return `<label>${esc(label)}<textarea name="${esc(name)}" ${placeholder ? `placeholder="${esc(placeholder)}"` : ""} ${required ? "required" : ""}>${esc(value)}</textarea></label>`;
 }
 
-function renderArthurTasks(limit = 3) {
-  const { tasks, done, total, percent } = arthurProgress();
-  const visible = tasks.slice(0, limit);
-  return `<article class="task-card">
-    <div class="task-head">${arthurMascot(percent === 100 ? "wave" : "walk")}<div><p class="kicker">Arthur idag</p><h3>${total ? `${done}/${total} klart` : "Allt klart"}</h3><p>${total ? "Jag håller koll på dagens småsaker." : "Inget behöver göras just nu."}</p></div></div>
-    <div class="progress"><i style="width:${percent}%"></i></div>
-    ${visible.length ? `<div class="task-list">${visible.map(task => `<button class="task-row ${task.done ? "done" : ""}" data-action="${task.done ? "go" : "complete-task"}" data-screen="${esc(task.screen)}" data-id="${esc(task.id)}"><span>${task.done ? "✓" : "○"}</span><strong>${esc(task.title)}</strong><small>${esc(task.body)}</small></button>`).join("")}</div>` : `<div class="empty">Arthur ger tummen upp.</div>`}
-  </article>`;
+function selectField(label, name, options, selected = "", required = false) {
+  return `<label>${esc(label)}<select name="${esc(name)}" ${required ? "required" : ""}>${options.map(([value, text]) => `<option value="${esc(value)}" ${String(value) === String(selected) ? "selected" : ""}>${esc(text)}</option>`).join("")}</select></label>`;
 }
 
-
-
-function scheduleMini(c) {
-  return `<div class="timeline"><div><span>Lämnas</span><strong>${esc(c.dropoff)}</strong></div><i></i><div><span>Hämtas</span><strong>${esc(c.pickup)}</strong></div></div>`;
-}
-function renderDiary() {
-  const c = child();
-  const entries = state.moments.map(moment => {
-    const childForEntry = children.find(kid => kid.id === moment.childId);
-    const consentOk = childForEntry?.consent.appBlog;
-    return `<article class="diary-card ${consentOk ? "" : "blocked"}">
-      <div class="diary-photo">${consentOk ? "📷" : "🔒"}</div>
-      <p class="kicker">${esc(moment.dept)}</p>
-      <h3>${esc(moment.title)}</h3>
-      <p>${consentOk ? esc(moment.body) : "Bild och barnnamn döljs eftersom samtycke saknas."}</p>
-      <p class="meta">${esc(moment.time)} · ${esc(moment.by)}${consentOk ? "" : " · samtycke krävs"}</p>
-    </article>`;
-  }).join("");
-  return `${childTabs()}<section class="hero-card"><p class="kicker">Dagbok</p><h1 class="h1">Dagen på ${esc(c.dept)}</h1><p class="sub">Pedagogernas inlägg. Bildsamtycken styr vad som får synas.</p></section>${entries}`;
+function renderAuth() {
+  const registerMode = state.authView === "register";
+  const disabled = !config.enabled;
+  return `${noticeHtml()}
+    <section class="hero-card auth-card">${peaMascot()}<div><p class="kicker">${APP_NAME}</p><h1 class="h1">${registerMode ? "Skapa konto" : "Välkommen"}</h1><p class="sub">${registerMode ? "Använd din riktiga e-postadress. Därefter skapar du en organisation eller ansluter med en inbjudan." : "Logga in för att nå din organisation, skola eller ditt barn."}</p></div></section>
+    ${disabled ? `<article class="card important"><h3>Konfiguration saknas</h3><p>Aktivera Supabase i <code>supabase-config.js</code>.</p></article>` : ""}
+    <form class="card form-stack" data-form="${registerMode ? "register" : "login"}">
+      ${registerMode ? field("Namn", "name", "", { required: true, autocomplete: "name" }) : ""}
+      ${field("E-post", "email", "", { type: "email", required: true, autocomplete: "email" })}
+      ${field("Lösenord", "password", "", { type: "password", required: true, autocomplete: registerMode ? "new-password" : "current-password", minlength: "8" })}
+      ${state.inviteCode ? `<p class="form-hint">Inbjudningskod: <strong>${esc(state.inviteCode)}</strong></p>` : ""}
+      <button class="primary" type="submit" ${disabled ? "disabled" : ""}>${registerMode ? "Skapa konto" : "Logga in"}</button>
+      <button class="secondary" type="button" data-action="auth-view" data-view="${registerMode ? "login" : "register"}">${registerMode ? "Jag har redan konto" : "Skapa nytt konto"}</button>
+    </form>`;
 }
 
-function renderFood() {
-  const c = child();
-  const todayMeal = state.meals[0];
-  return `<section class="hero-card food-hero"><p class="kicker">Mat</p><div class="food-emoji">${esc(todayMeal.image)}</div><h1 class="h1">${esc(todayMeal.lunch)}</h1><p class="sub">Mellanmål: ${esc(todayMeal.snack)}</p></section>
-    <article class="card"><p class="kicker">För ${esc(c.name)}</p><h3>${esc(todayMeal.special[c.id] || "Ingen specialkost registrerad.")}</h3><p class="meta">Kopplat till barnets specialkost och allergier.</p></article>
-    <article class="card"><p class="kicker">Allergener</p><div class="tag-row">${todayMeal.allergens.map(item => `<span>${esc(item)}</span>`).join("")}</div></article>
-    <section class="week">${state.meals.map(meal => `<article class="day"><strong>${esc(meal.day)}</strong><span>${esc(meal.lunch)}</span></article>`).join("")}</section>`;
+function renderOnboarding() {
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Kom igång</p><h1 class="h1">Anslut till ärtan</h1><p class="sub">Skapa en ny organisation eller använd koden du fått från skolan.</p></section>
+    <form class="card form-stack" data-form="accept-invite">
+      <h2>Jag har en inbjudan</h2>
+      ${field("Inbjudningskod", "code", state.inviteCode, { required: true, placeholder: "Skriv koden här" })}
+      <button class="primary" type="submit">Acceptera inbjudan</button>
+    </form>
+    <form class="card form-stack" data-form="create-organization">
+      <h2>Starta en organisation</h2>
+      ${field("Organisationens namn", "organization_name", "", { required: true, placeholder: "Exempelvis Förskolor AB" })}
+      ${selectField("Organisationstyp", "organization_type", [["kommun", "Kommun"], ["privat", "Privat"], ["kooperativ", "Kooperativ"]], "privat", true)}
+      ${field("Första skolans namn", "preschool_name", "", { required: true })}
+      ${field("Första avdelningen", "department_name", "", { required: true })}
+      <button class="primary" type="submit">Skapa organisation</button>
+    </form>`;
 }
 
-function renderMore() {
-  const c = child();
-  const overview = [
-    { screen: "assistant", icon: "🙂", title: "Arthur idag", text: `${arthurProgress(c).done}/${arthurProgress(c).total} klart`, tone: "sun", badge: arthurProgress(c).total - arthurProgress(c).done },
-    { screen: "inbox", icon: "📥", title: "Meddelanden", text: `${state.notes.length} nytt`, tone: "sky", badge: state.notes.length },
-    { screen: "diary", icon: "📷", title: "Min dag", text: "Vardag och berättelser", tone: "sun" },
-    { screen: "schedule", icon: "📅", title: "Kalender", text: `${c.dropoff}–${c.pickup} idag`, tone: "sage" },
-    { screen: "absence", icon: "➕", title: "Frånvaro", text: status(c.id), tone: "coral" },
-    { screen: "food", icon: "🍲", title: "Mat", text: state.meals[0].lunch, tone: "sun" },
-    { screen: "documents", icon: "📄", title: "Dokument", text: `${signedCount()} att signera`, tone: "sky", badge: signedCount() },
-    { screen: "health", icon: "⚕️", title: "Viktigt om barnet", text: `${criticalCount(c.critical)} punkter`, tone: "coral", badge: criticalCount(c.critical) },
-    { screen: "contacts", icon: "☎️", title: "Kontakter", text: `${c.guardians.length + c.relatives.length} personer`, tone: "sage" },
-    { screen: "preschool", icon: "🏫", title: "Förskolan", text: `${cfg().unit} · ${c.dept}`, tone: "plain" },
-    { screen: "classlist", icon: "👥", title: "Gruppen", text: `${floor.filter(kid => kid.dept === c.dept).length} barn på ${c.dept}`, tone: "sage" },
-    { screen: "box", icon: "🧺", title: "Hylla", text: `${state.boxItems.filter(item => item.childId === c.id && item.status !== "Finns").length} att fylla på`, tone: "coral", badge: state.boxItems.filter(item => item.childId === c.id && item.status !== "Finns").length },
-    { screen: "gallery", icon: "🖼️", title: "Bilder", text: `${state.gallery.filter(item => item.childId === c.id && item.visible).length} nya`, tone: "sun" },
-    { screen: "playdate", icon: "🤝", title: "Lekträff", text: state.playdateOptIn ? "Opt-in på" : "Av", tone: "sky" },
-    { screen: "development", icon: "🌱", title: "Utveckling", text: "Portfolio och samtal", tone: "sage" },
-    { screen: "notes", icon: "📝", title: "Anteckningar", text: "Barnets notiser", tone: "plain" },
-    { screen: "activities", icon: "🎨", title: "Aktiviteter", text: "Skog, skapande, vila", tone: "sun" },
-    { screen: "lost", icon: "🧦", title: "Upphittat", text: `${state.lostItems.filter(item => !item.claimed).length} saker`, tone: "coral", badge: state.lostItems.filter(item => !item.claimed).length },
-    { screen: "settings", icon: "⚙️", title: "Inställningar", text: cfg().label, tone: "plain" },
-  ];
-  return `<section class="hero-card"><p class="kicker">Översikt</p><h1 class="h1">Allt i Arthur</h1><p class="sub">Samma täckning som konkurrentens rutnät, men med Arthur som hjälper dig prioritera.</p></section>${renderArthurTasks(2)}<div class="overview-grid">${overview.map(item => `<button class="overview-card ${item.tone}" data-action="go" data-screen="${item.screen}">${item.badge ? `<b>${item.badge}</b>` : ""}<span class="overview-icon">${item.icon}</span><strong>${esc(item.title)}</strong><small>${esc(item.text)}</small></button>`).join("")}</div>`;
-}
-
-function renderAssistant() {
-  const c = child();
-  const { done, total, percent } = arthurProgress(c);
-  return `${childTabs()}<section class="hero-card shelf-hero"><div><p class="kicker">Arthur idag</p><h1 class="h1">${done}/${total} klart</h1><p class="sub">Progression, uppgifter och små påminnelser samlat på ett ställe.</p></div>${arthurMascot(percent === 100 ? "wave" : "read")}</section>${renderArthurTasks(12)}<article class="card"><p class="kicker">Arthur-röst</p><h3>Varm, konkret och lugn</h3><p>Arthur rapporterar inte allt. Bara det som hjälper dagen framåt.</p></article>`;
-}
-
-
-function renderAbsence() {
-  const c = child();
-  return `${childTabs()}<section class="hero-card"><p class="kicker">Frånvaro</p><h1 class="h1">${esc(c.name)}</h1><p class="sub">Registrera sjuk eller ledig. Personal ser ändringen direkt.</p><div class="actions"><button class="danger" data-action="absence" data-kind="sjuk">Sjuk idag</button><button class="secondary" data-action="absence" data-kind="ledig">Ledig idag</button></div></section><ul class="rows"><li><span>Dagens status</span><span class="status">${esc(status(c.id))}</span></li><li><span>Senaste sjukfrånvaro</span><span class="status">12 sep</span></li></ul>`;
-}
-
-function renderHealthSummary() {
-  const c = child();
-  return `${childTabs()}${criticalCard(c)}<article class="card"><p class="kicker">Detaljer</p><ul class="rows"><li><span>Allergier</span><span class="status bad">${esc(c.critical.allergies.length ? c.critical.allergies.join(", ") : "Inga")}</span></li><li><span>Specialkost</span><span class="status">${esc(c.critical.diet)}</span></li><li><span>Medicin</span><span class="status">${esc(c.critical.medication)}</span></li></ul></article>`;
-}
-
-function renderContacts() {
-  const c = child();
-  return `${childTabs()}<section class="hero-card"><p class="kicker">Kontakter</p><h1 class="h1">${esc(c.name)}</h1><p class="sub">Vårdnadshavare och närstående som förskolan får kontakta.</p></section>${contactsBlock("Vårdnadshavare", c.guardians)}${contactsBlock("Närstående och hämtare", c.relatives)}`;
-}
-
-function renderLost() {
-  const openItems = state.lostItems.filter(item => !item.claimed);
-  return `<section class="hero-card"><p class="kicker">Upphittat</p><h1 class="h1">${openItems.length} saker väntar</h1><p class="sub">Kläder och saker som personalen lagt upp från avdelningen.</p></section>${openItems.map(item => `<article class="card lost-card"><div class="lost-emoji">🧦</div><p class="kicker">${esc(item.date)} · ${esc(item.where)}</p><h3>${esc(item.title)}</h3><p>Tror du den är din? Markera så ser personalen det.</p><div class="actions"><button class="primary" data-action="claim-lost" data-id="${esc(item.id)}">Det är vår</button></div></article>`).join("") || `<div class="empty">Inget upphittat just nu.</div>`}`;
-}
-
-function renderBox() {
-  const c = child();
-  const items = state.boxItems.filter(item => item.childId === c.id);
-  const needs = items.filter(item => item.status !== "Finns");
-  const notice = needs.length ? `${c.name}s hylla behöver fyllas på – ta med ${needs.map(item => item.title.replace(/^Saknar\s+/i, "").replace(/ börjar ta slut$/i, "").toLowerCase()).join(", ")}.` : `${c.name}s hylla är komplett.`;
-  return `${childTabs()}<section class="hero-card shelf-hero"><div><p class="kicker">Hylla</p><h1 class="h1">${esc(c.name)}s hylla</h1><p class="sub">Barnets plats på förskolan – oavsett om det är låda, korg, fack eller krok.</p></div>${arthurMascot("walk")}</section>${arthurCoach("Jag håller koll på hyllan", notice, "wave")}<ul class="rows">${items.map(item => `<li><span><strong>${esc(item.title)}</strong><br><small>${esc(item.note)}</small></span><span class="status ${item.status === "Saknas" || item.status === "Lågt" ? "bad" : "good"}">${item.status === "Finns" ? "✓" : esc(item.status)}</span></li>`).join("")}</ul><div class="actions"><button class="primary" data-action="complete-task" data-id="shelf-${esc(c.id)}">Jag har koll</button></div>`;
-}
-
-function renderGallery() {
-  const c = child();
-  const items = state.gallery.filter(item => item.childId === c.id && item.visible);
-  const locked = state.gallery.filter(item => item.childId === c.id && !item.visible);
-  return `${childTabs()}<section class="hero-card"><p class="kicker">Bilder</p><h1 class="h1">Bilder från vardagen</h1><p class="sub">Barnspecifikt och samtyckesstyrt. Inget delas externt.</p></section>${items.map(item => `<article class="diary-card"><div class="diary-photo">${esc(item.emoji)}</div><p class="kicker">${esc(item.date)} · ${esc(item.dept)}</p><h3>${esc(item.title)}</h3><p>${esc(item.body)}</p></article>`).join("")}${locked.length ? `<article class="card important"><p class="kicker">Dolt av samtycke</p><h3>${locked.length} inlägg visas inte</h3><p>Bilder respekterar barnets bildsamtycke.</p></article>` : ""}`;
-}
-
-function renderClassList() {
-  const c = child();
-  const kids = floor.filter(kid => kid.dept === c.dept);
-  return `<section class="hero-card"><p class="kicker">Gruppen</p><h1 class="h1">${esc(c.dept)}</h1><p class="sub">Barn i samma avdelning. Kontaktuppgifter visas bara där familjer aktivt valt att dela.</p></section><ul class="rows">${kids.map(kid => `<li><span><strong>${esc(kid.name)}</strong><br><small>${kid.name === c.name ? "Ditt barn" : "Vårdnadshavare kan kontaktas via lekträff"}</small></span><span class="status">${kid.name === c.name ? "Du" : "Privat"}</span></li>`).join("")}</ul><article class="card"><p class="kicker">Sekretess</p><h3>Inga telefonnummer som default</h3><p>Arthur visar gruppen utan att läcka kontaktlistor. Lekträff kräver opt-in från båda familjer.</p></article>`;
-}
-
-
-function renderPlaceholder(title, text) {
-  return `<section class="hero-card"><p class="kicker">Arthur</p><h1 class="h1">${esc(title)}</h1><p class="sub">${esc(text)}</p></section><div class="empty">Den här modulen byggs ut i nästa steg.</div>`;
+function childTabs() {
+  if (!state.children.length) return "";
+  return `<div class="child-tabs">${state.children.map((child) => `<button type="button" data-action="select-child" data-id="${esc(child.id)}" aria-pressed="${child.id === state.selectedChildId}">${esc(child.name)}<small>${esc(departmentName(child.department_id))}</small></button>`).join("")}</div>`;
 }
 
 function renderParentHome() {
-  const c = child();
-  const isAbsent = absent(c.id);
-  const latestMoment = state.moments.find(m => m.childId === c.id);
-  return `
-    ${childTabs()}
-    <section class="hero-card home-hero">
-      <div>
-        <p class="kicker">${esc(today())}</p>
-        <h1 class="h1">Hej ${esc(c.name)}</h1>
-        ${isAbsent ? `<p class="big-time exception">${isAbsent === "sjuk" ? "Sjuk" : "Ledig"}</p><p class="sub">Schemat är avbokat. ${esc(c.dept)} ser det direkt.</p><div class="actions"><button class="secondary" data-action="undo-absence">Ångra</button></div>` : `${scheduleMini(c)}<p class="kicker" style="margin-top:18px">Hämtas</p><p class="big-time">${esc(c.pickup)}</p><p class="sub">${esc(state.pickupBy[c.id])} hämtar</p><div class="actions"><button class="secondary" data-action="pickup">Ändra hämtare</button><button class="danger" data-action="absence" data-kind="sjuk">Sjuk idag</button></div>`}
-      </div>
-      ${arthurMascot("wave")}
-    </section>
-    ${arthurCoach("Små steg idag", `${c.name}s dag är igång. Jag säger till om hyllan, dokument eller viktiga ändringar.`, "walk")}
-    ${renderArthurTasks(3)}
-    <div class="quick-row"><button data-action="go" data-screen="schedule">📅 Kalender</button><button data-action="go" data-screen="documents">📄 Dokument ${signedCount() ? `<b>${signedCount()}</b>` : ""}</button><button data-action="go" data-screen="box">🧺 Hylla</button></div>
-    ${state.notes.map(note => `<article class="card ${note.important ? "important" : ""}"><p class="kicker">${note.important ? "Viktigt" : "Meddelande"}</p><h3>${esc(note.title)}</h3><p>${esc(note.body)}</p><p class="meta">${esc(note.from)}</p></article>`).join("")}
-    ${!isAbsent && latestMoment ? `<article class="card"><p class="kicker">${esc(latestMoment.dept)}</p><h3>${esc(latestMoment.title)}</h3><p>${esc(latestMoment.body)}</p><p class="meta">${esc(latestMoment.time)} · ${esc(latestMoment.by)}</p></article>` : ""}
-  `;
+  const child = selectedChild();
+  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Min dag</p><h1 class="h1">Välkommen</h1><p class="sub">När skolan har lagt till och kopplat ditt barn visas informationen här.</p></section>${emptyState("Inget barn kopplat", "Kontakta skolan om du redan har accepterat en inbjudan.")}`;
+  const attendance = attendanceFor(child.id);
+  const messages = state.posts.filter((post) => !post.child_id || post.child_id === child.id).slice(0, 3);
+  return `${noticeHtml()}${childTabs()}<section class="hero-card home-hero"><div><p class="kicker">${esc(new Intl.DateTimeFormat("sv-SE", { dateStyle: "full" }).format(new Date()))}</p><h1 class="h1">${esc(child.name)}</h1><p class="big-status">${esc(attendanceLabel(attendance?.status))}</p><p class="sub">${esc(departmentName(child.department_id))}${attendance?.pickup_at ? ` · hämtning ${esc(attendance.pickup_at.slice(0, 5))}` : ""}</p></div>${peaMascot()}</section>
+    <form class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><h2>Dagens plan</h2>
+      ${selectField("Status", "status", [["in", "På plats"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]], attendance?.status || "in", true)}
+      <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
+      ${field("Vem hämtar?", "pickup_by", attendance?.pickup_by || "")}
+      <button class="primary" type="submit">Spara dagens plan</button>
+    </form>
+    <section><div class="section-head"><div><p class="kicker">Från skolan</p><h2>Meddelanden</h2></div><button class="link" data-action="navigate" data-view="messages">Visa alla</button></div>${messages.map(renderPost).join("") || emptyState("Inga meddelanden", "Nya meddelanden från personalen visas här.")}</section>`;
 }
 
-function renderParentBarn() {
-  const c = child();
-  const rows = [["Ålder", c.age], ["Avdelning", c.dept], ["Dagens status", status(c.id)], ["Syns i klasslista", "Nej som default"], ["Lekträff", state.playdateOptIn ? "Opt-in på" : "Av"]];
-  return `${childTabs()}<section class="profile-card">${avatar(c)}<div><p class="kicker">Barnet</p><h1 class="h1">${esc(c.name)}</h1><p class="sub">${esc(cfg().unit)} · ${esc(cfg().label)}</p><button class="link" type="button" data-action="change-photo">${c.photoUploaded ? "Byt profilbild" : "Lägg till profilbild"}</button></div></section>${criticalCard(c)}${contactsBlock("Vårdnadshavare", c.guardians)}${contactsBlock("Närstående och hämtare", c.relatives)}${consentBlock(c)}<article class="card"><p class="kicker">Övrigt</p><ul class="rows">${rows.map(([a,b]) => `<li><span>${esc(a)}</span><span class="status">${esc(b)}</span></li>`).join("")}</ul></article>`;
-}
-function renderParentInbox() { return `<section class="hero-card"><p class="kicker">Inkorg</p><h1 class="h1">Meddelanden</h1><p class="sub">Bara sådant som gäller dig och dina barn.</p></section>${state.notes.map(note => `<article class="card"><h3>${esc(note.title)}</h3><p>${esc(note.body)}</p><p class="meta">${esc(note.from)}</p></article>`).join("")}`; }
-function renderPreschool() { const c = child(); return `<section class="hero-card"><p class="kicker">Förskolan</p><h1 class="h1">${esc(cfg().unit)}</h1><p class="sub">${esc(cfg().org)} · ${esc(cfg().label)}</p></section><div class="grid"><button class="tile sun" data-action="go" data-screen="inbox">✉️<strong>Meddelanden</strong><span>${state.notes.length} aktuella</span></button><button class="tile sage" data-action="go" data-screen="schedule">📅<strong>Schema</strong><span>${esc(c.pickup)} idag</span></button><button class="tile sky" data-action="go" data-screen="documents">📄<strong>Dokument</strong><span>${signedCount()} att signera</span></button><button class="tile coral" data-action="go" data-screen="playdate">🤝<strong>Lekträff</strong><span>${state.playdateOptIn ? "På" : "Av"}</span></button></div><article class="card"><p class="kicker">Kontakt</p><ul class="rows"><li><span>Avdelning</span><span class="status">${esc(c.dept)}</span></li><li><span>Telefon</span><span class="status">08-400 00 10</span></li><li><span>Öppet</span><span class="status">06:30–17:30</span></li></ul></article>`; }
-
-function renderSchedule() {
-  return `${childTabs()}<section class="hero-card"><p class="kicker">Schema</p><h1 class="h1">Veckan</h1><p class="sub">Tiderna används för planering och hämtning.</p></section><div class="week">${state.schedule.map(d => `<article class="day ${d.today ? "today" : ""}"><strong>${esc(d.day)}</strong><span>${esc(d.dropoff)}${d.pickup ? `–${esc(d.pickup)}` : ""}</span></article>`).join("")}</div><article class="card"><h3>Ändra schema</h3><p>Schemaändring kräver bekräftelse av personal i pilotversionen.</p><div class="actions"><button class="primary" data-action="toast" data-message="Schemaförslag sparat">Föreslå ändring</button></div></article>`;
+function renderPost(post) {
+  const scope = post.child_id ? state.children.find((child) => child.id === post.child_id)?.name : departmentName(post.department_id);
+  return `<article class="card"><p class="kicker">${esc(scope || "Skolan")} · ${esc(formatTimestamp(post.created_at))}</p><h3>${esc(post.title)}</h3><p class="pre-line">${esc(post.body)}</p></article>`;
 }
 
-function renderDocuments() {
-  return `<section class="hero-card"><p class="kicker">Dokument</p><h1 class="h1">Att läsa och signera</h1><p class="sub">Allt som kräver vårdnadshavares godkännande samlas här.</p></section><ul class="rows">${state.documents.map(doc => `<li><span>${esc(doc.title)}</span><span class="status ${doc.important ? "bad" : "good"}">${esc(doc.status)}</span></li>`).join("")}</ul><div class="actions"><button class="primary" data-action="sign-docs">Signera markerade</button></div>`;
+function renderChildInfo() {
+  const child = selectedChild();
+  if (!child) return `${noticeHtml()}${emptyState("Inget barn kopplat", "Barnets uppgifter visas när en inbjudan har accepterats.")}`;
+  const health = healthFor(child.id);
+  const contacts = contactsFor(child.id);
+  const consentOptions = [
+    ["app_images", "Bilder i ärtan"],
+    ["group_images", "Gruppbilder"],
+    ["social_media", "Skolans sociala medier"],
+  ];
+  return `${noticeHtml()}${childTabs()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">Uppgifterna delas bara med behörig personal och vårdnadshavare.</p></section>
+    <form class="card form-stack" data-form="child-profile" data-child-id="${esc(child.id)}"><h2>Grunduppgifter</h2>
+      ${field("Barnets namn", "name", child.name, { required: true, autocomplete: "name" })}
+      ${field("Födelsedatum", "birth_date", child.birth_date || "", { type: "date" })}
+      ${textareaField("Det här behöver personalen veta", "notes", child.notes || "", "Trygghet, språk, rutiner eller annat viktigt")}
+      <button class="primary" type="submit">Spara grunduppgifter</button>
+    </form>
+    <form class="card form-stack" data-form="child-health" data-child-id="${esc(child.id)}"><h2>Hälsa och omsorg</h2>
+      ${field("Allergier, separera med kommatecken", "allergies", health.allergies?.join(", ") || "")}
+      ${field("Sjukdomar eller tillstånd", "conditions", health.conditions?.join(", ") || "")}
+      ${textareaField("Specialkost", "diet", health.diet || "")}
+      ${textareaField("Medicin och instruktion", "medication", health.medication || "")}
+      ${textareaField("Akut information", "emergency", health.emergency || "")}
+      <button class="primary" type="submit">Spara hälsoinformation</button>
+      ${health.updated_at ? `<p class="form-hint">Senast uppdaterad ${esc(formatTimestamp(health.updated_at))}</p>` : ""}
+    </form>
+    <article class="card"><h2>Samtycken</h2><div class="consent-grid">${consentOptions.map(([type, label]) => `<button type="button" class="consent ${consentFor(child.id, type) ? "good" : "bad"}" data-action="toggle-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}"><strong>${esc(label)}</strong><span>${consentFor(child.id, type) ? "Tillåtet" : "Inte tillåtet"}</span></button>`).join("")}</div></article>
+    <article class="card"><h2>Kontaktpersoner</h2>${contacts.length ? `<ul class="contact-list">${contacts.map((contact) => `<li><div><strong>${esc(contact.name)}</strong><span>${esc(contact.relation)}${contact.can_pickup ? " · får hämta" : ""}${contact.is_primary ? " · primär" : ""}</span></div>${contact.phone ? `<a href="tel:${esc(contact.phone.replace(/\s/g, ""))}">${esc(contact.phone)}</a>` : ""}</li>`).join("")}</ul>` : `<p class="form-hint">Inga kontaktpersoner registrerade.</p>`}</article>
+    <form class="card form-stack" data-form="contact-create" data-child-id="${esc(child.id)}"><h2>Lägg till kontaktperson</h2>
+      <div class="form-grid">${field("Namn", "name", "", { required: true })}${field("Relation", "relation", "", { required: true, placeholder: "Exempelvis mormor" })}</div>
+      ${field("Telefon", "phone", "", { type: "tel", autocomplete: "tel" })}
+      <label class="check"><input type="checkbox" name="can_pickup"> Personen får hämta barnet</label>
+      <label class="check"><input type="checkbox" name="is_primary"> Primär kontakt</label>
+      <button class="primary" type="submit">Lägg till kontakt</button>
+    </form>`;
 }
 
-function renderPlaydate() {
-  const requests = state.playdateRequests.map(r => `<article class="card"><p class="kicker">Förfrågan skickad</p><h3>${esc(r.child)}</h3><p>${esc(r.when)} efter förskolan.</p><p class="meta">Telefon delas inte förrän båda accepterar.</p></article>`).join("");
-  return `${childTabs()}<section class="hero-card"><p class="kicker">Lekträff</p><h1 class="h1">Tillsammans efter förskolan</h1><p class="sub">Opt-in. Inga klasslistor, inga telefonnummer före accept.</p><div class="actions"><button class="${state.playdateOptIn ? "secondary" : "primary"}" data-action="toggle-playdate">${state.playdateOptIn ? "Stäng av" : "Slå på opt-in"}</button></div></section>${state.playdateOptIn ? `<article class="card"><p class="kicker">Föreslå lekträff</p><div class="mode-grid">${playdateChildren.map(name => `<button data-action="request-playdate" data-child="${esc(name)}">${esc(name)}<small>Förfrågan till vårdnadshavare</small></button>`).join("")}</div></article>` : `<div class="empty">Slå på opt-in för att kunna skicka och ta emot förfrågningar.</div>`}${requests}`;
+function renderMessages() {
+  const availableDepartments = editableDepartments();
+  const canPublish = (state.profile.role === "staff" || state.profile.role === "admin") && availableDepartments.length > 0;
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Meddelanden</p><h1 class="h1">Från skolan</h1><p class="sub">Meddelanden lagras i organisationen och visas bara för rätt avdelning eller barn.</p></section>
+    ${canPublish ? `<form class="card form-stack" data-form="post-create"><h2>Publicera meddelande</h2>
+      ${selectField("Avdelning", "department_id", availableDepartments.map((department) => [department.id, `${schoolName(department.preschool_id)} · ${department.name}`]), "", true)}
+      ${selectField("Barn, valfritt", "child_id", [["", "Hela avdelningen"], ...state.children.map((child) => [child.id, child.name])], "")}
+      ${field("Rubrik", "title", "", { required: true })}${textareaField("Meddelande", "body", "", "Skriv ett tydligt meddelande", true)}
+      <button class="primary" type="submit">Publicera</button></form>` : ""}
+    ${state.posts.map(renderPost).join("") || emptyState("Inga meddelanden", canPublish ? "Publicera det första meddelandet ovan." : "Skolan har inte publicerat något ännu.")}`;
 }
 
-function renderStaffAttendance() {
-  const rows = floor.map(kid => {
-    const s = status(kid.id);
-    const info = criticalFor(kid.id);
-    const count = criticalCount(info);
-    return `<button class="row" data-action="toggle-picked" data-id="${kid.id}"><span>${esc(kid.name)}<br><small>${esc(kid.dept)}${count ? ` · ⚠ ${count}` : ""}</small></span><span class="status ${s === "Sjuk" || s === "Ledig" ? "bad" : s === "Hämtad" ? "good" : ""}">${esc(s)}</span></button>`;
-  }).join("");
-  return `<section class="hero-card"><p class="kicker">Personal</p><h1 class="h1">Närvaro</h1><p class="sub">${floor.filter(k => status(k.id) === "Inne").length} inne · ${floor.length} barn</p></section><div class="quick-row"><button data-action="staff-filter" data-filter="all">Alla</button><button data-action="staff-filter" data-filter="inside">Inne</button><button data-action="staff-filter" data-filter="absence">Frånvaro</button></div><ul class="rows">${rows}</ul>`;
+function renderAttendance() {
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Närvaro</p><h1 class="h1">Idag</h1><p class="sub">${esc(todayIso())} · ${state.children.length} barn i dina avdelningar</p></section>
+    ${state.children.length ? `<div class="attendance-list">${state.children.map((child) => {
+      const attendance = attendanceFor(child.id);
+      return `<article class="card attendance-row"><div><strong>${esc(child.name)}</strong><span>${esc(departmentName(child.department_id))}${attendance?.pickup_at ? ` · hämtas ${esc(attendance.pickup_at.slice(0, 5))}` : ""}</span></div><div class="status-buttons">${[["in", "Inne"], ["picked_up", "Hämtad"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]].map(([status, label]) => `<button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-status="${status}" aria-pressed="${attendance?.status === status}">${label}</button>`).join("")}</div></article>`;
+    }).join("")}</div>` : emptyState("Inga barn", "Du behöver kopplas till en avdelning innan närvarolistan visas.")}`;
 }
 
-function renderStaffPublish() {
-  return `<section class="hero-card"><p class="kicker">Personal</p><h1 class="h1">Publicera</h1><p class="sub">Skicka kort uppdatering till vårdnadshavare på avdelningen.</p></section><article class="card"><p class="kicker">Meddelande</p><textarea id="staffMessage" placeholder="Vi är kvar i skogen till 14."></textarea><div class="actions"><button class="primary" data-action="publish">Skicka till Eken</button></div></article><article class="card"><p class="kicker">Bilder</p><h3>Lägg upp dagens ögonblick</h3><p>Bildflödet respekterar samtycken automatiskt.</p><div class="actions"><button class="secondary" data-action="toast" data-message="Bildutkast sparat.">Skapa bildinlägg</button></div></article>`;
+function editableDepartments() {
+  if (state.profile.role !== "staff") return state.departments;
+  const assignedIds = new Set(state.staffAssignments.map((assignment) => assignment.department_id));
+  return state.departments.filter((department) => assignedIds.has(department.id));
 }
 
-function renderStaffShelf() {
-  const needs = state.boxItems.filter(item => item.status !== "Finns");
-  return `<section class="hero-card"><p class="kicker">Personal</p><h1 class="h1">Hylla</h1><p class="sub">Uppdatera vad som finns och vad familjen behöver ta med.</p></section><ul class="rows">${needs.map(item => { const c = children.find(child => child.id === item.childId); return `<li><span><strong>${esc(c?.name || "Barn")}</strong><br><small>${esc(item.title)} · ${esc(item.note)}</small></span><span class="status bad">${esc(item.status)}</span></li>`; }).join("")}</ul><article class="card"><p class="kicker">Snabbnotis</p><h3>Arthur formulerar åt dig</h3><p>“Hyllan behöver fyllas på – ta med blöjor.”</p></article>`;
+function departmentOptions() {
+  return editableDepartments().map((department) => [department.id, `${schoolName(department.preschool_id)} · ${department.name}`]);
 }
 
-function renderStaffFound() {
-  const openItems = state.lostItems.filter(item => !item.claimed);
-  return `<section class="hero-card"><p class="kicker">Personal</p><h1 class="h1">Upphittat</h1><p class="sub">Saker som väntar på ägare.</p></section>${openItems.map(item => `<article class="card"><p class="kicker">${esc(item.date)} · ${esc(item.where)}</p><h3>${esc(item.title)}</h3><p>Syns för vårdnadshavare i Upphittat.</p></article>`).join("")}<div class="actions"><button class="primary" data-action="toast" data-message="Ny sak tillagd i Upphittat.">Lägg till sak</button></div>`;
+function renderSchools() {
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">Skolor</h1><p class="sub">${esc(state.organization?.name || "")}</p></section>
+    ${state.schools.map((school) => `<article class="card"><p class="kicker">Skola</p><h2>${esc(school.name)}</h2><p>${esc(compact([school.address, compact([school.postal_code, school.city]).join(" ")]).join(", ") || "Ingen adress registrerad")}</p><p class="meta">${esc(compact([school.phone, school.opening_hours]).join(" · ") || "Inga kontaktuppgifter registrerade")}</p><ul class="rows">${state.departments.filter((department) => department.preschool_id === school.id).map((department) => `<li><span>${esc(department.name)}</span><span class="status">${state.children.filter((child) => child.department_id === department.id).length} barn</span></li>`).join("") || "<li><span>Inga avdelningar</span></li>"}</ul></article>`).join("") || emptyState("Ingen skola skapad", "Skapa organisationens första skola nedan.")}
+    <form class="card form-stack" data-form="school-create"><h2>Skapa ny skola</h2>
+      ${field("Skolans namn", "name", "", { required: true })}
+      <div class="form-grid">${field("Telefon", "phone", "", { type: "tel" })}${field("Öppettider", "opening_hours", "", { placeholder: "06:30–17:30" })}</div>
+      ${field("Adress", "address")}
+      <div class="form-grid">${field("Postnummer", "postal_code")}${field("Ort", "city")}</div>
+      ${field("Första avdelningen", "department_name", "", { required: true })}
+      <button class="primary" type="submit">Skapa skola</button>
+    </form>`;
 }
 
-function renderStaff() {
-  if (state.staffScreen === "publish") return renderStaffPublish();
-  if (state.staffScreen === "shelf") return renderStaffShelf();
-  if (state.staffScreen === "found") return renderStaffFound();
-  return renderStaffAttendance();
+function invitationLink(code) {
+  return `${location.origin}${location.pathname}?invite=${encodeURIComponent(code)}`;
 }
 
-function renderAdmin() {
-  const current = cfg();
-  return `<section class="hero-card"><p class="kicker">Huvudman</p><h1 class="h1">${esc(current.org)}</h1><p class="sub">Konfigurerad som ${esc(current.label.toLowerCase())}</p></section><div class="owner-tabs">${Object.entries(ownerTypes).map(([id, o]) => `<button data-action="owner" data-id="${id}" aria-pressed="${state.ownerType === id}">${esc(o.label)}</button>`).join("")}</div><div class="metric-grid"><article class="metric"><strong>${children.length}</strong><span>Barn i pilot</span></article><article class="metric"><strong>${floor.length}</strong><span>Barn på golvet</span></article><article class="metric"><strong>${Object.keys(state.absence).length}</strong><span>Frånvaro idag</span></article><article class="metric"><strong>${signedCount()}</strong><span>Att signera</span></article></div><article class="card"><p class="kicker">Krav</p><ul class="rows">${current.needs.map(n => `<li><span>${esc(n)}</span><span class="status good">På</span></li>`).join("")}</ul></article>`;
+function renderPeople() {
+  const admin = state.profile.role === "admin";
+  const pendingInvites = state.invitations.filter((invite) => invite.status === "pending");
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barn och inbjudningar</p><h1 class="h1">Personer</h1><p class="sub">Lägg till barnet först. Bjud sedan in vårdnadshavare eller personal med rätt behörighet.</p></section>
+    <form class="card form-stack" data-form="child-create"><h2>Lägg till barn</h2>
+      ${departmentOptions().length ? selectField("Avdelning", "department_id", departmentOptions(), "", true) : `<p class="notice error">Skapa en skola och avdelning först.</p>`}
+      <div class="form-grid">${field("Barnets namn", "name", "", { required: true })}${field("Födelsedatum", "birth_date", "", { type: "date" })}</div>
+      <button class="primary" type="submit" ${departmentOptions().length ? "" : "disabled"}>Lägg till barn</button>
+    </form>
+    <form class="card form-stack" data-form="invite-create"><h2>Skapa inbjudan</h2>
+      ${admin ? selectField("Roll", "role", [["parent", "Vårdnadshavare"], ["staff", "Personal"]], "parent", true) : `<input type="hidden" name="role" value="parent"><p class="form-hint">Du kan bjuda in vårdnadshavare till barn i din avdelning.</p>`}
+      ${field("E-post", "email", "", { type: "email", required: true, autocomplete: "email" })}
+      ${selectField("Barn (för vårdnadshavare)", "child_id", [["", "Välj barn"], ...state.children.map((child) => [child.id, `${child.name} · ${departmentName(child.department_id)}`])], "")}
+      ${admin ? selectField("Avdelning (för personal)", "department_id", [["", "Välj avdelning"], ...departmentOptions()], "") : ""}
+      ${field("Relation", "relation", "Vårdnadshavare", { placeholder: "Vårdnadshavare" })}
+      <button class="primary" type="submit">Skapa inbjudan</button>
+    </form>
+    ${state.inviteResult ? `<article class="card success-card"><p class="kicker">Inbjudan skapad</p><h3>${esc(state.inviteResult.email)}</h3><code class="invite-code">${esc(state.inviteResult.code)}</code><div class="actions"><button class="primary" data-action="copy-invite" data-code="${esc(state.inviteResult.code)}">Kopiera inbjudningslänk</button><a class="secondary button-link" href="mailto:${encodeURIComponent(state.inviteResult.email)}?subject=${encodeURIComponent(`Inbjudan till ${APP_NAME}`)}&body=${encodeURIComponent(`Du är inbjuden till ${APP_NAME}. Öppna ${invitationLink(state.inviteResult.code)}`)}">Öppna e-post</a></div></article>` : ""}
+    <article class="card"><h2>Aktiva inbjudningar</h2>${pendingInvites.length ? `<ul class="invite-list">${pendingInvites.map((invite) => `<li><div><strong>${esc(invite.email)}</strong><span>${esc(roleLabel(invite.role))} · går ut ${esc(formatDate(invite.expires_at?.slice(0, 10)))}</span><code>${esc(invite.code)}</code></div><div><button class="link" data-action="copy-invite" data-code="${esc(invite.code)}">Kopiera</button><button class="link danger-link" data-action="revoke-invite" data-id="${esc(invite.id)}">Återkalla</button></div></li>`).join("")}</ul>` : `<p class="form-hint">Inga väntande inbjudningar.</p>`}</article>
+    <article class="card"><h2>Barn</h2>${state.children.length ? `<ul class="rows">${state.children.map((child) => `<li><span><strong>${esc(child.name)}</strong><br><small>${esc(departmentName(child.department_id))}</small></span><span class="status">${child.birth_date ? esc(formatDate(child.birth_date)) : "Födelsedatum saknas"}</span></li>`).join("")}</ul>` : `<p class="form-hint">Inga barn registrerade.</p>`}</article>`;
 }
 
-function renderModeModal() { if (state.modal !== "mode") return ""; return `<div class="modal-backdrop"><section class="modal"><h2>Välj läge</h2><p class="sub">Byt perspektiv utan att byta app.</p><div class="mode-grid"><button data-action="mode" data-mode="parent">Förälder<small>Hämtning, frånvaro, meddelanden</small></button><button data-action="mode" data-mode="staff">Personal<small>Närvaro och publicering</small></button><button data-action="mode" data-mode="admin">Huvudman<small>Kommun, privat, kooperativ</small></button></div><div class="actions"><button class="secondary" data-action="close-modal">Stäng</button></div></section></div>`; }
-function renderChoiceModal() {
-  if (state.modal !== "pickup" && state.modal !== "absence" && state.modal !== "toast" && state.modal !== "health") return "";
-  const c = child();
-  if (state.modal === "health") {
-    const info = c.critical;
-    return `<div class="modal-backdrop"><section class="modal health-modal"><h2>Superviktig info</h2><p class="sub">${esc(c.name)} · ${esc(info.updated)}</p><dl><dt>Allergier</dt><dd>${info.allergies.length ? esc(info.allergies.join(", ")) : "Inga registrerade"}</dd><dt>Specialkost</dt><dd>${esc(info.diet)}</dd><dt>Sjukdomar/tillstånd</dt><dd>${info.conditions.length ? esc(info.conditions.join(", ")) : "Inga registrerade"}</dd><dt>Medicin</dt><dd>${esc(info.medication)}</dd><dt>Akut instruktion</dt><dd>${esc(info.emergency)}</dd></dl><div class="actions"><button class="primary" data-action="close-modal">Jag har läst</button></div></section></div>`;
-  }
-  if (state.modal === "toast") return `<div class="modal-backdrop"><section class="modal"><h2>Klart</h2><p class="sub">${esc(state.modalMessage || "Sparat")}</p><div class="actions"><button class="primary" data-action="close-modal">OK</button></div></section></div>`;
-  if (state.modal === "pickup") return `<div class="modal-backdrop"><section class="modal"><h2>Vem hämtar ${esc(c.name)}?</h2><div class="mode-grid">${pickers.map(p => `<button data-action="set-pickup" data-name="${esc(p)}">${esc(p)}</button>`).join("")}</div><div class="actions"><button class="secondary" data-action="close-modal">Avbryt</button></div></section></div>`;
-  const word = state.modalKind === "sjuk" ? "sjuk" : "ledig";
-  return `<div class="modal-backdrop"><section class="modal"><h2>${esc(c.name)} är ${word} idag</h2><p class="sub">Hämtningen tas bort och personalen ser det direkt.</p><div class="actions"><button class="danger" data-action="confirm-absence">Bekräfta</button><button class="secondary" data-action="close-modal">Avbryt</button></div></section></div>`;
-}
-function renderModeButton() {
-  if (!state.session) {
-    modeButton.innerHTML = `<span>🔐</span><strong>Logga in</strong><small>Pilot</small>`;
-    modeButton.setAttribute("aria-label", "Arthur pilot login");
-    return;
-  }
-  const labels = { parent: "Förälder", staff: "Personal", admin: "Huvudman" };
-  const icons = { parent: "🏠", staff: "✓", admin: "⚙" };
-  modeButton.innerHTML = `<span>${icons[state.mode]}</span><strong>${labels[state.mode]}</strong><small>${state.profile?.name || "Läge"}</small>`;
-  modeButton.setAttribute("aria-label", `Byt läge. Nu valt: ${labels[state.mode]}`);
+function renderOverview() {
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">${esc(state.organization?.name || "")}</h1><p class="sub">${esc(roleLabel(state.profile.role))}</p></section><div class="metric-grid"><article class="metric"><strong>${state.schools.length}</strong><span>Skolor</span></article><article class="metric"><strong>${state.departments.length}</strong><span>Avdelningar</span></article><article class="metric"><strong>${state.children.length}</strong><span>Barn</span></article><article class="metric"><strong>${state.invitations.filter((invite) => invite.status === "pending").length}</strong><span>Väntande inbjudningar</span></article></div>
+    <article class="card"><h2>Kom igång</h2><ol class="steps"><li class="done">Organisation skapad</li><li class="${state.schools.length ? "done" : ""}">Skapa skola och avdelning</li><li class="${state.children.length ? "done" : ""}">Lägg till barn</li><li class="${state.invitations.length ? "done" : ""}">Bjud in personal och vårdnadshavare</li></ol></article>`;
 }
 
-function renderBottomNav() {
-  if (state.mode === "staff") { const items = [["attendance", "✓", "Närvaro"], ["publish", "✎", "Publicera"], ["shelf", "🧺", "Hylla"], ["found", "🧦", "Upphittat"]]; nav.innerHTML = items.map(([id, icon, label]) => `<button data-action="staff-nav" data-screen="${id}" aria-current="${state.staffScreen === id ? "page" : "false"}"><span class="ico">${icon}</span>${label}</button>`).join(""); return; }
-  if (state.mode === "admin") { nav.innerHTML = `<button data-action="mode" data-mode="admin" aria-current="page"><span class="ico">⚙</span>Huvudman</button><button data-action="toast" data-message="Enheter byggs ut i huvudmannavyn."><span class="ico">🏫</span>Enheter</button><button data-action="toast" data-message="Roller byggs ut i huvudmannavyn."><span class="ico">👥</span>Roller</button><button data-action="open-mode"><span class="ico">⋯</span>Läge</button>`; return; }
-  const items = [["home", "🏠", "Min dag"], ["child", "●", "Barn"], ["diary", "📷", "Bilder"], ["more", "▦", "Mer"]];
-  nav.innerHTML = items.map(([id, icon, label]) => `<button data-action="go" data-screen="${id}" aria-current="${state.screen === id ? "page" : "false"}"><span class="ico">${icon}</span>${label}</button>`).join("");
+function renderAccount() {
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Konto</p><h1 class="h1">${esc(state.profile.name)}</h1><p class="sub">${esc(state.profile.email)} · ${esc(roleLabel(state.profile.role))}</p></section>
+    <form class="card form-stack" data-form="profile-update"><h2>Dina uppgifter</h2>${field("Namn", "name", state.profile.name, { required: true, autocomplete: "name" })}${field("Telefon", "phone", state.profile.phone || "", { type: "tel", autocomplete: "tel" })}<button class="primary" type="submit">Spara uppgifter</button></form>
+    <button class="secondary" data-action="logout">Logga ut</button>`;
 }
+
+function renderNav() {
+  const role = state.profile?.role;
+  const items = role === "admin"
+    ? [["overview", "▦", "Översikt"], ["schools", "🏫", "Skolor"], ["people", "👥", "Personer"], ["account", "⚙", "Konto"]]
+    : role === "staff"
+      ? [["attendance", "✓", "Närvaro"], ["messages", "✎", "Meddelanden"], ["people", "👥", "Barn"], ["account", "⚙", "Konto"]]
+      : [["home", "●", "Min dag"], ["child", "🌱", "Barnet"], ["messages", "✉", "Meddelanden"], ["account", "⚙", "Konto"]];
+  nav.innerHTML = items.map(([view, icon, label]) => `<button data-action="navigate" data-view="${view}" aria-current="${state.view === view ? "page" : "false"}"><span class="ico">${icon}</span>${label}</button>`).join("");
+}
+
 function render() {
-  let html = "";
+  document.documentElement.toggleAttribute("data-busy", state.busy);
   if (!state.session) {
-    html = renderAuth();
-    nav.innerHTML = `<button data-action="auth-mode" data-mode="login" aria-current="${state.authMode === "login" ? "page" : "false"}"><span class="ico">🔐</span>Logga in</button><button data-action="auth-mode" data-mode="register" aria-current="${state.authMode === "register" ? "page" : "false"}"><span class="ico">＋</span>Skapa</button><button data-action="auth-mode" data-mode="invite" aria-current="${state.authMode === "invite" ? "page" : "false"}"><span class="ico">✉</span>Kod</button><button data-action="toast" data-message="Använd kontot du fått separat."><span class="ico">?</span>Hjälp</button>`;
-    screen.innerHTML = html + renderChoiceModal();
-    renderModeButton();
+    screen.innerHTML = renderAuth();
+    nav.innerHTML = "";
+    accountButton.hidden = true;
     return;
   }
-  if (state.mode === "staff") html = renderStaff();
-  else if (state.mode === "admin") html = renderAdmin();
-  else if (state.screen === "child") html = renderParentBarn();
-  else if (state.screen === "diary") html = renderDiary();
-  else if (state.screen === "more") html = renderMore();
-  else if (state.screen === "assistant") html = renderAssistant();
-  else if (state.screen === "inbox") html = renderParentInbox();
-  else if (state.screen === "preschool" || state.screen === "unit") html = renderPreschool();
-  else if (state.screen === "schedule") html = renderSchedule();
-  else if (state.screen === "documents") html = renderDocuments();
-  else if (state.screen === "playdate") html = renderPlaydate();
-  else if (state.screen === "food") html = renderFood();
-  else if (state.screen === "contacts") html = renderContacts();
-  else if (state.screen === "absence") html = renderAbsence();
-  else if (state.screen === "health") html = renderHealthSummary();
-  else if (state.screen === "lost") html = renderLost();
-  else if (state.screen === "box") html = renderBox();
-  else if (state.screen === "gallery") html = renderGallery();
-  else if (state.screen === "classlist") html = renderClassList();
-  else if (state.screen === "activities") html = renderPlaceholder("Aktiviteter", "Planerade aktiviteter och utflykter.");
-  else if (state.screen === "development") html = renderPlaceholder("Utveckling", "Portfolio, lärlogg och utvecklingssamtal.");
-  else if (state.screen === "notes") html = renderPlaceholder("Anteckningar", "Barnets interna och delade notiser.");
-  else if (state.screen === "settings") html = renderPlaceholder("Inställningar", "Språk, notiser och huvudman.");
-  else html = renderParentHome();
-  const pilotBar = `<article class="pilot-bar"><span>${state.usingSupabase ? "Supabase live" : "Demo"}</span><strong>${esc(state.profile?.name || state.profile?.email || "")}</strong><button data-action="logout">Logga ut</button></article>`;
-  screen.innerHTML = pilotBar + html + renderModeModal() + renderChoiceModal();
-  renderModeButton();
-  renderBottomNav();
+  accountButton.hidden = false;
+  accountButton.innerHTML = `<strong>${esc(state.profile?.name || "Konto")}</strong><small>${esc(state.profile ? roleLabel(state.profile.role) : "Kom igång")}</small>`;
+  if (!state.profile) {
+    screen.innerHTML = renderOnboarding();
+    nav.innerHTML = "";
+    return;
+  }
+  const views = {
+    home: renderParentHome,
+    child: renderChildInfo,
+    messages: renderMessages,
+    attendance: renderAttendance,
+    overview: renderOverview,
+    schools: renderSchools,
+    people: renderPeople,
+    account: renderAccount,
+  };
+  const fallback = state.profile.role === "admin" ? renderOverview : state.profile.role === "staff" ? renderAttendance : renderParentHome;
+  screen.innerHTML = (views[state.view] || fallback)();
+  renderNav();
 }
 
-document.body.addEventListener("click", async event => {
+async function runMutation(work, successText = "Sparat.") {
+  state.busy = true;
+  state.notice = null;
+  render();
+  try {
+    await work();
+    if (successText) state.notice = { type: "success", text: successText };
+  } catch (error) {
+    state.notice = { type: "error", text: error.message };
+  } finally {
+    state.busy = false;
+    render();
+  }
+}
+
+async function upsertAttendance(childId, values) {
+  await request("/rest/v1/attendance?on_conflict=child_id,date", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ child_id: childId, date: todayIso(), ...values, updated_by: state.profile.id, updated_at: new Date().toISOString() }),
+  });
+}
+
+document.body.addEventListener("submit", (event) => {
+  const form = event.target.closest("[data-form]");
+  if (!form) return;
+  event.preventDefault();
+  const values = Object.fromEntries(new FormData(form));
+  const type = form.dataset.form;
+  runMutation(async () => {
+    if (type === "login") {
+      await login(values.email.trim(), values.password);
+      return;
+    }
+    if (type === "register") {
+      await register(values.email.trim(), values.password, values.name.trim());
+      return;
+    }
+    if (type === "accept-invite") {
+      await acceptInvitation(values.code);
+      return;
+    }
+    if (type === "create-organization") {
+      await rpc("create_organization", {
+        organization_name: values.organization_name.trim(),
+        organization_type: values.organization_type,
+        preschool_name: values.preschool_name.trim(),
+        department_name: values.department_name.trim(),
+      });
+      await loadData();
+      state.view = "overview";
+      return;
+    }
+    if (type === "school-create") {
+      await rpc("create_preschool", {
+        school_name: values.name.trim(),
+        school_phone: values.phone.trim() || null,
+        school_address: values.address.trim() || null,
+        school_postal_code: values.postal_code.trim() || null,
+        school_city: values.city.trim() || null,
+        school_opening_hours: values.opening_hours.trim() || null,
+        department_name: values.department_name.trim(),
+      });
+      await loadData();
+      return;
+    }
+    if (type === "child-create") {
+      await request("/rest/v1/children", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ department_id: values.department_id, name: values.name.trim(), birth_date: values.birth_date || null }),
+      });
+      await loadData();
+      return;
+    }
+    if (type === "invite-create") {
+      const role = values.role;
+      if (role === "parent" && !values.child_id) throw new Error("Välj vilket barn vårdnadshavaren ska kopplas till.");
+      if (role === "staff" && !values.department_id) throw new Error("Välj vilken avdelning personalen ska kopplas till.");
+      const invitation = await rpc("create_invitation", {
+        invite_email: values.email.trim().toLowerCase(),
+        invite_role: role,
+        invite_department_id: role === "staff" ? values.department_id : null,
+        invite_child_id: role === "parent" ? values.child_id : null,
+        invite_relation: role === "parent" ? values.relation.trim() || "Vårdnadshavare" : null,
+      });
+      state.inviteResult = Array.isArray(invitation) ? invitation[0] : invitation;
+      await loadData();
+      return;
+    }
+    if (type === "child-profile") {
+      await rpc("update_child_profile", {
+        target_child_id: form.dataset.childId,
+        child_name: values.name.trim(),
+        child_birth_date: values.birth_date || null,
+        child_notes: values.notes.trim() || null,
+      });
+      await loadData();
+      return;
+    }
+    if (type === "child-health") {
+      await request("/rest/v1/child_health?on_conflict=child_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ child_id: form.dataset.childId, allergies: csv(values.allergies), conditions: csv(values.conditions), diet: values.diet.trim() || null, medication: values.medication.trim() || null, emergency: values.emergency.trim() || null, updated_by: state.profile.id, updated_at: new Date().toISOString() }),
+      });
+      await loadData();
+      return;
+    }
+    if (type === "contact-create") {
+      await request("/rest/v1/child_contacts", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ child_id: form.dataset.childId, name: values.name.trim(), relation: values.relation.trim(), phone: values.phone.trim() || null, can_pickup: values.can_pickup === "on", is_primary: values.is_primary === "on" }),
+      });
+      await loadData();
+      return;
+    }
+    if (type === "parent-attendance") {
+      await upsertAttendance(form.dataset.childId, { status: values.status, dropoff_at: values.dropoff_at || null, pickup_at: values.pickup_at || null, pickup_by: values.pickup_by.trim() || null });
+      await loadData();
+      return;
+    }
+    if (type === "post-create") {
+      const childId = values.child_id || null;
+      if (childId && state.children.find((child) => child.id === childId)?.department_id !== values.department_id) throw new Error("Barnet tillhör inte vald avdelning.");
+      await request("/rest/v1/posts", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ department_id: values.department_id, child_id: childId, author_id: state.profile.id, type: "message", title: values.title.trim(), body: values.body.trim() }),
+      });
+      await loadData();
+      return;
+    }
+    if (type === "profile-update") {
+      await request(`/rest/v1/profiles?id=eq.${encodeURIComponent(state.profile.id)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ name: values.name.trim(), phone: values.phone.trim() || null }),
+      });
+      await loadData();
+    }
+  }, type === "login" || type === "register" ? "" : "Sparat.");
+});
+
+document.body.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
-  try {
-    if (action === "auth-mode") state.authMode = target.dataset.mode;
-    else if (action === "login") await login(document.querySelector("#authEmail")?.value.trim(), document.querySelector("#authPassword")?.value);
-    else if (action === "register") await register(document.querySelector("#authEmail")?.value.trim(), document.querySelector("#authPassword")?.value, document.querySelector("#authName")?.value.trim());
-    else if (action === "accept-invite") await acceptInvite(document.querySelector("#inviteCode")?.value || "");
-    else if (action === "logout") await logout();
-    else if (action === "go") state.screen = target.dataset.screen;
-    else if (action === "child") state.childId = target.dataset.id;
-    else if (action === "open-mode") state.modal = "mode";
-    else if (action === "close-modal") state.modal = null;
-    else if (action === "mode") { state.mode = target.dataset.mode; state.modal = null; }
-    else if (action === "staff-nav") state.staffScreen = target.dataset.screen;
-    else if (action === "owner") state.ownerType = target.dataset.id;
-    else if (action === "pickup") state.modal = "pickup";
-    else if (action === "set-pickup") { state.pickupBy[state.childId] = target.dataset.name; state.modal = null; }
-    else if (action === "absence") { state.modal = "absence"; state.modalKind = target.dataset.kind; }
-    else if (action === "confirm-absence") {
-      state.absence[state.childId] = state.modalKind;
-      const wanted = state.modalKind === "sjuk" ? "absent_sick" : "absent_leave";
-      state.modal = null;
-      if (state.usingSupabase) await writeAttendance(state.childId, wanted);
-    }
-    else if (action === "undo-absence") {
-      delete state.absence[state.childId];
-      if (state.usingSupabase) await writeAttendance(state.childId, "in");
-    }
-    else if (action === "toggle-picked") {
-      const id = target.dataset.id;
-      if (!state.absence[id]) {
-        state.pickedUp[id] = !state.pickedUp[id];
-        if (state.usingSupabase) await writeAttendance(id, state.pickedUp[id] ? "picked_up" : "in");
-      }
-    }
-    else if (action === "publish") { const textarea = document.querySelector("#staffMessage"); const body = textarea?.value.trim(); if (body) { state.notes.unshift({ id: Date.now(), target: "eken", important: false, title: "Eken", body, from: "Jon" }); textarea.value = ""; } }
-    else if (action === "toggle-playdate") state.playdateOptIn = !state.playdateOptIn;
-    else if (action === "claim-lost") {
-      const item = state.lostItems.find(found => found.id === target.dataset.id);
-      if (item) item.claimed = true;
-      state.modal = "toast";
-      state.modalMessage = "Markerat som ert. Personalen ser det.";
-    }
-    else if (action === "complete-task") {
-      state.completedTasks[target.dataset.id] = true;
-      localStorage.setItem("arthur.completedTasks", JSON.stringify(state.completedTasks));
-      state.modal = "toast";
-      state.modalMessage = "Klart. Arthur bockar av det.";
-    }
-    else if (action === "request-playdate") state.playdateRequests.unshift({ child: target.dataset.child, when: "Idag" });
-    else if (action === "sign-docs") { state.documents = state.documents.map(d => d.status === "Att signera" ? { ...d, status: "Signerad", important: false } : d); state.modal = "toast"; state.modalMessage = "Dokument signerade."; }
-    else if (action === "toast") { state.modal = "toast"; state.modalMessage = target.dataset.message; }
-    else if (action === "open-health") state.modal = "health";
-    else if (action === "toggle-consent") {
-      const c = child();
-      c.consent[target.dataset.consent] = !c.consent[target.dataset.consent];
-    }
-    else if (action === "change-photo") {
-      const c = child();
-      c.photoUploaded = true;
-      c.avatar = c.name.slice(0, 1);
-      state.modal = "toast";
-      state.modalMessage = "Profilbild uppdaterad i prototypen.";
-    }
-  } catch (error) {
-    state.authError = error.message;
-    state.modal = "toast";
-    state.modalMessage = error.message;
+  if (action === "auth-view") {
+    state.authView = target.dataset.view;
+    state.notice = null;
+    render();
+    return;
   }
-  render();
+  if (action === "navigate" || action === "account") {
+    state.view = action === "account" ? "account" : target.dataset.view;
+    state.notice = null;
+    render();
+    scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  if (action === "select-child") {
+    state.selectedChildId = target.dataset.id;
+    render();
+    return;
+  }
+  if (action === "logout") {
+    runMutation(logout, "");
+    return;
+  }
+  if (action === "staff-attendance") {
+    runMutation(async () => {
+      await upsertAttendance(target.dataset.childId, { status: target.dataset.status });
+      await loadData();
+    });
+    return;
+  }
+  if (action === "toggle-consent") {
+    runMutation(async () => {
+      const allowed = !consentFor(target.dataset.childId, target.dataset.type);
+      await request("/rest/v1/consents?on_conflict=child_id,type", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ child_id: target.dataset.childId, type: target.dataset.type, allowed, updated_by: state.profile.id, updated_at: new Date().toISOString() }),
+      });
+      await loadData();
+    });
+    return;
+  }
+  if (action === "copy-invite") {
+    const link = invitationLink(target.dataset.code);
+    runMutation(async () => navigator.clipboard.writeText(link), "Inbjudningslänken är kopierad.");
+    return;
+  }
+  if (action === "revoke-invite") {
+    runMutation(async () => {
+      await request(`/rest/v1/invitations?id=eq.${encodeURIComponent(target.dataset.id)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ status: "revoked", revoked_at: new Date().toISOString() }),
+      });
+      await loadData();
+    }, "Inbjudan är återkallad.");
+  }
 });
 
-if (state.session) loadPilotData().finally(render);
-else render();
+(async function start() {
+  if (state.session) {
+    state.busy = true;
+    render();
+    try {
+      await loadData();
+    } catch (error) {
+      state.notice = { type: "error", text: error.message };
+      if (/jwt|token|session/i.test(error.message)) saveSession(null);
+    } finally {
+      state.busy = false;
+    }
+  }
+  render();
+})();

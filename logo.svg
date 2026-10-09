@@ -1,20 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 150" role="img" aria-labelledby="title desc">
-  <title id="title">Arthur</title>
-  <desc id="desc">Arthur logotyp med färgade byggklossar och texten tillsammans varje dag.</desc>
-  <rect width="500" height="150" fill="#F8F3E9"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 430 150" role="img" aria-labelledby="title desc">
+  <title id="title">ärtan</title>
+  <desc id="desc">ärtans logotyp med färgade byggklossar och texten tillsammans varje dag.</desc>
+  <rect width="430" height="150" fill="#F8F3E9"/>
   <g font-family="Nunito, Avenir Next, Segoe UI, sans-serif" font-weight="800" font-size="70" text-anchor="middle">
     <rect x="24" y="22" width="62" height="68" rx="17" fill="#FF7F6E"/>
-    <text x="55" y="73" fill="#F8F3E9">a</text>
+    <text x="55" y="73" fill="#F8F3E9">ä</text>
     <rect x="94" y="14" width="62" height="76" rx="17" fill="#F7B733"/>
     <text x="125" y="73" fill="#2F3E46">r</text>
     <rect x="164" y="22" width="62" height="68" rx="17" fill="#9BB89A"/>
     <text x="195" y="73" fill="#2F3E46">t</text>
     <rect x="234" y="14" width="62" height="76" rx="17" fill="#F4B6B6"/>
-    <text x="265" y="73" fill="#2F3E46">h</text>
-    <rect x="304" y="22" width="62" height="68" rx="17" fill="#9BB89A"/>
-    <text x="335" y="73" fill="#2F3E46">u</text>
-    <rect x="374" y="14" width="62" height="76" rx="17" fill="#8EC5E8"/>
-    <text x="405" y="73" fill="#2F3E46">r</text>
+    <text x="265" y="73" fill="#2F3E46">a</text>
+    <rect x="304" y="22" width="62" height="68" rx="17" fill="#8EC5E8"/>
+    <text x="335" y="73" fill="#2F3E46">n</text>
   </g>
-  <text x="250" y="132" text-anchor="middle" font-family="Nunito, Avenir Next, Segoe UI, sans-serif" font-size="21" font-weight="600" letter-spacing="5" fill="#2F3E46">tillsammans varje dag.</text>
+  <text x="195" y="132" text-anchor="middle" font-family="Nunito, Avenir Next, Segoe UI, sans-serif" font-size="21" font-weight="600" letter-spacing="5" fill="#2F3E46">tillsammans varje dag.</text>
 </svg>

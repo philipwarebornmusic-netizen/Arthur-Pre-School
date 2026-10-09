@@ -3,7 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Arthur</title>
+  <meta name="theme-color" content="#F8F3E9">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="ärtan">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>ärtan</title>
   <link rel="stylesheet" href="fonts/nunito.css">
   <link rel="stylesheet" href="styles.css">
   <link rel="icon" href="mark.svg">
@@ -11,15 +15,13 @@
 <body>
   <div class="app-frame">
     <header class="topbar">
-      <img src="logo.svg" width="188" height="56" alt="Arthur">
-      <button class="ghost" type="button" data-action="open-mode">Läge</button>
+      <img src="logo.svg" width="188" height="56" alt="ärtan">
+      <button class="ghost" type="button" data-action="account" hidden>Konto</button>
     </header>
-
     <main id="screen" class="screen" aria-live="polite"></main>
-
-    <nav id="bottomNav" class="bottom-nav" aria-label="Arthur"></nav>
+    <nav id="bottomNav" class="bottom-nav" aria-label="ärtans huvudmeny"></nav>
   </div>
-
+  <script src="supabase-config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
