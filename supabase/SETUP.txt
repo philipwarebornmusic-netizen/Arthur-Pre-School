@@ -33,3 +33,5 @@ First real account
 
 Deployment
 Serve the repository root as a static site. index.html loads supabase-config.js before app.js. Apply schema.sql before accepting users; otherwise the production RPC functions are unavailable.
+Production URL: https://artanperschool.netlify.app/
+Use this exact origin as the Supabase Auth Site URL and allowed redirect URL.

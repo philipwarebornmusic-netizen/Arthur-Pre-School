@@ -14,3 +14,4 @@
 - Skärpte RLS till organisations-, avdelnings-, barn- och vårdnadshavarnivå.
 - Lade till sessionsförnyelse, tomlägen, felstatus och återkallning/delning av inbjudningar.
 - Lade till ett fristående uppgraderingssteg som tar bort pilotversionens `accept_invitation(text)` innan det nya schemat installeras.
+- Bytte Netlify-adress från `arthurpreschool.netlify.app` till `artanperschool.netlify.app`.
