@@ -1,0 +1,30 @@
+filters:
+  and:
+    - file.inFolder("Agent/Tasks")
+    - type == "agent-task"
+properties:
+  file.name:
+    displayName: Task
+  status:
+    displayName: Status
+  priority:
+    displayName: Priority
+  risk:
+    displayName: Risk
+  owner:
+    displayName: Owner
+  created:
+    displayName: Created
+  completed:
+    displayName: Completed
+views:
+  - type: table
+    name: Queue
+    order:
+      - status
+      - priority
+      - risk
+      - file.name
+      - owner
+      - created
+      - completed

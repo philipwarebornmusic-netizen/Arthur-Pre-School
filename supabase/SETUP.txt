@@ -31,6 +31,15 @@ First real account
 4. Add children under Personer.
 5. Invite staff by department and guardians by child. Invitations are restricted to the exact email address entered.
 
+Fake PreSchool Test tenant
+1. Keep this tenant free from real child, health, contact and consent data.
+2. Preview the fixed plan from the repository root:
+   python3 scripts/provision_test_school.py --plan
+3. Set SUPABASE_SERVICE_ROLE_KEY and ARTHUR_TEST_PASSWORD in the local shell. Never write either value to a file or task note.
+4. Apply the idempotent plan:
+   python3 scripts/provision_test_school.py --apply
+5. The command verifies one admin (larare@artanpreschool.test), six parent profiles, and six guardian links to the shared fake child before reporting success.
+
 Deployment
 Serve the repository root as a static site. index.html loads supabase-config.js before app.js. Apply schema.sql before accepting users; otherwise the production RPC functions are unavailable.
 Production URL: https://artanperschool.netlify.app/

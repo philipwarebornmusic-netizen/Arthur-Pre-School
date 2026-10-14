@@ -105,6 +105,42 @@ function consentFor(childId, type) {
   return state.consents.find((consent) => consent.child_id === childId && consent.type === type)?.allowed || false;
 }
 
+const CONSENT_OPTIONS = [
+  ["app_images", "Bilder i ärtan"],
+  ["group_images", "Gruppbilder"],
+  ["social_media", "Skolans sociala medier"],
+];
+
+function consentRecorded(childId, type) {
+  return state.consents.some((consent) => consent.child_id === childId && consent.type === type);
+}
+
+function childInfoChecklist(child) {
+  const hasReviewedHealth = state.health.some((health) => health.child_id === child.id && health.updated_at);
+  const hasContact = contactsFor(child.id).length > 0;
+  const hasConsents = CONSENT_OPTIONS.every(([type]) => consentRecorded(child.id, type));
+  return [
+    { id: "child-basics", label: "Grunduppgifter", complete: Boolean(child.birth_date), reminder: "Fyll i barnets födelsedatum." },
+    { id: "child-health", label: "Hälsa och omsorg", complete: hasReviewedHealth, reminder: "Gå igenom hälsa och omsorg, även om inget särskilt gäller." },
+    { id: "child-contacts", label: "Kontaktpersoner", complete: hasContact, reminder: "Lägg till minst en kontaktperson." },
+    { id: "child-consents", label: "Samtycken", complete: hasConsents, reminder: "Svara ja eller nej på alla samtycken." },
+  ];
+}
+
+function parentReminders(child) {
+  const reminders = [];
+  const attendance = attendanceFor(child.id);
+  if (!attendance) {
+    reminders.push({ text: "Fyll i dagens plan med lämning och hämtning.", view: "home", target: "daily-plan" });
+  } else if (attendance.status === "in" && !attendance.pickup_at) {
+    reminders.push({ text: "Komplettera dagens plan med hämtningstid.", view: "home", target: "daily-plan" });
+  }
+  childInfoChecklist(child)
+    .filter((item) => !item.complete)
+    .forEach((item) => reminders.push({ text: item.reminder, view: "child", target: item.id }));
+  return reminders.slice(0, 3);
+}
+
 function saveSession(session) {
   if (session?.access_token) {
     const expiresAt = session.expires_at || Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600);
@@ -268,15 +304,17 @@ function noticeHtml() {
   return `<div class="notice ${esc(state.notice.type)}" role="status">${esc(state.notice.text)}</div>`;
 }
 
-function peaMascot() {
-  return `<svg class="pea-mascot" viewBox="0 0 140 130" role="img" aria-label="ärtans maskot">
-    <ellipse class="mascot-shadow" cx="72" cy="119" rx="38" ry="7"/>
-    <circle class="mascot-body" cx="71" cy="58" r="37"/>
-    <path class="mascot-leg" d="M54 91c-6 7-11 13-18 19"/><path class="mascot-leg" d="M82 93c7 3 14 7 23 14"/>
-    <path class="mascot-arm" d="M38 66c-10 4-16 10-20 18"/><path class="mascot-arm" d="M101 61c12-6 19-14 23-25"/>
-    <circle class="mascot-eye-white" cx="59" cy="49" r="11"/><circle class="mascot-eye-white" cx="83" cy="47" r="11"/>
-    <circle class="mascot-eye" cx="62" cy="50" r="6"/><circle class="mascot-eye" cx="86" cy="48" r="6"/>
-    <path class="mascot-smile" d="M65 70c5 4 11 4 16 0"/>
+function botMascot() {
+  return `<svg class="bot-mascot" viewBox="0 0 160 150" role="img" aria-label="Ärtan-botten, din påminnelsehjälp">
+    <ellipse class="bot-shadow" cx="80" cy="140" rx="43" ry="7"/>
+    <path class="bot-antenna" d="M80 25V12"/><circle class="bot-antenna-light" cx="80" cy="9" r="7"/>
+    <rect class="bot-ear" x="20" y="49" width="16" height="39" rx="8"/><rect class="bot-ear" x="124" y="49" width="16" height="39" rx="8"/>
+    <rect class="bot-head" x="31" y="28" width="98" height="79" rx="30"/>
+    <rect class="bot-screen" x="44" y="42" width="72" height="48" rx="19"/>
+    <circle class="bot-eye" cx="66" cy="63" r="6"/><circle class="bot-eye" cx="94" cy="63" r="6"/>
+    <path class="bot-smile" d="M68 77c7 6 17 6 24 0"/>
+    <rect class="bot-body" x="57" y="103" width="46" height="28" rx="13"/>
+    <path class="bot-limb" d="M58 113 42 123M102 113l16 10M69 130l-8 9M91 130l8 9"/>
   </svg>`;
 }
 
@@ -301,7 +339,8 @@ function renderAuth() {
   const registerMode = state.authView === "register";
   const disabled = !config.enabled;
   return `${noticeHtml()}
-    <section class="hero-card auth-card">${peaMascot()}<div><p class="kicker">${APP_NAME}</p><h1 class="h1">${registerMode ? "Skapa konto" : "Välkommen"}</h1><p class="sub">${registerMode ? "Använd din riktiga e-postadress. Därefter skapar du en organisation eller ansluter med en inbjudan." : "Logga in för att nå din organisation, skola eller ditt barn."}</p></div></section>
+    <section class="hero-card auth-card">${botMascot()}<div><p class="kicker">${APP_NAME}</p><h1 class="h1">${registerMode ? "Skapa konto" : "Välkommen"}</h1><p class="sub">${registerMode ? "Skapa ditt konto och låt Ärtan-botten hjälpa dig hålla barnets uppgifter och vardagsplan uppdaterade." : "Logga in till en enklare förskolevardag med Ärtan-botten som påminnelsehjälp."}</p></div></section>
+    <article class="card bot-promise"><p class="kicker">En hjälpande bot</p><h2>Rätt sak i rätt tid</h2><p>Ärtan-botten ser vad som saknas i appen och påminner om tider, kontaktuppgifter, hälsa och samtycken. Uppgifterna stannar i ärtan och skickas inte till någon extern AI-tjänst.</p></article>
     ${disabled ? `<article class="card important"><h3>Konfiguration saknas</h3><p>Aktivera Supabase i <code>supabase-config.js</code>.</p></article>` : ""}
     <form class="card form-stack" data-form="${registerMode ? "register" : "login"}">
       ${registerMode ? field("Namn", "name", "", { required: true, autocomplete: "name" }) : ""}
@@ -340,8 +379,11 @@ function renderParentHome() {
   if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Min dag</p><h1 class="h1">Välkommen</h1><p class="sub">När skolan har lagt till och kopplat ditt barn visas informationen här.</p></section>${emptyState("Inget barn kopplat", "Kontakta skolan om du redan har accepterat en inbjudan.")}`;
   const attendance = attendanceFor(child.id);
   const messages = state.posts.filter((post) => !post.child_id || post.child_id === child.id).slice(0, 3);
-  return `${noticeHtml()}${childTabs()}<section class="hero-card home-hero"><div><p class="kicker">${esc(new Intl.DateTimeFormat("sv-SE", { dateStyle: "full" }).format(new Date()))}</p><h1 class="h1">${esc(child.name)}</h1><p class="big-status">${esc(attendanceLabel(attendance?.status))}</p><p class="sub">${esc(departmentName(child.department_id))}${attendance?.pickup_at ? ` · hämtning ${esc(attendance.pickup_at.slice(0, 5))}` : ""}</p></div>${peaMascot()}</section>
-    <form class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><h2>Dagens plan</h2>
+  const reminders = parentReminders(child);
+  const nextReminder = reminders[0];
+  return `${noticeHtml()}${childTabs()}<section class="hero-card home-hero"><div><p class="kicker">${esc(new Intl.DateTimeFormat("sv-SE", { dateStyle: "full" }).format(new Date()))}</p><h1 class="h1">${esc(child.name)}</h1><p class="big-status">${esc(attendanceLabel(attendance?.status))}</p><p class="sub">${esc(departmentName(child.department_id))}${attendance?.pickup_at ? ` · hämtning ${esc(attendance.pickup_at.slice(0, 5))}` : ""}</p></div>${botMascot()}</section>
+    <section class="card bot-card"><div class="bot-card-mascot">${botMascot()}</div><div><p class="kicker">Ärtan-botten</p><h2>${reminders.length ? "Jag hjälper dig komma ihåg" : "Allt är uppdaterat"}</h2>${reminders.length ? `<ul class="bot-reminders">${reminders.map((reminder) => `<li>${esc(reminder.text)}</li>`).join("")}</ul>` : `<p class="bot-done">Dagens plan och barnets uppgifter ser kompletta ut.</p>`}${nextReminder ? `<button class="primary bot-next" type="button" data-action="bot-reminder" data-view="${esc(nextReminder.view)}" data-target="${esc(nextReminder.target)}">Ta hand om nästa sak</button>` : ""}</div></section>
+    <form id="daily-plan" class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><p class="kicker">Idag</p><h2>Dagens plan</h2>
       ${selectField("Status", "status", [["in", "På plats"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]], attendance?.status || "in", true)}
       <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
       ${field("Vem hämtar?", "pickup_by", attendance?.pickup_by || "")}
@@ -360,36 +402,38 @@ function renderChildInfo() {
   if (!child) return `${noticeHtml()}${emptyState("Inget barn kopplat", "Barnets uppgifter visas när en inbjudan har accepterats.")}`;
   const health = healthFor(child.id);
   const contacts = contactsFor(child.id);
-  const consentOptions = [
-    ["app_images", "Bilder i ärtan"],
-    ["group_images", "Gruppbilder"],
-    ["social_media", "Skolans sociala medier"],
-  ];
-  return `${noticeHtml()}${childTabs()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">Uppgifterna delas bara med behörig personal och vårdnadshavare.</p></section>
-    <form class="card form-stack" data-form="child-profile" data-child-id="${esc(child.id)}"><h2>Grunduppgifter</h2>
+  const checklist = childInfoChecklist(child);
+  const completed = checklist.filter((item) => item.complete).length;
+  return `${noticeHtml()}${childTabs()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">Fyra tydliga steg. Du kan spara ett steg i taget och fortsätta senare.</p></section>
+    <section class="card info-progress"><div><p class="kicker">Din översikt</p><h2>${completed} av ${checklist.length} steg klara</h2><progress max="${checklist.length}" value="${completed}" aria-label="${completed} av ${checklist.length} steg klara"></progress></div><ol class="info-steps">${checklist.map((item, index) => `<li class="${item.complete ? "done" : ""}"><button type="button" data-action="scroll-section" data-target="${esc(item.id)}"><span>${item.complete ? "✓" : index + 1}</span>${esc(item.label)}</button></li>`).join("")}</ol></section>
+    <form id="child-basics" class="card form-stack child-step" data-form="child-profile" data-child-id="${esc(child.id)}"><p class="kicker">Steg 1 av 4</p><h2>Grunduppgifter</h2>
       ${field("Barnets namn", "name", child.name, { required: true, autocomplete: "name" })}
-      ${field("Födelsedatum", "birth_date", child.birth_date || "", { type: "date" })}
+      ${field("Födelsedatum", "birth_date", child.birth_date || "", { type: "date", required: true })}
       ${textareaField("Det här behöver personalen veta", "notes", child.notes || "", "Trygghet, språk, rutiner eller annat viktigt")}
       <button class="primary" type="submit">Spara grunduppgifter</button>
     </form>
-    <form class="card form-stack" data-form="child-health" data-child-id="${esc(child.id)}"><h2>Hälsa och omsorg</h2>
+    <form id="child-health" class="card form-stack child-step" data-form="child-health" data-child-id="${esc(child.id)}"><p class="kicker">Steg 2 av 4</p><h2>Hälsa och omsorg</h2><p class="form-hint">Gå igenom steget och spara även om barnet inte har allergier, medicin eller andra särskilda behov.</p>
       ${field("Allergier, separera med kommatecken", "allergies", health.allergies?.join(", ") || "")}
       ${field("Sjukdomar eller tillstånd", "conditions", health.conditions?.join(", ") || "")}
       ${textareaField("Specialkost", "diet", health.diet || "")}
       ${textareaField("Medicin och instruktion", "medication", health.medication || "")}
       ${textareaField("Akut information", "emergency", health.emergency || "")}
-      <button class="primary" type="submit">Spara hälsoinformation</button>
+      <button class="primary" type="submit">Spara och markera som genomgånget</button>
       ${health.updated_at ? `<p class="form-hint">Senast uppdaterad ${esc(formatTimestamp(health.updated_at))}</p>` : ""}
     </form>
-    <article class="card"><h2>Samtycken</h2><div class="consent-grid">${consentOptions.map(([type, label]) => `<button type="button" class="consent ${consentFor(child.id, type) ? "good" : "bad"}" data-action="toggle-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}"><strong>${esc(label)}</strong><span>${consentFor(child.id, type) ? "Tillåtet" : "Inte tillåtet"}</span></button>`).join("")}</div></article>
-    <article class="card"><h2>Kontaktpersoner</h2>${contacts.length ? `<ul class="contact-list">${contacts.map((contact) => `<li><div><strong>${esc(contact.name)}</strong><span>${esc(contact.relation)}${contact.can_pickup ? " · får hämta" : ""}${contact.is_primary ? " · primär" : ""}</span></div>${contact.phone ? `<a href="tel:${esc(contact.phone.replace(/\s/g, ""))}">${esc(contact.phone)}</a>` : ""}</li>`).join("")}</ul>` : `<p class="form-hint">Inga kontaktpersoner registrerade.</p>`}</article>
-    <form class="card form-stack" data-form="contact-create" data-child-id="${esc(child.id)}"><h2>Lägg till kontaktperson</h2>
+    <section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2>${contacts.length ? `<ul class="contact-list">${contacts.map((contact) => `<li><div><strong>${esc(contact.name)}</strong><span>${esc(contact.relation)}${contact.can_pickup ? " · får hämta" : ""}${contact.is_primary ? " · primär" : ""}</span></div>${contact.phone ? `<a href="tel:${esc(contact.phone.replace(/\s/g, ""))}">${esc(contact.phone)}</a>` : ""}</li>`).join("")}</ul>` : `<p class="form-hint">Lägg till minst en person som skolan kan kontakta.</p>`}</section>
+    <form class="card form-stack" data-form="contact-create" data-child-id="${esc(child.id)}"><h3>Lägg till kontaktperson</h3>
       <div class="form-grid">${field("Namn", "name", "", { required: true })}${field("Relation", "relation", "", { required: true, placeholder: "Exempelvis mormor" })}</div>
       ${field("Telefon", "phone", "", { type: "tel", autocomplete: "tel" })}
       <label class="check"><input type="checkbox" name="can_pickup"> Personen får hämta barnet</label>
       <label class="check"><input type="checkbox" name="is_primary"> Primär kontakt</label>
       <button class="primary" type="submit">Lägg till kontakt</button>
-    </form>`;
+    </form>
+    <section id="child-consents" class="card child-step"><p class="kicker">Steg 4 av 4</p><h2>Samtycken</h2><p class="form-hint">Välj ja eller nej för varje punkt. Du kan ändra svaren när som helst.</p><div class="consent-grid">${CONSENT_OPTIONS.map(([type, label]) => {
+      const recorded = consentRecorded(child.id, type);
+      const allowed = consentFor(child.id, type);
+      return `<div class="consent-question"><div><strong>${esc(label)}</strong><span>${recorded ? allowed ? "Ja" : "Nej" : "Ej besvarat"}</span></div><div class="consent-choices" role="group" aria-label="${esc(label)}"><button type="button" data-action="set-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}" data-allowed="true" aria-pressed="${recorded && allowed}">Ja</button><button type="button" data-action="set-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}" data-allowed="false" aria-pressed="${recorded && !allowed}">Nej</button></div></div>`;
+    }).join("")}</div></section>`;
 }
 
 function renderMessages() {
@@ -544,10 +588,12 @@ document.body.addEventListener("submit", (event) => {
   runMutation(async () => {
     if (type === "login") {
       await login(values.email.trim(), values.password);
+      setTimeout(() => scrollTo({ top: 0 }), 0);
       return;
     }
     if (type === "register") {
       await register(values.email.trim(), values.password, values.name.trim());
+      setTimeout(() => scrollTo({ top: 0 }), 0);
       return;
     }
     if (type === "accept-invite") {
@@ -679,6 +725,17 @@ document.body.addEventListener("click", (event) => {
     render();
     return;
   }
+  if (action === "bot-reminder") {
+    state.view = target.dataset.view;
+    state.notice = null;
+    render();
+    requestAnimationFrame(() => document.getElementById(target.dataset.target)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    return;
+  }
+  if (action === "scroll-section") {
+    document.getElementById(target.dataset.target)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
   if (action === "logout") {
     runMutation(logout, "");
     return;
@@ -690,9 +747,9 @@ document.body.addEventListener("click", (event) => {
     });
     return;
   }
-  if (action === "toggle-consent") {
+  if (action === "set-consent") {
     runMutation(async () => {
-      const allowed = !consentFor(target.dataset.childId, target.dataset.type);
+      const allowed = target.dataset.allowed === "true";
       await request("/rest/v1/consents?on_conflict=child_id,type", {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates,return=minimal" },

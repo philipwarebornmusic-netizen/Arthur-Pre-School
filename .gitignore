@@ -6,3 +6,7 @@ netlify-deploy.zip
 node_modules/
 dist/
 .cache/
+__pycache__/
+*.py[cod]
+.obsidian/
+/Untitled.base

@@ -1,5 +1,21 @@
 # Ändringslogg
 
+## 2026-10-14 — Ärtan-botten och testflöde
+
+- Gjorde om maskoten till **Ärtan-botten** och lyfte dess integritetsvänliga påminnelsehjälp på inloggnings- och föräldraytan.
+- Lade till tillståndsbaserade påminnelser för dagens plan, grunduppgifter, hälsa, kontaktpersoner och samtycken.
+- Delade upp barnuppgifterna i fyra tydliga steg med beständig färdigmarkering och mobilanpassad översikt.
+- Ersatte tvetydiga samtyckesväxlar med explicita ja-/nej-svar och synligt obesvarat läge.
+- Lade till en idempotent, service-role-skyddad provisioner för den fasta testmiljön `PreSchool Test`; inga autentiseringsuppgifter lagras i repot.
+- Provisionerade `PreSchool Test` i det avsedda Arthur-projektet med en administratör, sex bekräftade föräldrakonton och ett gemensamt testbarn utan riktiga personuppgifter.
+
+## 2026-10-14 — Local AI-agentworkflow
+
+- Lade till en Obsidian-baserad uppgiftskö med beständiga Markdown-statusar.
+- Lade till ett avgränsat OMP-agentkontrakt med urval, tillståndsövergångar, stoppvillkor och maximalt tre uppgifter per körning.
+- Lade till explicita godkännandegränser för driftsättning, Supabase, autentisering och känsliga personuppgifter.
+- Lade till den beroendefria verifieringen `python3 scripts/verify.py` för applikationsfiler, lokala resurser och köinvarianter.
+
 ## 2026-10-09 — ärtan production cutover
 
 - Bytte produktnamn och visuell identitet från Arthur till **ärtan**.
