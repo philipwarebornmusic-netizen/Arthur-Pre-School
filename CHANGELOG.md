@@ -1,5 +1,13 @@
 # Ändringslogg
 
+## 2026-10-14 — Gemenskap och privat kommunikation
+
+- Gjorde meddelandesidan till ett officiellt skolflöde där behöriga vårdnadshavare kan kommentera.
+- Lade till privata meddelanden mellan vårdnadshavare och relevant personal.
+- Lade till föräldra-till-föräldra-meddelanden med avstängd standard och krav på ömsesidigt samtycke samt gemensam avdelning.
+- Lade till en separat frivillig inställning för lekförfrågningar med acceptera-/avböjflöde.
+- Begränsade föräldrakatalogen till visningsnamn, roll och tillåtna åtgärder; barn-, hälso-, kontakt-, samtyckes-, telefon- och e-postuppgifter exponeras inte.
+
 ## 2026-10-14 — Ärtan-botten och testflöde
 
 - Gjorde om maskoten till **Ärtan-botten** och lyfte dess integritetsvänliga påminnelsehjälp på inloggnings- och föräldraytan.

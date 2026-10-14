@@ -9,7 +9,8 @@ Database installation or upgrade
 1. Open Supabase Dashboard -> SQL Editor -> New query.
 2. When upgrading the previous Arthur pilot database, paste and run all of 000_upgrade_from_arthur.sql as a separate query.
 3. Open another new query, then paste and run all of schema.sql.
-4. No seed file is used. The application starts empty and creates real data through onboarding.
+4. Run each numbered migration file in ascending order. Skip only migrations already applied to that database.
+5. No seed file is used. The application starts empty and creates real data through onboarding.
 
 Together, the upgrade preflight and schema handle both a new database and the previous Arthur pilot schema. They:
 - creates the production tables, indexes and RPC functions;
@@ -17,6 +18,8 @@ Together, the upgrade preflight and schema handle both a new database and the pr
 - supports organization and school creation;
 - supports email-bound invitations for staff and guardians;
 - lets guardians register their own children and maintain child, health, contact and consent information;
+- provides an official school feed with comments and private parent–staff messaging;
+- keeps parent-to-parent messaging and playdate requests off until both parents opt in;
 - removes the known Solgläntan demo organization and exact @arthur.test accounts.
 
 Required Supabase Auth setting
@@ -41,6 +44,6 @@ Fake PreSchool Test tenant
 5. The command verifies one admin, six parent profiles, and no automatically created child. Each parent registers their own child after login.
 
 Deployment
-Serve the repository root as a static site. index.html loads supabase-config.js before app.js. Apply schema.sql for a new database, or the numbered migration files for an existing database, before deploying dependent application code.
+Serve the repository root as a static site. index.html loads supabase-config.js before app.js. Apply schema.sql and then every unapplied numbered migration before deploying dependent application code.
 Production URL: https://artanperschool.netlify.app/
 Use this exact origin as the Supabase Auth Site URL and allowed redirect URL.

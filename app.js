@@ -16,6 +16,10 @@ const state = {
   consents: [],
   attendance: [],
   posts: [],
+  postComments: [],
+  communityMembers: [],
+  privateMessages: [],
+  playdateRequests: [],
   invitations: [],
   selectedChildId: null,
   view: inviteFromUrl ? "join" : "home",
@@ -233,6 +237,10 @@ async function logout() {
       consents: [],
       attendance: [],
       posts: [],
+      postComments: [],
+      communityMembers: [],
+      privateMessages: [],
+      playdateRequests: [],
       invitations: [],
       selectedChildId: null,
       view: "home",
@@ -246,7 +254,7 @@ async function loadData() {
   if (!state.session?.access_token) return;
   const userId = state.session.user?.id;
   if (!userId) throw new Error("Sessionen saknar användar-id.");
-  const profiles = await request(`/rest/v1/profiles?select=id,auth_user_id,organization_id,name,email,phone,role&auth_user_id=eq.${encodeURIComponent(userId)}&limit=1`);
+  const profiles = await request(`/rest/v1/profiles?select=id,auth_user_id,organization_id,name,email,phone,role,allow_parent_messages,allow_playdate_requests&auth_user_id=eq.${encodeURIComponent(userId)}&limit=1`);
   state.profile = profiles[0] || null;
   if (!state.profile) {
     state.organization = null;
@@ -256,7 +264,7 @@ async function loadData() {
 
   const organizationId = encodeURIComponent(state.profile.organization_id);
   const date = todayIso();
-  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, posts, invitations] = await Promise.all([
+  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, posts, invitations, postComments, communityMembers, privateMessages, playdateRequests] = await Promise.all([
     request(`/rest/v1/organizations?select=id,name,type,created_at&id=eq.${organizationId}&limit=1`),
     request(`/rest/v1/preschools?select=id,organization_id,name,phone,address,postal_code,city,opening_hours,created_at&organization_id=eq.${organizationId}&order=name.asc`),
     request("/rest/v1/departments?select=id,preschool_id,name,created_at&order=name.asc"),
@@ -266,8 +274,12 @@ async function loadData() {
     request("/rest/v1/child_contacts?select=id,child_id,name,relation,phone,can_pickup,is_primary,created_at&order=name.asc"),
     request("/rest/v1/consents?select=child_id,type,allowed,updated_at"),
     request(`/rest/v1/attendance?select=id,child_id,date,status,dropoff_at,pickup_at,pickup_by,updated_at&date=eq.${date}`),
-    request("/rest/v1/posts?select=id,department_id,child_id,type,title,body,created_at&order=created_at.desc&limit=100"),
+    request("/rest/v1/posts?select=id,department_id,child_id,author_id,type,title,body,created_at&order=created_at.desc&limit=100"),
     request("/rest/v1/invitations?select=id,email,role,relation,code,status,department_id,child_id,expires_at,created_at&order=created_at.desc&limit=100"),
+    rpc("list_post_comments"),
+    rpc("list_community_members"),
+    rpc("list_private_messages"),
+    rpc("list_playdate_requests"),
   ]);
 
   state.organization = organizations[0] || null;
@@ -281,9 +293,13 @@ async function loadData() {
   state.attendance = attendance;
   state.posts = posts;
   state.invitations = invitations;
+  state.postComments = postComments;
+  state.communityMembers = communityMembers;
+  state.privateMessages = privateMessages;
+  state.playdateRequests = playdateRequests;
   if (!state.children.some((child) => child.id === state.selectedChildId)) state.selectedChildId = state.children[0]?.id || null;
   const allowedViews = {
-    admin: ["overview", "schools", "people", "account"],
+    admin: ["overview", "schools", "messages", "people", "account"],
     staff: ["attendance", "messages", "people", "account"],
     parent: ["home", "child", "messages", "account"],
   };
@@ -323,8 +339,8 @@ function emptyState(title, text) {
 }
 
 function field(label, name, value = "", options = {}) {
-  const { type = "text", required = false, placeholder = "", autocomplete = "", min = "", max = "", minlength = "" } = options;
-  return `<label>${esc(label)}<input name="${esc(name)}" type="${esc(type)}" value="${esc(value)}" ${required ? "required" : ""} ${placeholder ? `placeholder="${esc(placeholder)}"` : ""} ${autocomplete ? `autocomplete="${esc(autocomplete)}"` : ""} ${min ? `min="${esc(min)}"` : ""} ${max ? `max="${esc(max)}"` : ""} ${minlength ? `minlength="${esc(minlength)}"` : ""}></label>`;
+  const { type = "text", required = false, placeholder = "", autocomplete = "", min = "", max = "", minlength = "", maxlength = "" } = options;
+  return `<label>${esc(label)}<input name="${esc(name)}" type="${esc(type)}" value="${esc(value)}" ${required ? "required" : ""} ${placeholder ? `placeholder="${esc(placeholder)}"` : ""} ${autocomplete ? `autocomplete="${esc(autocomplete)}"` : ""} ${min ? `min="${esc(min)}"` : ""} ${max ? `max="${esc(max)}"` : ""} ${minlength ? `minlength="${esc(minlength)}"` : ""} ${maxlength ? `maxlength="${esc(maxlength)}"` : ""}></label>`;
 }
 
 function textareaField(label, name, value = "", placeholder = "", required = false) {
@@ -405,9 +421,23 @@ function renderParentHome() {
     <section><div class="section-head"><div><p class="kicker">Från skolan</p><h2>Meddelanden</h2></div><button class="link" data-action="navigate" data-view="messages">Visa alla</button></div>${messages.map(renderPost).join("") || emptyState("Inga meddelanden", "Nya meddelanden från personalen visas här.")}</section>`;
 }
 
+function commentsFor(postId) {
+  return state.postComments.filter((comment) => comment.post_id === postId);
+}
+
+function renderPostComment(comment) {
+  const canDelete = comment.author_id === state.profile.id || state.profile.role === "staff" || state.profile.role === "admin";
+  return `<li><div><strong>${esc(comment.author_name)}</strong><span>${esc(formatTimestamp(comment.created_at))}</span><p>${esc(comment.body)}</p></div>${canDelete ? `<button class="link danger-link" type="button" data-action="delete-comment" data-id="${esc(comment.comment_id)}">Ta bort</button>` : ""}</li>`;
+}
+
 function renderPost(post) {
   const scope = post.child_id ? state.children.find((child) => child.id === post.child_id)?.name : departmentName(post.department_id);
-  return `<article class="card"><p class="kicker">${esc(scope || "Skolan")} · ${esc(formatTimestamp(post.created_at))}</p><h3>${esc(post.title)}</h3><p class="pre-line">${esc(post.body)}</p></article>`;
+  const comments = commentsFor(post.id);
+  return `<article class="card school-post"><p class="kicker">Från skolan · ${esc(scope || "Skolan")} · ${esc(formatTimestamp(post.created_at))}</p><h3>${esc(post.title)}</h3><p class="pre-line">${esc(post.body)}</p>
+    <section class="post-comments"><h4>Kommentarer</h4>${comments.length ? `<ul>${comments.map(renderPostComment).join("")}</ul>` : `<p class="form-hint">Inga kommentarer ännu.</p>`}
+      <form class="comment-form" data-form="post-comment" data-post-id="${esc(post.id)}">${field("Skriv en kommentar", "body", "", { required: true, maxlength: "2000" })}<button class="secondary" type="submit">Kommentera</button></form>
+    </section>
+  </article>`;
 }
 
 function renderChildInfo() {
@@ -449,16 +479,53 @@ function renderChildInfo() {
     }).join("")}</div></section>${parentChildCreateForm(true)}`;
 }
 
+function renderPrivateMessaging() {
+  const recipients = state.communityMembers.filter((member) => member.can_message);
+  const messages = state.privateMessages.slice(-50);
+  return `<section class="community-section"><div class="section-head"><div><p class="kicker">Privat</p><h2>Meddelanden</h2></div></div>
+    <form class="card form-stack" data-form="private-message">
+      <p class="form-hint">Privata meddelanden visas bara för dig och mottagaren. Föräldrar syns för varandra först när båda har tillåtit det.</p>
+      ${recipients.length ? selectField("Mottagare", "recipient_id", recipients.map((member) => [member.profile_id, `${member.display_name} · ${roleLabel(member.profile_role)}`]), "", true) : `<p class="form-hint">Ingen mottagare är tillgänglig ännu.</p>`}
+      ${textareaField("Meddelande", "body", "", "Skriv ett privat meddelande", true)}
+      <button class="primary" type="submit" ${recipients.length ? "" : "disabled"}>Skicka privat</button>
+    </form>
+    ${messages.length ? `<div class="private-message-list">${messages.map((message) => {
+      const sent = message.sender_id === state.profile.id;
+      return `<article class="card private-message ${sent ? "sent" : "received"}"><p class="kicker">${sent ? `Till ${esc(message.recipient_name)}` : `Från ${esc(message.sender_name)}`} · ${esc(formatTimestamp(message.created_at))}</p><p>${esc(message.body)}</p></article>`;
+    }).join("")}</div>` : emptyState("Inga privata meddelanden", "När någon skriver privat visas meddelandet här.")}</section>`;
+}
+
+function renderPlaydates() {
+  if (state.profile.role !== "parent") return "";
+  const enabled = state.profile.allow_playdate_requests;
+  const recipients = state.communityMembers.filter((member) => member.can_playdate);
+  const requests = state.playdateRequests;
+  return `<section class="community-section"><div class="section-head"><div><p class="kicker">Frivilligt</p><h2>Lekträffar</h2></div></div>
+    ${enabled ? `<form class="card form-stack" data-form="playdate-create"><p class="form-hint">Endast vårdnadshavare i samma avdelning som också har aktiverat funktionen visas här.</p>
+      ${recipients.length ? selectField("Vårdnadshavare", "recipient_id", recipients.map((member) => [member.profile_id, member.display_name]), "", true) : `<p class="form-hint">Ingen annan vårdnadshavare har aktiverat lekförfrågningar ännu.</p>`}
+      ${textareaField("Förfrågan", "message", "", "Exempelvis: Vill ni ses i lekparken på lördag?", true)}
+      <button class="primary" type="submit" ${recipients.length ? "" : "disabled"}>Skicka lekförfrågan</button>
+    </form>` : `<article class="card"><p>Funktionen är avstängd. Du kan aktivera den under Konto.</p><button class="secondary" type="button" data-action="account">Öppna Konto</button></article>`}
+    ${requests.length ? `<ul class="card playdate-list">${requests.map((request) => {
+      const received = request.recipient_id === state.profile.id;
+      const counterpart = received ? request.sender_name : request.recipient_name;
+      const status = { pending: "Väntar på svar", accepted: "Accepterad", declined: "Tackat nej" }[request.status] || request.status;
+      return `<li><div><strong>${received ? "Från" : "Till"} ${esc(counterpart)}</strong><span>${esc(status)} · ${esc(formatTimestamp(request.created_at))}</span><p>${esc(request.message)}</p></div>${received && request.status === "pending" ? `<div class="playdate-actions"><button class="primary" type="button" data-action="playdate-response" data-id="${esc(request.request_id)}" data-status="accepted">Acceptera</button><button class="secondary" type="button" data-action="playdate-response" data-id="${esc(request.request_id)}" data-status="declined">Tacka nej</button></div>` : ""}</li>`;
+    }).join("")}</ul>` : ""}</section>`;
+}
+
 function renderMessages() {
   const availableDepartments = editableDepartments();
   const canPublish = (state.profile.role === "staff" || state.profile.role === "admin") && availableDepartments.length > 0;
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Meddelanden</p><h1 class="h1">Från skolan</h1><p class="sub">Meddelanden lagras i organisationen och visas bara för rätt avdelning eller barn.</p></section>
-    ${canPublish ? `<form class="card form-stack" data-form="post-create"><h2>Publicera meddelande</h2>
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Gemenskap</p><h1 class="h1">Skolans flöde</h1><p class="sub">Officiella inlägg från skolan, kommentarer och privata samtal samlade på ett ställe.</p></section>
+    ${canPublish ? `<form class="card form-stack" data-form="post-create"><h2>Publicera officiellt inlägg</h2>
       ${selectField("Avdelning", "department_id", availableDepartments.map((department) => [department.id, `${schoolName(department.preschool_id)} · ${department.name}`]), "", true)}
       ${selectField("Barn, valfritt", "child_id", [["", "Hela avdelningen"], ...state.children.map((child) => [child.id, child.name])], "")}
-      ${field("Rubrik", "title", "", { required: true })}${textareaField("Meddelande", "body", "", "Skriv ett tydligt meddelande", true)}
-      <button class="primary" type="submit">Publicera</button></form>` : ""}
-    ${state.posts.map(renderPost).join("") || emptyState("Inga meddelanden", canPublish ? "Publicera det första meddelandet ovan." : "Skolan har inte publicerat något ännu.")}`;
+      ${field("Rubrik", "title", "", { required: true })}${textareaField("Inlägg", "body", "", "Skriv information från skolan", true)}
+      <button class="primary" type="submit">Publicera i skolans flöde</button></form>` : ""}
+    <section class="community-section"><div class="section-head"><div><p class="kicker">Officiellt</p><h2>Senaste från skolan</h2></div></div>${state.posts.map(renderPost).join("") || emptyState("Inga inlägg", canPublish ? "Publicera det första inlägget ovan." : "Skolan har inte publicerat något ännu.")}</section>
+    ${renderPrivateMessaging()}
+    ${renderPlaydates()}`;
 }
 
 function renderAttendance() {
@@ -524,18 +591,24 @@ function renderOverview() {
 }
 
 function renderAccount() {
+  const privacySettings = state.profile.role === "parent" ? `<fieldset class="preference-group"><legend>Gemenskap och integritet</legend>
+      <label class="check"><input type="checkbox" name="allow_parent_messages" ${state.profile.allow_parent_messages ? "checked" : ""}> Låt andra vårdnadshavare i min avdelning hitta och skriva till mig</label>
+      <p class="form-hint">Båda vårdnadshavarna måste ha aktiverat detta. Lärare och administratörer kan alltid skriva privat till dig.</p>
+      <label class="check"><input type="checkbox" name="allow_playdate_requests" ${state.profile.allow_playdate_requests ? "checked" : ""}> Visa mig för frivilliga lekförfrågningar</label>
+      <p class="form-hint">Båda vårdnadshavarna måste ha aktiverat detta och tillhöra samma avdelning.</p>
+    </fieldset>` : "";
   return `${noticeHtml()}<section class="hero-card"><p class="kicker">Konto</p><h1 class="h1">${esc(state.profile.name)}</h1><p class="sub">${esc(state.profile.email)} · ${esc(roleLabel(state.profile.role))}</p></section>
-    <form class="card form-stack" data-form="profile-update"><h2>Dina uppgifter</h2>${field("Namn", "name", state.profile.name, { required: true, autocomplete: "name" })}${field("Telefon", "phone", state.profile.phone || "", { type: "tel", autocomplete: "tel" })}<button class="primary" type="submit">Spara uppgifter</button></form>
+    <form class="card form-stack" data-form="profile-update"><h2>Dina uppgifter</h2>${field("Namn", "name", state.profile.name, { required: true, autocomplete: "name" })}${field("Telefon", "phone", state.profile.phone || "", { type: "tel", autocomplete: "tel" })}${privacySettings}<button class="primary" type="submit">Spara uppgifter</button></form>
     <button class="secondary" data-action="logout">Logga ut</button>`;
 }
 
 function renderNav() {
   const role = state.profile?.role;
   const items = role === "admin"
-    ? [["overview", "▦", "Översikt"], ["schools", "🏫", "Skolor"], ["people", "👥", "Personer"], ["account", "⚙", "Konto"]]
+    ? [["overview", "▦", "Översikt"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["account", "⚙", "Konto"]]
     : role === "staff"
-      ? [["attendance", "✓", "Närvaro"], ["messages", "✎", "Meddelanden"], ["people", "👥", "Barn"], ["account", "⚙", "Konto"]]
-      : [["home", "●", "Min dag"], ["child", "🌱", "Barnet"], ["messages", "✉", "Meddelanden"], ["account", "⚙", "Konto"]];
+      ? [["attendance", "✓", "Närvaro"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Barn"], ["account", "⚙", "Konto"]]
+      : [["home", "●", "Min dag"], ["child", "🌱", "Barnet"], ["messages", "✉", "Gemenskap"], ["account", "⚙", "Konto"]];
   nav.innerHTML = items.map(([view, icon, label]) => `<button data-action="navigate" data-view="${view}" aria-current="${state.view === view ? "page" : "false"}"><span class="ico">${icon}</span>${label}</button>`).join("");
 }
 
@@ -713,7 +786,32 @@ document.body.addEventListener("submit", (event) => {
       await request("/rest/v1/posts", {
         method: "POST",
         headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ department_id: values.department_id, child_id: childId, author_id: state.profile.id, type: "message", title: values.title.trim(), body: values.body.trim() }),
+        body: JSON.stringify({ department_id: values.department_id, child_id: childId, author_id: state.profile.id, type: "diary", title: values.title.trim(), body: values.body.trim() }),
+      });
+      await loadData();
+      return;
+    }
+    if (type === "post-comment") {
+      await request("/rest/v1/post_comments", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ post_id: form.dataset.postId, author_id: state.profile.id, body: values.body.trim() }),
+      });
+      await loadData();
+      return;
+    }
+    if (type === "private-message") {
+      await rpc("send_private_message", {
+        target_profile_id: values.recipient_id,
+        message_body: values.body.trim(),
+      });
+      await loadData();
+      return;
+    }
+    if (type === "playdate-create") {
+      await rpc("create_playdate_request", {
+        target_profile_id: values.recipient_id,
+        request_message: values.message.trim(),
       });
       await loadData();
       return;
@@ -722,7 +820,12 @@ document.body.addEventListener("submit", (event) => {
       await request(`/rest/v1/profiles?id=eq.${encodeURIComponent(state.profile.id)}`, {
         method: "PATCH",
         headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ name: values.name.trim(), phone: values.phone.trim() || null }),
+        body: JSON.stringify({
+          name: values.name.trim(),
+          phone: values.phone.trim() || null,
+          allow_parent_messages: state.profile.role === "parent" ? values.allow_parent_messages === "on" : state.profile.allow_parent_messages,
+          allow_playdate_requests: state.profile.role === "parent" ? values.allow_playdate_requests === "on" : state.profile.allow_playdate_requests,
+        }),
       });
       await loadData();
     }
@@ -783,6 +886,26 @@ document.body.addEventListener("click", (event) => {
       });
       await loadData();
     });
+    return;
+  }
+  if (action === "delete-comment") {
+    runMutation(async () => {
+      await request(`/rest/v1/post_comments?id=eq.${encodeURIComponent(target.dataset.id)}`, {
+        method: "DELETE",
+        headers: { Prefer: "return=minimal" },
+      });
+      await loadData();
+    }, "Kommentaren är borttagen.");
+    return;
+  }
+  if (action === "playdate-response") {
+    runMutation(async () => {
+      await rpc("respond_playdate_request", {
+        target_request_id: target.dataset.id,
+        response_status: target.dataset.status,
+      });
+      await loadData();
+    }, target.dataset.status === "accepted" ? "Lekförfrågan är accepterad." : "Lekförfrågan är avböjd.");
     return;
   }
   if (action === "copy-invite") {
