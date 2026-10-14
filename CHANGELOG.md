@@ -1,5 +1,11 @@
 # Ändringslogg
 
+## 2026-10-14 — Testorganisationens namn
+
+- Ändrade den fasta testorganisationens visningsnamn från `PreSchool Test` till `Test`.
+- Behöll förskolans namn `PreSchool Test` och avdelningens namn `Testavdelningen`.
+- Uppdaterade den idempotenta provisionern så att en framtida körning bevarar det nya organisationsnamnet.
+
 ## 2026-10-14 — Klickbar basversion av Ärtan
 
 - Gjorde Ärtan till en klickbar hjälpreda på alla autentiserade huvudvyer för vårdnadshavare, personal och administratörer.

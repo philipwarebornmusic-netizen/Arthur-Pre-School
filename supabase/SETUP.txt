@@ -34,7 +34,7 @@ First real account
 4. Add children under Personer.
 5. Invite staff by department and guardians by child. Invitations are restricted to the exact email address entered.
 
-Fake PreSchool Test tenant
+Fake Test organization and PreSchool Test preschool
 1. Keep this tenant free from real child, health, contact and consent data.
 2. Preview the fixed plan from the repository root:
    python3 scripts/provision_test_school.py --plan

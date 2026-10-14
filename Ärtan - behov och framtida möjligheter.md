@@ -55,7 +55,7 @@ Hela funktionspaketet ska planeras, men införas i kontrollerade etapper. Ärtan
 
 ### Etapp 1 – gemensam faktagrund
 
-- byt organisationens visningsnamn till `TEST`;
+- organisationens visningsnamn är `Test`;
 - bygg kalender, utvecklingssamtal och godkända appnotiser;
 - gör all viktig information åtkomlig även utan Ärtan;
 - ge varje svar och notis en verifierbar källa;

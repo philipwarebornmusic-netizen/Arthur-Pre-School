@@ -12,6 +12,8 @@ from urllib.request import Request, urlopen
 
 DEFAULT_URL = "https://esorbueghucqgyxzohrk.supabase.co"
 TEST_DOMAIN = "artanpreschool.test"
+ORGANIZATION_NAME = "Test"
+PRESCHOOL_NAME = "PreSchool Test"
 ORG_ID = "10000000-0000-4000-8000-000000000001"
 PRESCHOOL_ID = "10000000-0000-4000-8000-000000000002"
 DEPARTMENT_ID = "10000000-0000-4000-8000-000000000003"
@@ -76,8 +78,8 @@ def profile_id(email):
 
 def print_plan():
     print("Test tenant plan (no network changes):")
-    print("- Organization: PreSchool Test")
-    print("- Preschool: PreSchool Test")
+    print(f"- Organization: {ORGANIZATION_NAME}")
+    print(f"- Preschool: {PRESCHOOL_NAME}")
     print("- Department: Testavdelningen")
     print("- Parent accounts start without children; each parent registers their own child in the app")
     for name, email, role in ACCOUNTS:
@@ -153,10 +155,10 @@ def existing_profile_for_email(admin, email):
 
 def provision_data(admin, auth_users):
     current_test_profiles = existing_profiles(admin)
-    admin.upsert("organizations", [{"id": ORG_ID, "name": "PreSchool Test", "type": "privat"}], "id")
+    admin.upsert("organizations", [{"id": ORG_ID, "name": ORGANIZATION_NAME, "type": "privat"}], "id")
     admin.upsert(
         "preschools",
-        [{"id": PRESCHOOL_ID, "organization_id": ORG_ID, "name": "PreSchool Test"}],
+        [{"id": PRESCHOOL_ID, "organization_id": ORG_ID, "name": PRESCHOOL_NAME}],
         "id",
     )
     admin.upsert(
@@ -204,7 +206,7 @@ def verify_result(admin):
     ) or []
     if legacy_children:
         raise ProvisioningError("legacy shared child invariant failed")
-    print("Provisioned PreSchool Test: 1 administrator, 6 parents, no automatically created children.")
+    print(f"Provisioned {ORGANIZATION_NAME} / {PRESCHOOL_NAME}: 1 administrator, 6 parents, no automatically created children.")
 
 
 def main():
