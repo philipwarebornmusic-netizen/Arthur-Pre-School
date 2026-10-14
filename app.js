@@ -28,11 +28,15 @@ const state = {
   inviteResult: null,
   notice: null,
   busy: false,
+  assistantOpen: false,
+  assistantQuestion: "",
+  assistantResponse: null,
 };
 
 const screen = document.querySelector("#screen");
 const nav = document.querySelector("#bottomNav");
 const accountButton = document.querySelector('[data-action="account"]');
+const assistantRoot = document.querySelector("#assistantRoot");
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -245,6 +249,9 @@ async function logout() {
       selectedChildId: null,
       view: "home",
       notice: null,
+      assistantOpen: false,
+      assistantQuestion: "",
+      assistantResponse: null,
     });
   }
 }
@@ -320,8 +327,9 @@ function noticeHtml() {
   return `<div class="notice ${esc(state.notice.type)}" role="status">${esc(state.notice.text)}</div>`;
 }
 
-function botMascot() {
-  return `<svg class="bot-mascot" viewBox="0 0 160 150" role="img" aria-label="Ärtan-botten, din påminnelsehjälp">
+function botMascot(decorative = false) {
+  const accessibility = decorative ? 'aria-hidden="true"' : 'role="img" aria-label="Ärtan, din digitala hjälpreda"';
+  return `<svg class="bot-mascot" viewBox="0 0 160 150" ${accessibility}>
     <ellipse class="bot-shadow" cx="80" cy="140" rx="43" ry="7"/>
     <path class="bot-antenna" d="M80 25V12"/><circle class="bot-antenna-light" cx="80" cy="9" r="7"/>
     <rect class="bot-ear" x="20" y="49" width="16" height="39" rx="8"/><rect class="bot-ear" x="124" y="49" width="16" height="39" rx="8"/>
@@ -332,6 +340,265 @@ function botMascot() {
     <rect class="bot-body" x="57" y="103" width="46" height="28" rx="13"/>
     <path class="bot-limb" d="M58 113 42 123M102 113l16 10M69 130l-8 9M91 130l8 9"/>
   </svg>`;
+}
+
+function assistantQuickActions() {
+  const parentActions = {
+    home: [["day", "Vad är dagens plan?"], ["reminders", "Vad behöver jag göra?"], ["messages", "Nytt från skolan?"], ["contact", "Vem kan jag kontakta?"]],
+    child: [["reminders", "Vad saknas?"], ["consents", "Hur ser samtyckena ut?"], ["day", "Vad är dagens plan?"], ["contact", "Kontakta förskolan"]],
+    messages: [["messages", "Sammanfatta skolans flöde"], ["contact", "Vem kan jag skriva till?"], ["playdates", "Hur fungerar lekträffar?"], ["privacy", "Mina integritetsval"]],
+    account: [["privacy", "Mina integritetsval"], ["contact", "Vem kan jag kontakta?"], ["reminders", "Vad behöver jag göra?"], ["day", "Vad är dagens plan?"]],
+  };
+  const staffActions = {
+    attendance: [["attendance", "Sammanfatta närvaron"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"], ["people", "Öppna barn och inbjudningar"]],
+    messages: [["publish", "Publicera ett inlägg"], ["private", "Skicka privat"], ["posts", "Sammanfatta flödet"], ["attendance", "Hur ser närvaron ut?"]],
+    people: [["people", "Sammanfatta personer"], ["attendance", "Hur ser närvaron ut?"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"]],
+    account: [["private", "Kontakta en förälder"], ["attendance", "Hur ser närvaron ut?"], ["publish", "Skriv till föräldrar"], ["people", "Öppna barn och inbjudningar"]],
+  };
+  const adminActions = {
+    overview: [["overview", "Sammanfatta organisationen"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"], ["people", "Barn och inbjudningar"]],
+    schools: [["schools", "Sammanfatta skolorna"], ["publish", "Skriv till föräldrar"], ["overview", "Organisationens översikt"], ["people", "Barn och inbjudningar"]],
+    messages: [["publish", "Publicera ett inlägg"], ["private", "Skicka privat"], ["posts", "Sammanfatta flödet"], ["overview", "Organisationens översikt"]],
+    people: [["people", "Sammanfatta personer"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"], ["overview", "Organisationens översikt"]],
+    account: [["overview", "Organisationens översikt"], ["private", "Kontakta en förälder"], ["publish", "Skriv till föräldrar"], ["people", "Barn och inbjudningar"]],
+  };
+  const roleActions = state.profile.role === "parent" ? parentActions : state.profile.role === "staff" ? staffActions : adminActions;
+  return roleActions[state.view] || Object.values(roleActions)[0] || [];
+}
+
+function assistantResult(text, source, action = {}) {
+  return { text, source, ...action };
+}
+
+function schoolForChild(child) {
+  const department = state.departments.find((item) => item.id === child?.department_id);
+  return state.schools.find((school) => school.id === department?.preschool_id) || null;
+}
+
+function parentAssistantAnswer(intent) {
+  const child = selectedChild();
+  if (!child && ["day", "reminders", "opening-hours", "consents", "health"].includes(intent)) {
+    return assistantResult(
+      "Börja med att lägga till ditt barn. Därefter kan jag hjälpa med dagens plan, barnuppgifter och skolans meddelanden.",
+      "Ditt konto i ärtan",
+      { actionLabel: "Lägg till barn", view: "child" },
+    );
+  }
+  if (intent === "day") {
+    const attendance = attendanceFor(child.id);
+    if (!attendance) {
+      return assistantResult(
+        `Dagens plan för ${child.name} är inte ifylld ännu.`,
+        "Dagens plan i ärtan",
+        { actionLabel: "Fyll i dagens plan", view: "home", target: "daily-plan" },
+      );
+    }
+    const times = compact([
+      attendance.dropoff_at ? `lämning ${attendance.dropoff_at.slice(0, 5)}` : "",
+      attendance.pickup_at ? `hämtning ${attendance.pickup_at.slice(0, 5)}` : "",
+      attendance.pickup_by ? `hämtas av ${attendance.pickup_by}` : "",
+    ]);
+    return assistantResult(
+      `${child.name}: ${attendanceLabel(attendance.status)}${times.length ? `. ${times.join(", ")}.` : "."}`,
+      "Dagens plan i ärtan",
+      { actionLabel: "Öppna dagens plan", view: "home", target: "daily-plan" },
+    );
+  }
+  if (intent === "reminders") {
+    const reminders = parentReminders(child);
+    if (!reminders.length) return assistantResult("Allt i dagens plan och barnets checklista är uppdaterat.", "Barnuppgifter och dagens plan");
+    return assistantResult(
+      `Jag hittade ${reminders.length} ${reminders.length === 1 ? "sak" : "saker"}:\n• ${reminders.map((reminder) => reminder.text).join("\n• ")}`,
+      "Barnuppgifter och dagens plan",
+      { actionLabel: "Ta hand om nästa sak", view: reminders[0].view, target: reminders[0].target },
+    );
+  }
+  if (intent === "messages") {
+    const latest = state.posts[0];
+    if (!latest) return assistantResult("Skolan har inte publicerat något ännu.", "Skolans flöde", { actionLabel: "Öppna Gemenskap", view: "messages" });
+    return assistantResult(
+      `Du har ${state.posts.length} ${state.posts.length === 1 ? "officiellt inlägg" : "officiella inlägg"}. Senast publicerades ”${latest.title}” ${formatTimestamp(latest.created_at)}.`,
+      "Skolans flöde",
+      { actionLabel: "Läs skolans flöde", view: "messages", target: "official-feed" },
+    );
+  }
+  if (intent === "contact") {
+    const contacts = state.communityMembers.filter((member) => member.can_message && member.profile_role !== "parent");
+    if (!contacts.length) return assistantResult("Ingen kontaktperson är tillgänglig i appen ännu.", "Gemenskapens kontaktlista");
+    const names = contacts.slice(0, 3).map((member) => `${member.display_name} (${roleLabel(member.profile_role)})`);
+    return assistantResult(
+      `Du kan skriva privat till ${new Intl.ListFormat("sv-SE").format(names)}${contacts.length > names.length ? ` och ${contacts.length - names.length} till` : ""}.`,
+      "Gemenskapens kontaktlista",
+      { actionLabel: "Öppna privata meddelanden", view: "messages", target: "private-messaging" },
+    );
+  }
+  if (intent === "opening-hours") {
+    const school = schoolForChild(child);
+    if (!school?.opening_hours) return assistantResult("Förskolans öppettider är inte registrerade ännu. Kontakta personalen för ett säkert svar.", "Förskolans registrerade uppgifter", { actionLabel: "Kontakta personalen", view: "messages", target: "private-messaging" });
+    return assistantResult(`${school.name} har registrerade öppettider: ${school.opening_hours}.`, "Förskolans registrerade öppettider");
+  }
+  if (intent === "calendar") {
+    return assistantResult(
+      "Kalender och utvecklingssamtal är inte aktiverade ännu, så jag kan inte ge ett säkert datum. Fråga personalen i ett privat meddelande.",
+      "Tillgängliga funktioner i ärtan",
+      { actionLabel: "Fråga personalen", view: "messages", target: "private-messaging" },
+    );
+  }
+  if (intent === "consents") {
+    const answers = CONSENT_OPTIONS.map(([type, label]) => {
+      if (!consentRecorded(child.id, type)) return `${label}: obesvarat`;
+      return `${label}: ${consentFor(child.id, type) ? "ja" : "nej"}`;
+    });
+    return assistantResult(
+      answers.join("\n"),
+      `${child.name}s samtycken`,
+      { actionLabel: "Öppna samtycken", view: "child", target: "child-consents" },
+    );
+  }
+  if (intent === "playdates") {
+    const available = state.communityMembers.filter((member) => member.can_playdate).length;
+    const pending = state.playdateRequests.filter((request) => request.status === "pending").length;
+    const status = state.profile.allow_playdate_requests ? `Funktionen är på. ${available} ${available === 1 ? "vårdnadshavare är tillgänglig" : "vårdnadshavare är tillgängliga"} och ${pending} förfrågningar väntar.` : "Lekträffar är avstängda. Du kan aktivera dem under Konto.";
+    return assistantResult(status, "Dina inställningar och lekförfrågningar", { actionLabel: state.profile.allow_playdate_requests ? "Öppna lekträffar" : "Öppna Konto", view: state.profile.allow_playdate_requests ? "messages" : "account", target: state.profile.allow_playdate_requests ? "playdates" : "" });
+  }
+  if (intent === "privacy") {
+    return assistantResult(
+      `Föräldrameddelanden är ${state.profile.allow_parent_messages ? "på" : "av"}. Lekförfrågningar är ${state.profile.allow_playdate_requests ? "på" : "av"}. Båda vårdnadshavarna måste välja på för att bli synliga för varandra.`,
+      "Dina integritetsinställningar",
+      { actionLabel: "Öppna Konto", view: "account" },
+    );
+  }
+  if (intent === "health") {
+    return assistantResult(
+      "Hälsa och omsorg hanteras i barnets skyddade uppgifter. Jag visar inte känsliga detaljer i chatten.",
+      "Barnuppgifter i ärtan",
+      { actionLabel: "Öppna hälsa och omsorg", view: "child", target: "child-health" },
+    );
+  }
+  return assistantResult(
+    "Jag kan just nu hjälpa med dagens plan, sådant som saknas, skolans inlägg, öppettider, samtycken och rätt kontakt. Kalender och utvecklingssamtal kommer senare.",
+    "Tillgängliga funktioner i ärtan",
+  );
+}
+
+function staffAssistantAnswer(intent) {
+  const isAdmin = state.profile.role === "admin";
+  if (intent === "attendance") {
+    const counts = state.attendance.reduce((result, item) => {
+      result[item.status] = (result[item.status] || 0) + 1;
+      return result;
+    }, {});
+    return assistantResult(
+      `${state.children.length} barn är synliga för dig idag: ${counts.in || 0} inne, ${counts.picked_up || 0} hämtade, ${(counts.absent_sick || 0) + (counts.absent_leave || 0)} frånvarande och ${Math.max(0, state.children.length - state.attendance.length)} utan registrerad status.`,
+      "Dagens närvarolista",
+      { actionLabel: isAdmin ? "Öppna Personer" : "Öppna Närvaro", view: isAdmin ? "people" : "attendance" },
+    );
+  }
+  if (intent === "publish") {
+    return assistantResult(
+      "Jag kan öppna formuläret för ett officiellt inlägg. Välj avdelning, eventuell barnmottagare och granska texten innan du publicerar.",
+      "Skolans befintliga publiceringsflöde",
+      { actionLabel: "Skriv officiellt inlägg", view: "messages", target: "official-post-form" },
+    );
+  }
+  if (intent === "private" || intent === "contact") {
+    const recipients = state.communityMembers.filter((member) => member.can_message);
+    return assistantResult(
+      recipients.length ? `${recipients.length} behöriga mottagare är tillgängliga för privata meddelanden.` : "Ingen privat mottagare är tillgänglig ännu.",
+      "Gemenskapens kontaktlista",
+      recipients.length ? { actionLabel: "Skriv privat", view: "messages", target: "private-messaging" } : {},
+    );
+  }
+  if (intent === "people") {
+    const pending = state.invitations.filter((invite) => invite.status === "pending").length;
+    return assistantResult(
+      `${state.children.length} barn och ${pending} ${pending === 1 ? "väntande inbjudan" : "väntande inbjudningar"} är synliga för dig.`,
+      "Personer och inbjudningar",
+      { actionLabel: "Öppna Personer", view: "people" },
+    );
+  }
+  if (intent === "posts" || intent === "messages") {
+    const latest = state.posts[0];
+    return assistantResult(
+      latest ? `${state.posts.length} officiella inlägg finns i flödet. Senast: ”${latest.title}” ${formatTimestamp(latest.created_at)}.` : "Det finns inga officiella inlägg ännu.",
+      "Skolans flöde",
+      { actionLabel: "Öppna Gemenskap", view: "messages", target: "official-feed" },
+    );
+  }
+  if (intent === "overview") {
+    return assistantResult(
+      `${state.organization?.name || "Organisationen"} har ${state.schools.length} ${state.schools.length === 1 ? "skola" : "skolor"}, ${state.departments.length} ${state.departments.length === 1 ? "avdelning" : "avdelningar"} och ${state.children.length} registrerade barn.`,
+      "Organisationsöversikten",
+      { actionLabel: "Öppna Översikt", view: isAdmin ? "overview" : "people" },
+    );
+  }
+  if (intent === "schools" || intent === "opening-hours") {
+    const schools = state.schools.map((school) => `${school.name}${school.opening_hours ? ` (${school.opening_hours})` : ""}`);
+    return assistantResult(
+      schools.length ? schools.join("\n") : "Ingen skola är registrerad ännu.",
+      "Skolornas registrerade uppgifter",
+      isAdmin ? { actionLabel: "Öppna Skolor", view: "schools" } : {},
+    );
+  }
+  if (intent === "privacy" || intent === "consents") {
+    return assistantResult(
+      "Kontrollera alltid avdelning och eventuell barnmottagare före publicering. Automatisk bild- och samtyckeskontroll är planerad men finns inte ännu.",
+      "Nuvarande publiceringsflöde",
+      { actionLabel: "Öppna skolans flöde", view: "messages", target: "official-post-form" },
+    );
+  }
+  if (intent === "calendar") {
+    return assistantResult("Kalender och schemalagda påminnelser är inte aktiverade ännu.", "Tillgängliga funktioner i ärtan");
+  }
+  return assistantResult(
+    "Jag kan just nu öppna rätt arbetsflöde och sammanfatta närvaro, personer, skolor, inlägg och privata mottagare. Jag skapar ännu inga AI-utkast.",
+    "Tillgängliga funktioner i ärtan",
+  );
+}
+
+function assistantIntentForQuestion(question) {
+  const text = question.trim().toLocaleLowerCase("sv-SE");
+  const staff = state.profile.role !== "parent";
+  if (/öppettid|öppet/.test(text)) return "opening-hours";
+  if (/stäng|kalender|utvecklingssamtal|aktivitet|utflykt/.test(text)) return "calendar";
+  if (/samtyck|bild|foto/.test(text)) return staff ? "privacy" : "consents";
+  if (!staff && /lekträff|lekdejt/.test(text)) return "playdates";
+  if (!staff && /hälsa|allerg|medicin|specialkost/.test(text)) return "health";
+  if (staff && /publicera|officiell|veckobrev|skriv.*inlägg/.test(text)) return "publish";
+  if (staff && /närvaro|inne|hämtad|frånvaro/.test(text)) return "attendance";
+  if (staff && /person|inbjud|barn/.test(text)) return "people";
+  if (staff && /organisation|översikt/.test(text)) return "overview";
+  if (staff && /skola|avdelning/.test(text)) return "schools";
+  if (/kontakt|vem|privat|skriv.*till/.test(text)) return staff ? "private" : "contact";
+  if (/meddelande|inlägg|nytt från skolan|skolans flöde/.test(text)) return staff ? "posts" : "messages";
+  if (!staff && /integritet|inställning|hitta mig/.test(text)) return "privacy";
+  if (!staff && /påminn|behöver|saknas|göra/.test(text)) return "reminders";
+  if (!staff && /idag|dagens|lämn|hämt/.test(text)) return "day";
+  return "help";
+}
+
+function assistantAnswer(intent) {
+  return state.profile.role === "parent" ? parentAssistantAnswer(intent) : staffAssistantAnswer(intent);
+}
+
+function renderAssistant() {
+  if (!assistantRoot) return;
+  if (!state.session || !state.profile) {
+    assistantRoot.innerHTML = "";
+    return;
+  }
+  const quickActions = assistantQuickActions();
+  const response = state.assistantResponse;
+  assistantRoot.innerHTML = `<button class="assistant-launcher" type="button" data-action="assistant-toggle" aria-expanded="${state.assistantOpen}" aria-controls="assistantPanel" ${state.assistantOpen ? "hidden" : ""}>
+      ${botMascot(true)}<span><strong>Ärtan</strong><small>Fråga mig</small></span>
+    </button>
+    ${state.assistantOpen ? `<section id="assistantPanel" class="assistant-panel" role="dialog" aria-modal="false" aria-labelledby="assistantTitle">
+      <header class="assistant-header"><div class="assistant-heading">${botMascot(true)}<div><p class="kicker">Din digitala hjälpreda</p><h2 id="assistantTitle">Fråga Ärtan</h2></div></div><button class="assistant-close" type="button" data-action="assistant-close" aria-label="Stäng Ärtan">×</button></header>
+      <p class="assistant-intro">Jag använder bara det som redan finns i appen. Ingen chatthistorik sparas.</p>
+      <div class="assistant-quick-actions" aria-label="Snabbval">${quickActions.map(([intent, label]) => `<button type="button" data-action="assistant-quick" data-intent="${esc(intent)}">${esc(label)}</button>`).join("")}</div>
+      ${response ? `<section class="assistant-conversation" aria-live="polite">${state.assistantQuestion ? `<p class="assistant-question">${esc(state.assistantQuestion)}</p>` : ""}<div id="assistantAnswer" class="assistant-answer" tabindex="-1"><strong>Ärtan</strong><p>${esc(response.text)}</p>${response.source ? `<small>Källa: ${esc(response.source)}</small>` : ""}${response.actionLabel ? `<button class="primary assistant-answer-action" type="button" data-action="assistant-go" data-view="${esc(response.view)}" data-target="${esc(response.target || "")}">${esc(response.actionLabel)}</button>` : ""}</div></section>` : ""}
+      <form class="assistant-question-form" data-form="assistant-question"><label for="assistantQuestion">Skriv en fråga</label><div><input id="assistantQuestion" name="question" maxlength="240" required placeholder="Exempel: Vad behöver jag göra?"><button class="primary" type="submit">Fråga</button></div></form>
+    </section>` : ""}`;
 }
 
 function emptyState(title, text) {
@@ -482,7 +749,7 @@ function renderChildInfo() {
 function renderPrivateMessaging() {
   const recipients = state.communityMembers.filter((member) => member.can_message);
   const messages = state.privateMessages.slice(-50);
-  return `<section class="community-section"><div class="section-head"><div><p class="kicker">Privat</p><h2>Meddelanden</h2></div></div>
+  return `<section id="private-messaging" class="community-section"><div class="section-head"><div><p class="kicker">Privat</p><h2>Meddelanden</h2></div></div>
     <form class="card form-stack" data-form="private-message">
       <p class="form-hint">Privata meddelanden visas bara för dig och mottagaren. Föräldrar syns för varandra först när båda har tillåtit det.</p>
       ${recipients.length ? selectField("Mottagare", "recipient_id", recipients.map((member) => [member.profile_id, `${member.display_name} · ${roleLabel(member.profile_role)}`]), "", true) : `<p class="form-hint">Ingen mottagare är tillgänglig ännu.</p>`}
@@ -500,7 +767,7 @@ function renderPlaydates() {
   const enabled = state.profile.allow_playdate_requests;
   const recipients = state.communityMembers.filter((member) => member.can_playdate);
   const requests = state.playdateRequests;
-  return `<section class="community-section"><div class="section-head"><div><p class="kicker">Frivilligt</p><h2>Lekträffar</h2></div></div>
+  return `<section id="playdates" class="community-section"><div class="section-head"><div><p class="kicker">Frivilligt</p><h2>Lekträffar</h2></div></div>
     ${enabled ? `<form class="card form-stack" data-form="playdate-create"><p class="form-hint">Endast vårdnadshavare i samma avdelning som också har aktiverat funktionen visas här.</p>
       ${recipients.length ? selectField("Vårdnadshavare", "recipient_id", recipients.map((member) => [member.profile_id, member.display_name]), "", true) : `<p class="form-hint">Ingen annan vårdnadshavare har aktiverat lekförfrågningar ännu.</p>`}
       ${textareaField("Förfrågan", "message", "", "Exempelvis: Vill ni ses i lekparken på lördag?", true)}
@@ -518,12 +785,12 @@ function renderMessages() {
   const availableDepartments = editableDepartments();
   const canPublish = (state.profile.role === "staff" || state.profile.role === "admin") && availableDepartments.length > 0;
   return `${noticeHtml()}<section class="hero-card"><p class="kicker">Gemenskap</p><h1 class="h1">Skolans flöde</h1><p class="sub">Officiella inlägg från skolan, kommentarer och privata samtal samlade på ett ställe.</p></section>
-    ${canPublish ? `<form class="card form-stack" data-form="post-create"><h2>Publicera officiellt inlägg</h2>
+    ${canPublish ? `<form id="official-post-form" class="card form-stack" data-form="post-create"><h2>Publicera officiellt inlägg</h2>
       ${selectField("Avdelning", "department_id", availableDepartments.map((department) => [department.id, `${schoolName(department.preschool_id)} · ${department.name}`]), "", true)}
       ${selectField("Barn, valfritt", "child_id", [["", "Hela avdelningen"], ...state.children.map((child) => [child.id, child.name])], "")}
       ${field("Rubrik", "title", "", { required: true })}${textareaField("Inlägg", "body", "", "Skriv information från skolan", true)}
       <button class="primary" type="submit">Publicera i skolans flöde</button></form>` : ""}
-    <section class="community-section"><div class="section-head"><div><p class="kicker">Officiellt</p><h2>Senaste från skolan</h2></div></div>${state.posts.map(renderPost).join("") || emptyState("Inga inlägg", canPublish ? "Publicera det första inlägget ovan." : "Skolan har inte publicerat något ännu.")}</section>
+    <section id="official-feed" class="community-section"><div class="section-head"><div><p class="kicker">Officiellt</p><h2>Senaste från skolan</h2></div></div>${state.posts.map(renderPost).join("") || emptyState("Inga inlägg", canPublish ? "Publicera det första inlägget ovan." : "Skolan har inte publicerat något ännu.")}</section>
     ${renderPrivateMessaging()}
     ${renderPlaydates()}`;
 }
@@ -618,6 +885,7 @@ function render() {
     screen.innerHTML = renderAuth();
     nav.innerHTML = "";
     accountButton.hidden = true;
+    renderAssistant();
     return;
   }
   accountButton.hidden = false;
@@ -625,6 +893,7 @@ function render() {
   if (!state.profile) {
     screen.innerHTML = renderOnboarding();
     nav.innerHTML = "";
+    renderAssistant();
     return;
   }
   const views = {
@@ -640,6 +909,7 @@ function render() {
   const fallback = state.profile.role === "admin" ? renderOverview : state.profile.role === "staff" ? renderAttendance : renderParentHome;
   screen.innerHTML = (views[state.view] || fallback)();
   renderNav();
+  renderAssistant();
 }
 
 async function runMutation(work, successText = "Sparat.") {
@@ -671,6 +941,15 @@ document.body.addEventListener("submit", (event) => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(form));
   const type = form.dataset.form;
+  if (type === "assistant-question") {
+    const question = String(values.question || "").trim();
+    if (!question) return;
+    state.assistantQuestion = question;
+    state.assistantResponse = assistantAnswer(assistantIntentForQuestion(question));
+    renderAssistant();
+    requestAnimationFrame(() => document.getElementById("assistantAnswer")?.focus());
+    return;
+  }
   runMutation(async () => {
     if (type === "login") {
       await login(values.email.trim(), values.password);
@@ -836,6 +1115,40 @@ document.body.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
+  if (action === "assistant-toggle" || action === "assistant-close") {
+    state.assistantOpen = action === "assistant-toggle" ? !state.assistantOpen : false;
+    if (!state.assistantOpen) {
+      state.assistantQuestion = "";
+      state.assistantResponse = null;
+    }
+    renderAssistant();
+    requestAnimationFrame(() => {
+      const focusTarget = state.assistantOpen ? document.getElementById("assistantQuestion") : document.querySelector(".assistant-launcher");
+      focusTarget?.focus();
+    });
+    return;
+  }
+  if (action === "assistant-quick") {
+    state.assistantQuestion = target.textContent.trim();
+    state.assistantResponse = assistantAnswer(target.dataset.intent);
+    renderAssistant();
+    requestAnimationFrame(() => document.getElementById("assistantAnswer")?.focus());
+    return;
+  }
+  if (action === "assistant-go") {
+    state.view = target.dataset.view;
+    state.assistantOpen = false;
+    state.assistantQuestion = "";
+    state.assistantResponse = null;
+    state.notice = null;
+    render();
+    requestAnimationFrame(() => {
+      const destination = target.dataset.target ? document.getElementById(target.dataset.target) : null;
+      if (destination) destination.scrollIntoView({ behavior: "smooth", block: "start" });
+      else scrollTo({ top: 0, behavior: "smooth" });
+    });
+    return;
+  }
   if (action === "auth-view") {
     state.authView = target.dataset.view;
     state.notice = null;
@@ -845,6 +1158,9 @@ document.body.addEventListener("click", (event) => {
   if (action === "navigate" || action === "account") {
     state.view = action === "account" ? "account" : target.dataset.view;
     state.notice = null;
+    state.assistantOpen = false;
+    state.assistantQuestion = "";
+    state.assistantResponse = null;
     render();
     scrollTo({ top: 0, behavior: "smooth" });
     return;
@@ -923,6 +1239,15 @@ document.body.addEventListener("click", (event) => {
       await loadData();
     }, "Inbjudan är återkallad.");
   }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !state.assistantOpen) return;
+  state.assistantOpen = false;
+  state.assistantQuestion = "";
+  state.assistantResponse = null;
+  renderAssistant();
+  requestAnimationFrame(() => document.querySelector(".assistant-launcher")?.focus());
 });
 
 (async function start() {
