@@ -16,7 +16,7 @@ Together, the upgrade preflight and schema handle both a new database and the pr
 - installs organization-scoped row-level security;
 - supports organization and school creation;
 - supports email-bound invitations for staff and guardians;
-- lets guardians maintain child, health, contact and consent information;
+- lets guardians register their own children and maintain child, health, contact and consent information;
 - removes the known Solgläntan demo organization and exact @arthur.test accounts.
 
 Required Supabase Auth setting
@@ -38,9 +38,9 @@ Fake PreSchool Test tenant
 3. Set SUPABASE_SERVICE_ROLE_KEY and ARTHUR_TEST_PASSWORD in the local shell. Never write either value to a file or task note.
 4. Apply the idempotent plan:
    python3 scripts/provision_test_school.py --apply
-5. The command verifies one admin (larare@artanpreschool.test), six parent profiles, and six guardian links to the shared fake child before reporting success.
+5. The command verifies one admin, six parent profiles, and no automatically created child. Each parent registers their own child after login.
 
 Deployment
-Serve the repository root as a static site. index.html loads supabase-config.js before app.js. Apply schema.sql before accepting users; otherwise the production RPC functions are unavailable.
+Serve the repository root as a static site. index.html loads supabase-config.js before app.js. Apply schema.sql for a new database, or the numbered migration files for an existing database, before deploying dependent application code.
 Production URL: https://artanperschool.netlify.app/
 Use this exact origin as the Supabase Auth Site URL and allowed redirect URL.

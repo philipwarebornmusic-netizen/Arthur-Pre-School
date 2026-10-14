@@ -15,7 +15,7 @@ TEST_DOMAIN = "artanpreschool.test"
 ORG_ID = "10000000-0000-4000-8000-000000000001"
 PRESCHOOL_ID = "10000000-0000-4000-8000-000000000002"
 DEPARTMENT_ID = "10000000-0000-4000-8000-000000000003"
-CHILD_ID = "10000000-0000-4000-8000-000000000004"
+LEGACY_SHARED_CHILD_ID = "10000000-0000-4000-8000-000000000004"
 PROFILE_NAMESPACE = uuid.UUID("10000000-0000-4000-8000-000000000005")
 
 ACCOUNTS = (
@@ -79,7 +79,7 @@ def print_plan():
     print("- Organization: PreSchool Test")
     print("- Preschool: PreSchool Test")
     print("- Department: Testavdelningen")
-    print("- Shared fake child: Testbarn")
+    print("- Parent accounts start without children; each parent registers their own child in the app")
     for name, email, role in ACCOUNTS:
         print(f"- {name}: {email} ({role})")
 
@@ -164,20 +164,13 @@ def provision_data(admin, auth_users):
         [{"id": DEPARTMENT_ID, "preschool_id": PRESCHOOL_ID, "name": "Testavdelningen"}],
         "id",
     )
-    admin.upsert(
-        "children",
-        [{
-            "id": CHILD_ID,
-            "department_id": DEPARTMENT_ID,
-            "name": "Testbarn",
-            "birth_date": None,
-            "notes": "Testdata – inga riktiga personuppgifter.",
-        }],
-        "id",
+    admin.request(
+        "DELETE",
+        f"/rest/v1/children?id=eq.{quote(LEGACY_SHARED_CHILD_ID, safe='')}",
+        prefer="return=minimal",
     )
 
     profiles = []
-    parent_profile_ids = []
     for name, email, role in ACCOUNTS:
         existing = current_test_profiles.get(email) or existing_profile_for_email(admin, email)
         identifier = existing["id"] if existing else profile_id(email)
@@ -189,34 +182,8 @@ def provision_data(admin, auth_users):
             "email": email,
             "role": role,
         })
-        if role == "parent":
-            parent_profile_ids.append(identifier)
     admin.upsert("profiles", profiles, "email")
 
-    guardians = [
-        {
-            "child_id": CHILD_ID,
-            "profile_id": identifier,
-            "relation": "Vårdnadshavare",
-            "can_pickup": True,
-        }
-        for identifier in parent_profile_ids
-    ]
-    admin.upsert("child_guardians", guardians, "child_id,profile_id")
-
-    existing_guardians = admin.request(
-        "GET",
-        f"/rest/v1/child_guardians?select=profile_id&child_id=eq.{quote(CHILD_ID, safe='')}",
-    ) or []
-    expected = set(parent_profile_ids)
-    for row in existing_guardians:
-        identifier = row["profile_id"]
-        if identifier not in expected:
-            admin.request(
-                "DELETE",
-                f"/rest/v1/child_guardians?child_id=eq.{quote(CHILD_ID, safe='')}&profile_id=eq.{quote(identifier, safe='')}",
-                prefer="return=minimal",
-            )
 
 
 def verify_result(admin):
@@ -231,13 +198,13 @@ def verify_result(admin):
         raise ProvisioningError(f"administrator invariant failed: {admins}")
     if parents != expected_parents:
         raise ProvisioningError("parent account invariant failed")
-    guardians = admin.request(
+    legacy_children = admin.request(
         "GET",
-        f"/rest/v1/child_guardians?select=profile_id&child_id=eq.{quote(CHILD_ID, safe='')}",
+        f"/rest/v1/children?select=id&id=eq.{quote(LEGACY_SHARED_CHILD_ID, safe='')}",
     ) or []
-    if len(guardians) != len(expected_parents):
-        raise ProvisioningError(f"guardian invariant failed: expected 6, found {len(guardians)}")
-    print("Provisioned PreSchool Test: 1 administrator, 6 parents, 1 shared fake child.")
+    if legacy_children:
+        raise ProvisioningError("legacy shared child invariant failed")
+    print("Provisioned PreSchool Test: 1 administrator, 6 parents, no automatically created children.")
 
 
 def main():

@@ -7,7 +7,8 @@
 - Delade upp barnuppgifterna i fyra tydliga steg med beständig färdigmarkering och mobilanpassad översikt.
 - Ersatte tvetydiga samtyckesväxlar med explicita ja-/nej-svar och synligt obesvarat läge.
 - Lade till en idempotent, service-role-skyddad provisioner för den fasta testmiljön `PreSchool Test`; inga autentiseringsuppgifter lagras i repot.
-- Provisionerade `PreSchool Test` i det avsedda Arthur-projektet med en administratör, sex bekräftade föräldrakonton och ett gemensamt testbarn utan riktiga personuppgifter.
+- Tog bort det automatiskt skapade gemensamma testbarnet. Varje testförälder börjar utan barn och registrerar själv sitt eller sina barn i appen.
+- Lade till en atomär, behörighetskontrollerad registrering som skapar barnprofilen och kopplar den enbart till den inloggade vårdnadshavaren.
 
 ## 2026-10-14 — Local AI-agentworkflow
 

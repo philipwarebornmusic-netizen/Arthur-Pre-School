@@ -374,9 +374,22 @@ function childTabs() {
   return `<div class="child-tabs">${state.children.map((child) => `<button type="button" data-action="select-child" data-id="${esc(child.id)}" aria-pressed="${child.id === state.selectedChildId}">${esc(child.name)}<small>${esc(departmentName(child.department_id))}</small></button>`).join("")}</div>`;
 }
 
+function parentChildCreateForm(additional = false) {
+  const options = departmentOptions();
+  return `<form class="card form-stack" data-form="parent-child-create">
+    <p class="kicker">${additional ? "Fler barn" : "Första steget"}</p>
+    <h2>${additional ? "Lägg till ytterligare ett barn" : "Lägg till ditt barn"}</h2>
+    <p class="form-hint">Du skapar bara barn som du själv är vårdnadshavare för. Uppgifterna kopplas direkt till ditt konto.</p>
+    ${options.length ? selectField("Förskola och avdelning", "department_id", options, "", true) : `<p class="notice error">Ingen avdelning är tillgänglig. Kontakta förskolan.</p>`}
+    <div class="form-grid">${field("Barnets namn", "name", "", { required: true, autocomplete: "name" })}${field("Födelsedatum", "birth_date", "", { type: "date", required: true, max: todayIso() })}</div>
+    <button class="primary" type="submit" ${options.length ? "" : "disabled"}>${additional ? "Lägg till barn" : "Skapa barnprofil"}</button>
+  </form>`;
+}
+
+
 function renderParentHome() {
   const child = selectedChild();
-  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Min dag</p><h1 class="h1">Välkommen</h1><p class="sub">När skolan har lagt till och kopplat ditt barn visas informationen här.</p></section>${emptyState("Inget barn kopplat", "Kontakta skolan om du redan har accepterat en inbjudan.")}`;
+  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Min dag</p><h1 class="h1">Välkommen</h1><p class="sub">Börja med att lägga till ditt barn. Därefter hjälper Ärtan-botten dig med barnuppgifter och dagens plan.</p></section>${parentChildCreateForm()}`;
   const attendance = attendanceFor(child.id);
   const messages = state.posts.filter((post) => !post.child_id || post.child_id === child.id).slice(0, 3);
   const reminders = parentReminders(child);
@@ -399,7 +412,7 @@ function renderPost(post) {
 
 function renderChildInfo() {
   const child = selectedChild();
-  if (!child) return `${noticeHtml()}${emptyState("Inget barn kopplat", "Barnets uppgifter visas när en inbjudan har accepterats.")}`;
+  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">Lägg till ditt barn</h1><p class="sub">Skapa barnprofilen själv för att komma igång.</p></section>${parentChildCreateForm()}`;
   const health = healthFor(child.id);
   const contacts = contactsFor(child.id);
   const checklist = childInfoChecklist(child);
@@ -433,7 +446,7 @@ function renderChildInfo() {
       const recorded = consentRecorded(child.id, type);
       const allowed = consentFor(child.id, type);
       return `<div class="consent-question"><div><strong>${esc(label)}</strong><span>${recorded ? allowed ? "Ja" : "Nej" : "Ej besvarat"}</span></div><div class="consent-choices" role="group" aria-label="${esc(label)}"><button type="button" data-action="set-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}" data-allowed="true" aria-pressed="${recorded && allowed}">Ja</button><button type="button" data-action="set-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}" data-allowed="false" aria-pressed="${recorded && !allowed}">Nej</button></div></div>`;
-    }).join("")}</div></section>`;
+    }).join("")}</div></section>${parentChildCreateForm(true)}`;
 }
 
 function renderMessages() {
@@ -631,6 +644,19 @@ document.body.addEventListener("submit", (event) => {
         body: JSON.stringify({ department_id: values.department_id, name: values.name.trim(), birth_date: values.birth_date || null }),
       });
       await loadData();
+      return;
+    }
+    if (type === "parent-child-create") {
+      const created = await rpc("register_guardian_child", {
+        child_name: values.name.trim(),
+        child_birth_date: values.birth_date,
+        child_department_id: values.department_id,
+      });
+      await loadData();
+      const result = Array.isArray(created) ? created[0] : created;
+      state.selectedChildId = result?.child_id || state.children.at(-1)?.id || null;
+      state.view = "child";
+      setTimeout(() => scrollTo({ top: 0 }), 0);
       return;
     }
     if (type === "invite-create") {
