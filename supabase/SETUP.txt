@@ -18,7 +18,9 @@ Together, the upgrade preflight and schema handle both a new database and the pr
 - supports organization and school creation;
 - supports email-bound invitations for staff and guardians;
 - lets guardians register their own children and maintain child, health, contact and consent information;
-- provides an official school feed with comments and private parent–staff messaging;
+- provides an official school feed with comments, private parent–staff messaging, atomic staff messages to every guardian of a child, and consent-gated multi-image posts in a private Storage bucket;
+- separates guardian-planned attendance from staff-recorded check-in and check-out times;
+- lets administrators publish immutable, non-overlapping school terms with weekday hours and closures, then lets guardians save recurring Monday–Friday schedules for their children;
 - keeps parent-to-parent messaging and playdate requests off until both parents opt in;
 - provides private, same-department birthday invitations with separate mutual opt-in and recipient-isolated RSVP responses;
 - removes the known Solgläntan demo organization and exact @arthur.test accounts.

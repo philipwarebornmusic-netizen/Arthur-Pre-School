@@ -15,9 +15,14 @@ const state = {
   contacts: [],
   consents: [],
   attendance: [],
+  schoolTerms: [],
+  termClosures: [],
+  weeklySchedules: [],
   posts: [],
+  postImages: [],
   postComments: [],
   communityMembers: [],
+  guardianMessageTargets: [],
   privateMessages: [],
   playdateRequests: [],
   birthdayCandidates: [],
@@ -33,6 +38,7 @@ const state = {
   assistantOpen: false,
   assistantQuestion: "",
   assistantResponse: null,
+  postPreviewUrls: [],
 };
 
 const screen = document.querySelector("#screen");
@@ -71,13 +77,128 @@ function formatTimestamp(value) {
   if (!value) return "";
   return new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
+const SWEDISH_MONTHS = {
+  januari: 1, februari: 2, mars: 3, april: 4, maj: 5, juni: 6,
+  juli: 7, augusti: 8, september: 9, oktober: 10, november: 11, december: 12,
+};
+const WEEKDAYS = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"];
+const WEEKDAY_PATTERNS = [
+  /måndag(?:ar)?/i, /tisdag(?:ar)?/i, /onsdag(?:ar)?/i, /torsdag(?:ar)?/i, /fredag(?:ar)?/i,
+];
+
+function isoDate(year, month, day) {
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  if (candidate.getUTCFullYear() !== year || candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== day) throw new Error("Ärtan kunde inte tolka ett av datumen.");
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function parseSwedishDates(text) {
+  const pattern = /\b(\d{4})-(\d{2})-(\d{2})\b|\b(\d{1,2})\s+(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)(?:\s+(\d{4}))?\b/gi;
+  const matches = Array.from(text.matchAll(pattern));
+  const currentYear = Number(todayIso().slice(0, 4));
+  let firstDate = "";
+  return matches.map((match, index) => {
+    let year = match[1] ? Number(match[1]) : Number(match[6] || currentYear);
+    const month = match[1] ? Number(match[2]) : SWEDISH_MONTHS[match[5].toLowerCase()];
+    const day = match[1] ? Number(match[3]) : Number(match[4]);
+    let parsed = isoDate(year, month, day);
+    if (index === 1 && !match[1] && !match[6] && parsed < firstDate) {
+      year += 1;
+      parsed = isoDate(year, month, day);
+    }
+    if (index === 0) firstDate = parsed;
+    return { value: parsed, index: match.index, end: match.index + match[0].length };
+  });
+}
+
+function clockRanges(text) {
+  return Array.from(text.matchAll(/\b([01]?\d|2[0-3])[.:]([0-5]\d)\s*[-–]\s*([01]?\d|2[0-3])[.:]([0-5]\d)\b/g), (match) => ({
+    start: `${match[1].padStart(2, "0")}:${match[2]}`,
+    end: `${match[3].padStart(2, "0")}:${match[4]}`,
+    index: match.index,
+  }));
+}
+
+function parseTermText(value) {
+  const text = String(value || "").trim();
+  const dates = parseSwedishDates(text);
+  const times = clockRanges(text);
+  if (dates.length < 2 || !times.length) throw new Error("Skriv terminens start, slut och öppettider, till exempel 3 augusti–18 december, 06.30–17.30.");
+  const name = text.slice(0, dates[0].index).replace(/[-–,:]+$/g, "").trim() || "Termin";
+  const closures = dates.slice(2).map((date, index) => {
+    const next = dates[index + 3]?.index ?? text.length;
+    const segment = text.slice(date.end, next).replace(/^[\s,.:;-]*(?:för\s+)?/i, "").replace(/\s+och\s*$/i, "").replace(/[.,;]+$/g, "").trim();
+    let closureDate = date.value;
+    if (closureDate < dates[0].value || closureDate > dates[1].value) {
+      const endYearCandidate = `${dates[1].value.slice(0, 4)}${closureDate.slice(4)}`;
+      if (endYearCandidate >= dates[0].value && endYearCandidate <= dates[1].value) closureDate = endYearCandidate;
+    }
+    return { date: closureDate, reason: segment || "Stängt" };
+  });
+  return { name, startsOn: dates[0].value, endsOn: dates[1].value, opensAt: times[0].start, closesAt: times[0].end, closures };
+}
+
+function weekdaysIn(value) {
+  return WEEKDAY_PATTERNS.flatMap((pattern, index) => pattern.test(value) ? [index + 1] : []);
+}
+
+function parseWeeklyScheduleText(value) {
+  const text = String(value || "").toLowerCase().replace(/[–—]/g, "-");
+  const ranges = clockRanges(text);
+  const rows = WEEKDAYS.map((_, index) => ({ weekday: index + 1, attending: false, dropoff_at: null, pickup_at: null }));
+  let recognized = false;
+  if (/(alla\s+dagar|vardagar)/.test(text) && ranges[0]) {
+    rows.forEach((row) => Object.assign(row, { attending: true, dropoff_at: ranges[0].start, pickup_at: ranges[0].end }));
+    recognized = true;
+  }
+  const exception = text.match(/utom\s+(.+?)(?:,?\s+då\s+)([01]?\d|2[0-3])[.:]([0-5]\d)\s*-\s*([01]?\d|2[0-3])[.:]([0-5]\d)/i);
+  if (exception) {
+    weekdaysIn(exception[1]).forEach((weekday) => Object.assign(rows[weekday - 1], {
+      attending: true,
+      dropoff_at: `${exception[2].padStart(2, "0")}:${exception[3]}`,
+      pickup_at: `${exception[4].padStart(2, "0")}:${exception[5]}`,
+    }));
+    recognized = true;
+  }
+  for (const match of text.matchAll(/(måndag(?:ar)?|tisdag(?:ar)?|onsdag(?:ar)?|torsdag(?:ar)?|fredag(?:ar)?)[^.;\d]{0,30}([01]?\d|2[0-3])[.:]([0-5]\d)\s*-\s*([01]?\d|2[0-3])[.:]([0-5]\d)/gi)) {
+    const weekday = weekdaysIn(match[1])[0];
+    Object.assign(rows[weekday - 1], {
+      attending: true,
+      dropoff_at: `${match[2].padStart(2, "0")}:${match[3]}`,
+      pickup_at: `${match[4].padStart(2, "0")}:${match[5]}`,
+    });
+    recognized = true;
+  }
+  for (const match of text.matchAll(/ledig(?:a)?\s+([^.;]+)/gi)) {
+    weekdaysIn(match[1]).forEach((weekday) => Object.assign(rows[weekday - 1], { attending: false, dropoff_at: null, pickup_at: null }));
+    recognized = true;
+  }
+  if (!recognized) throw new Error("Ärtan kunde inte tolka veckoschemat. Ange dagar och tider tydligare.");
+  rows.forEach((row) => {
+    if (row.attending && (!row.dropoff_at || !row.pickup_at || row.dropoff_at >= row.pickup_at)) throw new Error(`${WEEKDAYS[row.weekday - 1]} saknar giltig lämning och hämtning.`);
+  });
+  return rows;
+}
 
 function roleLabel(role) {
   return { admin: "Organisation", staff: "Personal", parent: "Förälder" }[role] || role;
 }
 
 function attendanceLabel(status) {
-  return { in: "Inne", absent_sick: "Sjuk", absent_leave: "Ledig", picked_up: "Hämtad" }[status] || "Ej registrerad";
+  return { in: "Incheckad", absent_sick: "Sjuk", absent_leave: "Ledig", picked_up: "Utcheckad", unregistered: "Inte incheckad" }[status] || "Inte incheckad";
+}
+
+function attendanceState(attendance) {
+  if (!attendance) return "unregistered";
+  if (attendance.checked_in_at && !attendance.checked_out_at) return "in";
+  if (attendance.checked_out_at) return "picked_up";
+  if (attendance.status === "absent_sick" || attendance.status === "absent_leave") return attendance.status;
+  return "unregistered";
+}
+
+function formatClock(value) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("sv-SE", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
 function selectedChild() {
@@ -188,6 +309,135 @@ async function rpc(name, args = {}) {
   return request(`/rest/v1/rpc/${name}`, { method: "POST", body: JSON.stringify(args) });
 }
 
+function encodedStoragePath(path) {
+  return String(path).split("/").map(encodeURIComponent).join("/");
+}
+
+async function signPostImages(images) {
+  if (!images.length) return [];
+  const signed = await request("/storage/v1/object/sign/post-images", {
+    method: "POST",
+    body: JSON.stringify({ expiresIn: 3600, paths: images.map((image) => image.storage_path) }),
+  });
+  const urls = new Map((signed || []).map((item) => [item.path, item.signedURL || item.signedUrl]));
+  return images.map((image) => {
+    const signedPath = urls.get(image.storage_path);
+    return { ...image, signed_url: signedPath ? (signedPath.startsWith("http") ? signedPath : `${config.url}${signedPath}`) : "" };
+  });
+}
+
+async function uploadPostImage(path, blob) {
+  return request(`/storage/v1/object/post-images/${encodedStoragePath(path)}`, {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg", "x-upsert": "false" },
+    body: blob,
+  });
+}
+
+async function deletePostImages(paths) {
+  if (!paths.length) return;
+  await request("/storage/v1/object/post-images", {
+    method: "DELETE",
+    body: JSON.stringify({ prefixes: paths }),
+  });
+}
+
+async function transcodePostImage(file) {
+  if (!file.type.startsWith("image/")) throw new Error(`${file.name} är inte en bild.`);
+  if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name} är större än 20 MB.`);
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  const scale = Math.min(1, 2000 / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { alpha: false });
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.84));
+  if (!blob) throw new Error(`${file.name} kunde inte bearbetas.`);
+  if (blob.size > 5 * 1024 * 1024) throw new Error(`${file.name} är fortfarande större än 5 MB efter optimering.`);
+  return { blob, width, height };
+}
+
+function clearPostPreviews() {
+  state.postPreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+  state.postPreviewUrls = [];
+}
+
+function renderSelectedPostImages(input) {
+  const form = input.closest("form");
+  const preview = form?.querySelector("#post-image-preview");
+  if (!preview) return;
+  clearPostPreviews();
+  const files = Array.from(input.files || []);
+  if (files.length > 20) {
+    input.value = "";
+    preview.innerHTML = '<p class="notice error" role="status">Välj högst 20 bilder per inlägg.</p>';
+    return;
+  }
+  preview.innerHTML = files.map((file, index) => {
+    const url = URL.createObjectURL(file);
+    state.postPreviewUrls.push(url);
+    return `<article class="post-image-preview"><img src="${esc(url)}" alt=""><label>Bildbeskrivning ${index + 1}<input name="image_alt_text" maxlength="300" value="${esc(file.name.replace(/\.[^.]+$/, ""))}" required></label></article>`;
+  }).join("");
+}
+
+async function publishPost(form, values) {
+  const childId = values.child_id || null;
+  if (childId && state.children.find((child) => child.id === childId)?.department_id !== values.department_id) throw new Error("Barnet tillhör inte vald avdelning.");
+  const files = Array.from(form.querySelector('input[name="images"]')?.files || []);
+  if (files.length > 20) throw new Error("Välj högst 20 bilder per inlägg.");
+  const formData = new FormData(form);
+  const visibleChildIds = formData.getAll("visible_child_ids");
+  const noChildrenVisible = formData.get("no_children_visible") === "on";
+  if (files.length && noChildrenVisible === (visibleChildIds.length > 0)) throw new Error("Markera vilka barn som syns eller bekräfta att inga barn syns.");
+  if (!files.length && (noChildrenVisible || visibleChildIds.length)) throw new Error("Bildmarkeringar får bara anges när du har valt bilder.");
+  const postId = crypto.randomUUID();
+  const uploadedPaths = [];
+  try {
+    const altTexts = formData.getAll("image_alt_text");
+    const media = [];
+    for (const [index, file] of files.entries()) {
+      const prepared = await transcodePostImage(file);
+      const storagePath = `${state.profile.organization_id}/${state.session.user.id}/${postId}/${index}.jpg`;
+      await uploadPostImage(storagePath, prepared.blob);
+      uploadedPaths.push(storagePath);
+      media.push({
+        storage_path: storagePath,
+        position: index,
+        alt_text: String(altTexts[index] || `Bild ${index + 1} till ${values.title.trim()}`).trim(),
+        width: prepared.width,
+        height: prepared.height,
+        byte_size: prepared.blob.size,
+      });
+    }
+    await rpc("create_post_with_images", {
+      target_post_id: postId,
+      target_department_id: values.department_id,
+      target_child_id: childId,
+      post_title: values.title.trim(),
+      post_body: values.body.trim(),
+      media,
+      visible_child_ids: visibleChildIds,
+      no_children_visible: noChildrenVisible,
+    });
+    clearPostPreviews();
+  } catch (error) {
+    if (uploadedPaths.length) {
+      try {
+        await deletePostImages(uploadedPaths);
+      } catch (cleanupError) {
+        throw new Error(`${error.message} Uppladdade utkast kunde inte rensas: ${cleanupError.message}`);
+      }
+    }
+    throw error;
+  }
+}
+
 async function refreshSessionIfNeeded() {
   if (!state.session?.refresh_token) return;
   if (Number(state.session.expires_at || 0) > Math.floor(Date.now() / 1000) + 60) return;
@@ -242,9 +492,14 @@ async function logout() {
       contacts: [],
       consents: [],
       attendance: [],
+      schoolTerms: [],
+      termClosures: [],
+      weeklySchedules: [],
       posts: [],
+      postImages: [],
       postComments: [],
       communityMembers: [],
+      guardianMessageTargets: [],
       privateMessages: [],
       playdateRequests: [],
       birthdayCandidates: [],
@@ -275,7 +530,7 @@ async function loadData() {
 
   const organizationId = encodeURIComponent(state.profile.organization_id);
   const date = todayIso();
-  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, posts, invitations, postComments, communityMembers, privateMessages, playdateRequests, birthdayCandidates, birthdayInvitations] = await Promise.all([
+  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, schoolTerms, termClosures, weeklySchedules, posts, postImages, invitations, postComments, communityMembers, guardianMessageTargets, privateMessages, playdateRequests, birthdayCandidates, birthdayInvitations] = await Promise.all([
     request(`/rest/v1/organizations?select=id,name,type,created_at&id=eq.${organizationId}&limit=1`),
     request(`/rest/v1/preschools?select=id,organization_id,name,phone,address,postal_code,city,opening_hours,created_at&organization_id=eq.${organizationId}&order=name.asc`),
     request("/rest/v1/departments?select=id,preschool_id,name,created_at&order=name.asc"),
@@ -284,11 +539,16 @@ async function loadData() {
     request("/rest/v1/child_health?select=child_id,allergies,diet,conditions,medication,emergency,updated_at"),
     request("/rest/v1/child_contacts?select=id,child_id,name,relation,phone,can_pickup,is_primary,created_at&order=name.asc"),
     request("/rest/v1/consents?select=child_id,type,allowed,updated_at"),
-    request(`/rest/v1/attendance?select=id,child_id,date,status,dropoff_at,pickup_at,pickup_by,updated_at&date=eq.${date}`),
+    request(`/rest/v1/attendance?select=id,child_id,date,status,dropoff_at,pickup_at,pickup_by,checked_in_at,checked_out_at,updated_at&date=eq.${date}`),
+    rpc("list_school_terms"),
+    rpc("list_school_term_closures"),
+    rpc("list_child_weekly_schedules"),
     request("/rest/v1/posts?select=id,department_id,child_id,author_id,type,title,body,created_at&order=created_at.desc&limit=100"),
+    rpc("list_post_images"),
     request("/rest/v1/invitations?select=id,email,role,relation,code,status,department_id,child_id,expires_at,created_at&order=created_at.desc&limit=100"),
     rpc("list_post_comments"),
     rpc("list_community_members"),
+    rpc("list_guardian_message_targets"),
     rpc("list_private_messages"),
     rpc("list_playdate_requests"),
     rpc("list_birthday_candidates"),
@@ -304,17 +564,22 @@ async function loadData() {
   state.contacts = contacts;
   state.consents = consents;
   state.attendance = attendance;
+  state.schoolTerms = schoolTerms;
+  state.termClosures = termClosures;
+  state.weeklySchedules = weeklySchedules;
   state.posts = posts;
+  state.postImages = await signPostImages(postImages);
   state.invitations = invitations;
   state.postComments = postComments;
   state.communityMembers = communityMembers;
+  state.guardianMessageTargets = guardianMessageTargets;
   state.privateMessages = privateMessages;
   state.playdateRequests = playdateRequests;
   state.birthdayCandidates = birthdayCandidates;
   state.birthdayInvitations = birthdayInvitations;
   if (!state.children.some((child) => child.id === state.selectedChildId)) state.selectedChildId = state.children[0]?.id || null;
   const allowedViews = {
-    admin: ["overview", "schools", "messages", "people", "account"],
+    admin: ["overview", "attendance", "schools", "messages", "people", "account"],
     staff: ["attendance", "messages", "people", "account"],
     parent: ["home", "child", "messages", "account"],
   };
@@ -354,11 +619,12 @@ function assistantQuickActions() {
     account: [["private", "Kontakta en förälder"], ["attendance", "Hur ser närvaron ut?"], ["publish", "Skriv till föräldrar"], ["people", "Öppna barn och inbjudningar"]],
   };
   const adminActions = {
-    overview: [["overview", "Sammanfatta organisationen"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"], ["people", "Barn och inbjudningar"]],
-    schools: [["schools", "Sammanfatta skolorna"], ["publish", "Skriv till föräldrar"], ["overview", "Organisationens översikt"], ["people", "Barn och inbjudningar"]],
-    messages: [["publish", "Publicera ett inlägg"], ["private", "Skicka privat"], ["posts", "Sammanfatta flödet"], ["overview", "Organisationens översikt"]],
-    people: [["people", "Sammanfatta personer"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"], ["overview", "Organisationens översikt"]],
-    account: [["overview", "Organisationens översikt"], ["private", "Kontakta en förälder"], ["publish", "Skriv till föräldrar"], ["people", "Barn och inbjudningar"]],
+    overview: [["overview", "Sammanfatta organisationen"], ["attendance", "Öppna dagens närvaro"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"]],
+    attendance: [["attendance", "Sammanfatta närvaron"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"], ["people", "Barn och inbjudningar"]],
+    schools: [["schools", "Sammanfatta skolorna"], ["attendance", "Öppna dagens närvaro"], ["publish", "Skriv till föräldrar"], ["people", "Barn och inbjudningar"]],
+    messages: [["publish", "Publicera ett inlägg"], ["private", "Skicka privat"], ["posts", "Sammanfatta flödet"], ["attendance", "Hur ser närvaron ut?"]],
+    people: [["people", "Sammanfatta personer"], ["attendance", "Öppna dagens närvaro"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"]],
+    account: [["attendance", "Öppna dagens närvaro"], ["overview", "Organisationens översikt"], ["private", "Kontakta en förälder"], ["publish", "Skriv till föräldrar"]],
   };
   const roleActions = state.profile.role === "parent" ? parentActions : state.profile.role === "staff" ? staffActions : adminActions;
   return roleActions[state.view] || Object.values(roleActions)[0] || [];
@@ -416,7 +682,7 @@ function parentAssistantAnswer(intent) {
       attendance.pickup_by ? `hämtas av ${attendance.pickup_by}` : "",
     ]);
     return assistantResult(
-      `${child.name}: ${attendanceLabel(attendance.status)}${times.length ? `. ${times.join(", ")}.` : "."}`,
+      `${child.name}: ${attendanceLabel(attendanceState(attendance))}${times.length ? `. ${times.join(", ")}.` : "."}`,
       "Dagens plan i ärtan",
       { actionLabel: "Öppna dagens plan", view: "home", target: "daily-plan" },
     );
@@ -455,10 +721,15 @@ function parentAssistantAnswer(intent) {
     return assistantResult(`${school.name} har registrerade öppettider: ${school.opening_hours}.`, "Förskolans registrerade öppettider");
   }
   if (intent === "calendar") {
+    const preschoolId = childSchoolId(child);
+    const term = state.schoolTerms.find((item) => item.preschool_id === preschoolId && item.term_status === "published");
+    if (!term) return assistantResult("Förskolan har inte publicerat någon termin ännu.", "Publicerade terminer");
+    const closures = closuresForTerm(term.term_id);
+    const closureText = closures.length ? ` Stängt: ${closures.map((closure) => `${formatDate(closure.closure_date)} (${closure.reason})`).join(", ")}.` : " Inga stängningsdagar är publicerade.";
     return assistantResult(
-      "Kalender och utvecklingssamtal är inte aktiverade ännu, så jag kan inte ge ett säkert datum. Fråga personalen i ett privat meddelande.",
-      "Tillgängliga funktioner i ärtan",
-      { actionLabel: "Fråga personalen", view: "messages", target: "private-messaging" },
+      `${term.term_name}: ${termDateSummary(term)}.${closureText}`,
+      "Förskolans publicerade termin",
+      { actionLabel: "Öppna termin och veckoschema", view: "home", target: "term-overview" },
     );
   }
   if (intent === "consents") {
@@ -503,22 +774,22 @@ function parentAssistantAnswer(intent) {
     );
   }
   return assistantResult(
-    "Jag kan just nu hjälpa med dagens plan, ändrade lämningstider, hämtningstider och hämtare, kalasinbjudningar, sådant som saknas, skolans inlägg, öppettider, samtycken och rätt kontakt. Kalender och utvecklingssamtal kommer senare.",
+    "Jag kan hjälpa med dagens plan, lämning och hämtning, veckoschema, publicerade terminer, kalasinbjudningar, skolans inlägg, öppettider, samtycken och rätt kontakt.",
     "Tillgängliga funktioner i ärtan",
   );
 }
 
 function staffAssistantAnswer(intent) {
-  const isAdmin = state.profile.role === "admin";
   if (intent === "attendance") {
-    const counts = state.attendance.reduce((result, item) => {
-      result[item.status] = (result[item.status] || 0) + 1;
+    const counts = state.children.reduce((result, child) => {
+      const status = attendanceState(attendanceFor(child.id));
+      result[status] = (result[status] || 0) + 1;
       return result;
     }, {});
     return assistantResult(
-      `${state.children.length} barn är synliga för dig idag: ${counts.in || 0} inne, ${counts.picked_up || 0} hämtade, ${(counts.absent_sick || 0) + (counts.absent_leave || 0)} frånvarande och ${Math.max(0, state.children.length - state.attendance.length)} utan registrerad status.`,
+      `${state.children.length} barn är synliga för dig idag: ${counts.in || 0} incheckade, ${counts.picked_up || 0} utcheckade, ${(counts.absent_sick || 0) + (counts.absent_leave || 0)} frånvarande och ${counts.unregistered || 0} inte incheckade.`,
       "Dagens närvarolista",
-      { actionLabel: isAdmin ? "Öppna Personer" : "Öppna Närvaro", view: isAdmin ? "people" : "attendance" },
+      { actionLabel: "Öppna Närvaro", view: "attendance" },
     );
   }
   if (intent === "publish") {
@@ -569,16 +840,22 @@ function staffAssistantAnswer(intent) {
   }
   if (intent === "privacy" || intent === "consents") {
     return assistantResult(
-      "Kontrollera alltid avdelning och eventuell barnmottagare före publicering. Automatisk bild- och samtyckeskontroll är planerad men finns inte ännu.",
-      "Nuvarande publiceringsflöde",
+      "Markera alla barn som syns i ett bildinlägg eller bekräfta att inga barn syns. Servern kontrollerar aktuellt bild- och gruppbildssamtycke före publicering.",
+      "Bildpublicering med samtyckeskontroll",
       { actionLabel: "Öppna skolans flöde", view: "messages", target: "official-post-form" },
     );
   }
   if (intent === "calendar") {
-    return assistantResult("Kalender och schemalagda påminnelser är inte aktiverade ännu.", "Tillgängliga funktioner i ärtan");
+    const published = state.schoolTerms.filter((term) => term.term_status === "published").length;
+    const drafts = state.schoolTerms.filter((term) => term.term_status === "draft").length;
+    return assistantResult(
+      `${published} publicerade terminer och ${drafts} utkast är synliga för dig.`,
+      "Terminer och veckoscheman",
+      isAdmin ? { actionLabel: "Planera terminer", view: "schools" } : {},
+    );
   }
   return assistantResult(
-    "Jag kan just nu öppna rätt arbetsflöde och sammanfatta närvaro, personer, skolor, inlägg och privata mottagare. Jag skapar ännu inga AI-utkast.",
+    "Jag kan öppna rätt arbetsflöde och sammanfatta närvaro, personer, skolor, terminer, inlägg och privata mottagare.",
     "Tillgängliga funktioner i ärtan",
   );
 }
@@ -699,6 +976,76 @@ function parentChildCreateForm(additional = false) {
 }
 
 
+function childSchoolId(child) {
+  return state.departments.find((department) => department.id === child.department_id)?.preschool_id || null;
+}
+
+function closuresForTerm(termId) {
+  return state.termClosures.filter((closure) => closure.term_id === termId);
+}
+
+function schedulesForTermChild(termId, childId) {
+  return state.weeklySchedules.filter((schedule) => schedule.term_id === termId && schedule.child_id === childId);
+}
+
+function termDateSummary(term) {
+  return `${formatDate(term.starts_on)}–${formatDate(term.ends_on)} · vardagar ${term.opens_at.slice(0, 5)}–${term.closes_at.slice(0, 5)}`;
+}
+
+function renderTermClosures(termId) {
+  const closures = closuresForTerm(termId);
+  return closures.length
+    ? `<ul class="term-closures">${closures.map((closure) => `<li><strong>${esc(formatDate(closure.closure_date))}</strong><span>${esc(closure.reason)}</span></li>`).join("")}</ul>`
+    : `<p class="form-hint">Inga stängningsdagar är publicerade.</p>`;
+}
+
+function renderWeeklyScheduleForm(term, child) {
+  const saved = schedulesForTermChild(term.term_id, child.id);
+  const rows = WEEKDAYS.map((label, index) => {
+    const weekday = index + 1;
+    const row = saved.find((item) => Number(item.weekday) === weekday);
+    const attending = Boolean(row?.attending);
+    return `<div class="weekly-schedule-row" data-weekday="${weekday}">
+      <label class="check"><input type="checkbox" name="attending_${weekday}" data-schedule-attending ${attending ? "checked" : ""}> ${esc(label)}</label>
+      <label>Lämning<input type="time" name="dropoff_${weekday}" value="${esc(row?.dropoff_at?.slice(0, 5) || "")}" ${attending ? "" : "disabled"}></label>
+      <label>Hämtning<input type="time" name="pickup_${weekday}" value="${esc(row?.pickup_at?.slice(0, 5) || "")}" ${attending ? "" : "disabled"}></label>
+    </div>`;
+  }).join("");
+  return `<form class="card form-stack term-schedule-card" data-form="weekly-schedule" data-term-id="${esc(term.term_id)}" data-child-id="${esc(child.id)}">
+    <p class="kicker">Återkommande veckoschema</p><h3>${esc(child.name)}</h3>
+    <div class="assistant-form">
+      <label>Berätta för Ärtan<textarea name="schedule_text" placeholder="08.00–16.30 alla dagar utom torsdagar, då 08.00–15.00"></textarea></label>
+      <button class="secondary" type="button" data-action="parse-weekly-schedule">Tolka och fyll i</button>
+      <p class="form-hint" data-parse-status aria-live="polite">Ärtan fyller bara i formuläret. Granska tiderna och välj Spara.</p>
+    </div>
+    <fieldset class="weekly-schedule"><legend>Måndag till fredag</legend>${rows}</fieldset>
+    <button class="primary" type="submit">Spara veckoschema</button>
+  </form>`;
+}
+
+function renderParentTermSchedules(child) {
+  const preschoolId = childSchoolId(child);
+  const terms = state.schoolTerms.filter((term) => term.preschool_id === preschoolId && term.term_status === "published");
+  if (!terms.length) return `<section><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${emptyState("Ingen publicerad termin", "När förskolan publicerar terminen visas öppettider, stängningsdagar och veckoschema här.")}</section>`;
+  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${terms.map((term) => `<article class="card term-card"><p class="kicker">Publicerad</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p><h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}</article>${renderWeeklyScheduleForm(term, child)}`).join("")}</section>`;
+}
+
+function parseClosureLines(value) {
+  return String(value || "").split(/\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+    const [date, ...reasonParts] = line.split("|");
+    const reason = reasonParts.join("|").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date.trim()) || reason.length < 2) throw new Error("Skriv varje stängningsdag som ÅÅÅÅ-MM-DD | anledning.");
+    return { date: date.trim(), reason };
+  });
+}
+function setParseStatus(form, message, error = false) {
+  const status = form.querySelector("[data-parse-status]");
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("error-text", error);
+}
+
+
 function renderParentHome() {
   const child = selectedChild();
   if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Min dag</p><h1 class="h1">Välkommen</h1><p class="sub">Börja med att lägga till ditt barn. Därefter hjälper Ärtan-botten dig med barnuppgifter och dagens plan.</p></section>${parentChildCreateForm()}`;
@@ -707,10 +1054,11 @@ function renderParentHome() {
   const messages = state.posts.filter((post) => !post.child_id || post.child_id === child.id).slice(0, 3);
   const reminders = parentReminders(child);
   const nextReminder = reminders[0];
-  return `${noticeHtml()}${childTabs()}<section class="hero-card home-hero"><div><p class="kicker">${esc(new Intl.DateTimeFormat("sv-SE", { dateStyle: "full" }).format(new Date()))}</p><h1 class="h1">${esc(child.name)}</h1><p class="big-status">${esc(attendanceLabel(attendance?.status))}</p><p class="sub">${esc(departmentName(child.department_id))}${attendance?.pickup_at ? ` · hämtning ${esc(attendance.pickup_at.slice(0, 5))}` : ""}</p></div>${botMascot()}</section>
+  return `${noticeHtml()}${childTabs()}<section class="hero-card home-hero"><div><p class="kicker">${esc(new Intl.DateTimeFormat("sv-SE", { dateStyle: "full" }).format(new Date()))}</p><h1 class="h1">${esc(child.name)}</h1><p class="big-status">${esc(attendanceLabel(attendanceState(attendance)))}</p><p class="sub">${esc(departmentName(child.department_id))}${attendance?.pickup_at ? ` · planerad hämtning ${esc(attendance.pickup_at.slice(0, 5))}` : ""}</p></div>${botMascot()}</section>
     <section class="card bot-card"><div class="bot-card-mascot">${botMascot()}</div><div><p class="kicker">Ärtan-botten</p><h2>${reminders.length ? "Jag hjälper dig komma ihåg" : "Allt är uppdaterat"}</h2>${reminders.length ? `<ul class="bot-reminders">${reminders.map((reminder) => `<li>${esc(reminder.text)}</li>`).join("")}</ul>` : `<p class="bot-done">Dagens plan och barnets uppgifter ser kompletta ut.</p>`}${nextReminder ? `<button class="primary bot-next" type="button" data-action="bot-reminder" data-view="${esc(nextReminder.view)}" data-target="${esc(nextReminder.target)}">Ta hand om nästa sak</button>` : ""}</div></section>
+    ${renderParentTermSchedules(child)}
     <form id="daily-plan" class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><p class="kicker">Idag</p><h2>Dagens plan</h2>
-      ${selectField("Status", "status", [["in", "På plats"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]], attendance?.status || "in", true)}
+      ${selectField("Planerad status", "status", [["in", "Kommer"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]], ["absent_sick", "absent_leave"].includes(attendance?.status) ? attendance.status : "in", true)}
       <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
       <label>Vem hämtar?<input name="pickup_by" type="text" value="${esc(attendance?.pickup_by || "")}" list="pickup-contact-options" placeholder="Exempelvis mormor eller farfar"></label>
       ${pickupContacts.length ? `<datalist id="pickup-contact-options">${pickupContacts.map((contact) => `<option value="${esc(contact.name)}"></option>`).join("")}</datalist>` : ""}
@@ -729,10 +1077,18 @@ function renderPostComment(comment) {
   return `<li><div><strong>${esc(comment.author_name)}</strong><span>${esc(formatTimestamp(comment.created_at))}</span><p>${esc(comment.body)}</p></div>${canDelete ? `<button class="link danger-link" type="button" data-action="delete-comment" data-id="${esc(comment.comment_id)}">Ta bort</button>` : ""}</li>`;
 }
 
+function postImagesFor(postId) {
+  return state.postImages.filter((image) => image.post_id === postId);
+}
+
 function renderPost(post) {
   const scope = post.child_id ? state.children.find((child) => child.id === post.child_id)?.name : departmentName(post.department_id);
   const comments = commentsFor(post.id);
+  const images = postImagesFor(post.id);
+  const canDelete = post.author_id === state.profile.id || state.profile.role === "admin";
   return `<article class="card school-post"><p class="kicker">Från skolan · ${esc(scope || "Skolan")} · ${esc(formatTimestamp(post.created_at))}</p><h3>${esc(post.title)}</h3><p class="pre-line">${esc(post.body)}</p>
+    ${images.length ? `<div class="post-image-gallery count-${Math.min(images.length, 4)}">${images.map((image) => image.signed_url ? `<img src="${esc(image.signed_url)}" alt="${esc(image.alt_text)}" width="${image.width}" height="${image.height}" loading="lazy">` : `<div class="post-image-missing" role="img" aria-label="${esc(image.alt_text)}">Bilden kunde inte laddas</div>`).join("")}</div>` : ""}
+    ${canDelete ? `<button class="link danger-link post-delete" type="button" data-action="delete-post" data-id="${esc(post.id)}">Ta bort inlägget</button>` : ""}
     <section class="post-comments"><h4>Kommentarer</h4>${comments.length ? `<ul>${comments.map(renderPostComment).join("")}</ul>` : `<p class="form-hint">Inga kommentarer ännu.</p>`}
       <form class="comment-form" data-form="post-comment" data-post-id="${esc(post.id)}">${field("Skriv en kommentar", "body", "", { required: true, maxlength: "2000" })}<button class="secondary" type="submit">Kommentera</button></form>
     </section>
@@ -778,19 +1134,54 @@ function renderChildInfo() {
     }).join("")}</div></section>${parentChildCreateForm(true)}`;
 }
 
+function groupedPrivateMessages() {
+  const cards = [];
+  const sentGroups = new Map();
+  state.privateMessages.forEach((message) => {
+    if (message.sender_id !== state.profile.id) {
+      cards.push({ ...message, sent: false });
+      return;
+    }
+    let card = sentGroups.get(message.delivery_group_id);
+    if (!card) {
+      card = { ...message, sent: true, recipientNames: [] };
+      sentGroups.set(message.delivery_group_id, card);
+      cards.push(card);
+    }
+    card.recipientNames.push(message.recipient_name);
+  });
+  return cards.slice(-50);
+}
+
+function privateMessageRecipientOptions() {
+  const options = [];
+  const guardiansByChild = new Map();
+  state.guardianMessageTargets.forEach((target) => {
+    if (!guardiansByChild.has(target.child_id)) guardiansByChild.set(target.child_id, []);
+    guardiansByChild.get(target.child_id).push(target);
+  });
+  guardiansByChild.forEach((guardians, childId) => {
+    options.push([`child:${childId}`, `${guardians[0].child_name} · alla vårdnadshavare (${guardians.length})`]);
+  });
+  state.communityMembers.filter((member) => member.can_message).forEach((member) => {
+    options.push([`profile:${member.profile_id}`, `${member.display_name} · ${roleLabel(member.profile_role)}`]);
+  });
+  return options;
+}
+
 function renderPrivateMessaging() {
-  const recipients = state.communityMembers.filter((member) => member.can_message);
-  const messages = state.privateMessages.slice(-50);
+  const recipients = privateMessageRecipientOptions();
+  const messages = groupedPrivateMessages();
   return `<section id="private-messaging" class="community-section"><div class="section-head"><div><p class="kicker">Privat</p><h2>Meddelanden</h2></div></div>
     <form class="card form-stack" data-form="private-message">
-      <p class="form-hint">Privata meddelanden visas bara för dig och mottagaren. Föräldrar syns för varandra först när båda har tillåtit det.</p>
-      ${recipients.length ? selectField("Mottagare", "recipient_id", recipients.map((member) => [member.profile_id, `${member.display_name} · ${roleLabel(member.profile_role)}`]), "", true) : `<p class="form-hint">Ingen mottagare är tillgänglig ännu.</p>`}
+      <p class="form-hint">Privata meddelanden visas bara för avsändaren och varje enskild mottagare. Personal kan välja alla vårdnadshavare för ett barn; mottagarna ser inte varandra.</p>
+      ${recipients.length ? selectField("Mottagare", "recipient_target", recipients, "", true) : `<p class="form-hint">Ingen mottagare är tillgänglig ännu.</p>`}
       ${textareaField("Meddelande", "body", "", "Skriv ett privat meddelande", true)}
       <button class="primary" type="submit" ${recipients.length ? "" : "disabled"}>Skicka privat</button>
     </form>
     ${messages.length ? `<div class="private-message-list">${messages.map((message) => {
-      const sent = message.sender_id === state.profile.id;
-      return `<article class="card private-message ${sent ? "sent" : "received"}"><p class="kicker">${sent ? `Till ${esc(message.recipient_name)}` : `Från ${esc(message.sender_name)}`} · ${esc(formatTimestamp(message.created_at))}</p><p>${esc(message.body)}</p></article>`;
+      const recipientLabel = message.recipientNames?.join(", ") || message.recipient_name;
+      return `<article class="card private-message ${message.sent ? "sent" : "received"}"><p class="kicker">${message.sent ? `Till ${esc(recipientLabel)}` : `Från ${esc(message.sender_name)}`} · ${esc(formatTimestamp(message.created_at))}</p><p>${esc(message.body)}</p></article>`;
     }).join("")}</div>` : emptyState("Inga privata meddelanden", "När någon skriver privat visas meddelandet här.")}</section>`;
 }
 
@@ -884,7 +1275,15 @@ function renderMessages() {
     ${canPublish ? `<form id="official-post-form" class="card form-stack" data-form="post-create"><h2>Publicera officiellt inlägg</h2>
       ${selectField("Avdelning", "department_id", availableDepartments.map((department) => [department.id, `${schoolName(department.preschool_id)} · ${department.name}`]), "", true)}
       ${selectField("Barn, valfritt", "child_id", [["", "Hela avdelningen"], ...state.children.map((child) => [child.id, child.name])], "")}
-      ${field("Rubrik", "title", "", { required: true })}${textareaField("Inlägg", "body", "", "Skriv information från skolan", true)}
+      ${field("Rubrik", "title", "", { required: true, maxlength: "160" })}${textareaField("Inlägg", "body", "", "Skriv information från skolan", true)}
+      <label>Bilder, valfritt<input name="images" type="file" accept="image/*" multiple data-action="post-images"></label>
+      <p class="form-hint">Välj upp till 20 bilder. De optimeras, metadata tas bort och originalfilerna lämnar inte webbläsaren.</p>
+      <div id="post-image-preview" class="post-image-preview-grid" aria-live="polite"></div>
+      <fieldset class="preference-group post-visible-children"><legend>Barn som syns i någon av bilderna</legend>
+        <p class="form-hint">Markera alla barn som går att identifiera i någon bild. Publicering stoppas om rätt bildsamtycke saknas.</p>
+        ${state.children.map((child) => `<label class="check"><input type="checkbox" name="visible_child_ids" value="${esc(child.id)}"> ${esc(child.name)} · ${esc(departmentName(child.department_id))}</label>`).join("") || `<p class="form-hint">Inga barn finns i avdelningen ännu.</p>`}
+        <label class="check"><input type="checkbox" name="no_children_visible"> Inga barn går att identifiera i bilderna</label>
+      </fieldset>
       <button class="primary" type="submit">Publicera i skolans flöde</button></form>` : ""}
     <section id="official-feed" class="community-section"><div class="section-head"><div><p class="kicker">Officiellt</p><h2>Senaste från skolan</h2></div></div>${state.posts.map(renderPost).join("") || emptyState("Inga inlägg", canPublish ? "Publicera det första inlägget ovan." : "Skolan har inte publicerat något ännu.")}</section>
     ${renderPrivateMessaging()}
@@ -893,10 +1292,32 @@ function renderMessages() {
 }
 
 function renderAttendance() {
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Närvaro</p><h1 class="h1">Idag</h1><p class="sub">${esc(todayIso())} · ${state.children.length} barn i dina avdelningar</p></section>
+  const counts = state.children.reduce((result, child) => {
+    const status = attendanceState(attendanceFor(child.id));
+    result[status] = (result[status] || 0) + 1;
+    return result;
+  }, {});
+  const absentCount = (counts.absent_sick || 0) + (counts.absent_leave || 0);
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Närvaro</p><h1 class="h1">Checka in och ut</h1><p class="sub">${esc(todayIso())} · ${state.children.length} barn i dina avdelningar</p></section>
+    <section class="metric-grid attendance-metrics" aria-label="Dagens närvaro">
+      <article class="metric"><strong>${counts.in || 0}</strong><span>Incheckade</span></article>
+      <article class="metric"><strong>${counts.unregistered || 0}</strong><span>Inte incheckade</span></article>
+      <article class="metric"><strong>${counts.picked_up || 0}</strong><span>Utcheckade</span></article>
+      <article class="metric"><strong>${absentCount}</strong><span>Frånvarande</span></article>
+    </section>
     ${state.children.length ? `<div class="attendance-list">${state.children.map((child) => {
       const attendance = attendanceFor(child.id);
-      return `<article class="card attendance-row"><div><strong>${esc(child.name)}</strong><span>${esc(departmentName(child.department_id))}${attendance?.pickup_at ? ` · hämtas ${esc(attendance.pickup_at.slice(0, 5))}` : ""}</span></div><div class="status-buttons">${[["in", "Inne"], ["picked_up", "Hämtad"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]].map(([status, label]) => `<button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-status="${status}" aria-pressed="${attendance?.status === status}">${label}</button>`).join("")}</div></article>`;
+      const status = attendanceState(attendance);
+      const active = status === "in";
+      const primaryTransition = active ? "check_out" : "check_in";
+      const primaryLabel = active ? "Checka ut" : status === "picked_up" ? "Checka in igen" : "Checka in";
+      const actualTime = active ? `Incheckad ${formatClock(attendance.checked_in_at)}` : status === "picked_up" ? `Utcheckad ${formatClock(attendance.checked_out_at)}` : attendanceLabel(status);
+      const plan = compact([
+        attendance?.dropoff_at ? `plan ${attendance.dropoff_at.slice(0, 5)}` : "",
+        attendance?.pickup_at ? `hämtning ${attendance.pickup_at.slice(0, 5)}` : "",
+        attendance?.pickup_by ? `av ${attendance.pickup_by}` : "",
+      ]).join(" · ");
+      return `<article class="card attendance-row"><div class="attendance-child"><div><strong>${esc(child.name)}</strong><span>${esc(departmentName(child.department_id))}${plan ? ` · ${esc(plan)}` : ""}</span></div><span class="attendance-state ${esc(status)}">${esc(actualTime)}</span></div><div class="attendance-actions"><button class="primary attendance-primary" type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="${primaryTransition}">${primaryLabel}</button>${active ? "" : `<div class="attendance-secondary" role="group" aria-label="Markera frånvaro för ${esc(child.name)}"><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_sick" aria-pressed="${status === "absent_sick"}">Sjuk</button><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_leave" aria-pressed="${status === "absent_leave"}">Ledig</button></div>`}</div></article>`;
     }).join("")}</div>` : emptyState("Inga barn", "Du behöver kopplas till en avdelning innan närvarolistan visas.")}`;
 }
 
@@ -910,9 +1331,32 @@ function departmentOptions() {
   return editableDepartments().map((department) => [department.id, `${schoolName(department.preschool_id)} · ${department.name}`]);
 }
 
+function renderAdminTerm(term) {
+  return `<article class="card term-card"><p class="kicker">${term.term_status === "published" ? "Publicerad" : "Utkast"}</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p><h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}${term.term_status === "draft" ? `<button class="primary" type="button" data-action="publish-term" data-id="${esc(term.term_id)}">Publicera termin</button>` : ""}</article>`;
+}
+
+function renderTermCreateForm(school) {
+  return `<form class="card form-stack" data-form="term-create" data-preschool-id="${esc(school.id)}"><p class="kicker">Ny termin</p><h3>Planera och publicera</h3>
+    <div class="assistant-form">
+      <label>Berätta för Ärtan<textarea name="term_text" placeholder="Höstterminen 3 augusti–18 december, öppet 06.30–17.30. Stängt 13 september för planeringsdag och 11 november för studiedag."></textarea></label>
+      <button class="secondary" type="button" data-action="parse-term">Tolka och fyll i</button>
+      <p class="form-hint" data-parse-status aria-live="polite">Ärtan fyller bara i utkastet. Granska allt innan du sparar.</p>
+    </div>
+    ${field("Terminens namn", "term_name", "", { required: true })}
+    <div class="form-grid">${field("Startdatum", "starts_on", "", { type: "date", required: true })}${field("Slutdatum", "ends_on", "", { type: "date", required: true })}</div>
+    <div class="form-grid">${field("Öppnar vardagar", "opens_at", "", { type: "time", required: true })}${field("Stänger vardagar", "closes_at", "", { type: "time", required: true })}</div>
+    ${textareaField("Stängningsdagar", "closures", "", "En rad per dag: 2026-09-13 | Planeringsdag")}
+    <p class="form-hint">Spara först som utkast. Vårdnadshavare ser terminen först när du publicerar den.</p>
+    <button class="primary" type="submit">Spara utkast</button>
+  </form>`;
+}
+
 function renderSchools() {
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">Skolor</h1><p class="sub">${esc(state.organization?.name || "")}</p></section>
-    ${state.schools.map((school) => `<article class="card"><p class="kicker">Skola</p><h2>${esc(school.name)}</h2><p>${esc(compact([school.address, compact([school.postal_code, school.city]).join(" ")]).join(", ") || "Ingen adress registrerad")}</p><p class="meta">${esc(compact([school.phone, school.opening_hours]).join(" · ") || "Inga kontaktuppgifter registrerade")}</p><ul class="rows">${state.departments.filter((department) => department.preschool_id === school.id).map((department) => `<li><span>${esc(department.name)}</span><span class="status">${state.children.filter((child) => child.department_id === department.id).length} barn</span></li>`).join("") || "<li><span>Inga avdelningar</span></li>"}</ul></article>`).join("") || emptyState("Ingen skola skapad", "Skapa organisationens första skola nedan.")}
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">Skolor och terminer</h1><p class="sub">${esc(state.organization?.name || "")}</p></section>
+    ${state.schools.map((school) => {
+      const terms = state.schoolTerms.filter((term) => term.preschool_id === school.id);
+      return `<section class="school-admin"><article class="card"><p class="kicker">Skola</p><h2>${esc(school.name)}</h2><p>${esc(compact([school.address, compact([school.postal_code, school.city]).join(" ")]).join(", ") || "Ingen adress registrerad")}</p><p class="meta">${esc(compact([school.phone, school.opening_hours]).join(" · ") || "Inga kontaktuppgifter registrerade")}</p><ul class="rows">${state.departments.filter((department) => department.preschool_id === school.id).map((department) => `<li><span>${esc(department.name)}</span><span class="status">${state.children.filter((child) => child.department_id === department.id).length} barn</span></li>`).join("") || "<li><span>Inga avdelningar</span></li>"}</ul></article><div class="term-admin-list">${terms.map(renderAdminTerm).join("") || emptyState("Ingen termin", "Skapa ett terminsutkast och publicera det när uppgifterna är granskade.")}${renderTermCreateForm(school)}</div></section>`;
+    }).join("") || emptyState("Ingen skola skapad", "Skapa organisationens första skola nedan.")}
     <form class="card form-stack" data-form="school-create"><h2>Skapa ny skola</h2>
       ${field("Skolans namn", "name", "", { required: true })}
       <div class="form-grid">${field("Telefon", "phone", "", { type: "tel" })}${field("Öppettider", "opening_hours", "", { placeholder: "06:30–17:30" })}</div>
@@ -971,7 +1415,7 @@ function renderAccount() {
 function renderNav() {
   const role = state.profile?.role;
   const items = role === "admin"
-    ? [["overview", "▦", "Översikt"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["account", "⚙", "Konto"]]
+    ? [["overview", "▦", "Översikt"], ["attendance", "✓", "Närvaro"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["account", "⚙", "Konto"]]
     : role === "staff"
       ? [["attendance", "✓", "Närvaro"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Barn"], ["account", "⚙", "Konto"]]
       : [["home", "●", "Min dag"], ["child", "🌱", "Barnet"], ["messages", "✉", "Gemenskap"], ["account", "⚙", "Konto"]];
@@ -1026,11 +1470,13 @@ async function runMutation(work, successText = "Sparat.") {
   }
 }
 
-async function upsertAttendance(childId, values) {
-  await request("/rest/v1/attendance?on_conflict=child_id,date", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({ child_id: childId, date: todayIso(), ...values, updated_by: state.profile.id, updated_at: new Date().toISOString() }),
+async function saveAttendancePlan(childId, values) {
+  await rpc("save_attendance_plan", {
+    target_child_id: childId,
+    plan_status: values.status,
+    plan_dropoff_at: values.dropoff_at || null,
+    plan_pickup_at: values.pickup_at || null,
+    plan_pickup_by: values.pickup_by.trim() || null,
   });
 }
 
@@ -1084,6 +1530,20 @@ document.body.addEventListener("submit", (event) => {
         school_city: values.city.trim() || null,
         school_opening_hours: values.opening_hours.trim() || null,
         department_name: values.department_name.trim(),
+      });
+      await loadData();
+      return;
+    }
+    if (type === "term-create") {
+      await rpc("save_school_term", {
+        target_term_id: null,
+        target_preschool_id: form.dataset.preschoolId,
+        term_name: values.term_name.trim(),
+        term_starts_on: values.starts_on,
+        term_ends_on: values.ends_on,
+        term_opens_at: values.opens_at,
+        term_closes_at: values.closes_at,
+        closures: parseClosureLines(values.closures),
       });
       await loadData();
       return;
@@ -1154,18 +1614,32 @@ document.body.addEventListener("submit", (event) => {
       return;
     }
     if (type === "parent-attendance") {
-      await upsertAttendance(form.dataset.childId, { status: values.status, dropoff_at: values.dropoff_at || null, pickup_at: values.pickup_at || null, pickup_by: values.pickup_by.trim() || null });
+      await saveAttendancePlan(form.dataset.childId, values);
+      await loadData();
+      return;
+    }
+    if (type === "weekly-schedule") {
+      const weeklySchedule = WEEKDAYS.map((_, index) => {
+        const weekday = index + 1;
+        const row = form.querySelector(`[data-weekday="${weekday}"]`);
+        const attending = row.querySelector("[data-schedule-attending]").checked;
+        return {
+          weekday,
+          attending,
+          dropoff_at: attending ? row.querySelector(`[name="dropoff_${weekday}"]`).value : null,
+          pickup_at: attending ? row.querySelector(`[name="pickup_${weekday}"]`).value : null,
+        };
+      });
+      await rpc("save_child_weekly_schedule", {
+        target_term_id: form.dataset.termId,
+        target_child_id: form.dataset.childId,
+        weekly_schedule: weeklySchedule,
+      });
       await loadData();
       return;
     }
     if (type === "post-create") {
-      const childId = values.child_id || null;
-      if (childId && state.children.find((child) => child.id === childId)?.department_id !== values.department_id) throw new Error("Barnet tillhör inte vald avdelning.");
-      await request("/rest/v1/posts", {
-        method: "POST",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ department_id: values.department_id, child_id: childId, author_id: state.profile.id, type: "diary", title: values.title.trim(), body: values.body.trim() }),
-      });
+      await publishPost(form, values);
       await loadData();
       return;
     }
@@ -1179,9 +1653,12 @@ document.body.addEventListener("submit", (event) => {
       return;
     }
     if (type === "private-message") {
-      await rpc("send_private_message", {
-        target_profile_id: values.recipient_id,
+      const [targetType, targetId] = values.recipient_target.split(":");
+      await rpc("send_private_message_group", {
         message_body: values.body.trim(),
+        target_profile_id: targetType === "profile" ? targetId : null,
+        target_child_id: targetType === "child" ? targetId : null,
+        send_to_all_guardians: targetType === "child",
       });
       await loadData();
       return;
@@ -1228,6 +1705,25 @@ document.body.addEventListener("submit", (event) => {
       await loadData();
     }
   }, type === "login" || type === "register" ? "" : type === "birthday-create" ? "Kalasinbjudan är skickad privat." : "Sparat.");
+});
+
+document.body.addEventListener("change", (event) => {
+  const input = event.target;
+  if (input.matches('[data-action="post-images"]')) renderSelectedPostImages(input);
+  if (input.name === "no_children_visible" && input.checked) {
+    input.closest("fieldset")?.querySelectorAll('input[name="visible_child_ids"]').forEach((checkbox) => { checkbox.checked = false; });
+  }
+  if (input.name === "visible_child_ids" && input.checked) {
+    const none = input.closest("fieldset")?.querySelector('input[name="no_children_visible"]');
+    if (none) none.checked = false;
+  }
+  if (input.matches("[data-schedule-attending]")) {
+    const row = input.closest("[data-weekday]");
+    row.querySelectorAll('input[type="time"]').forEach((timeInput) => {
+      timeInput.disabled = !input.checked;
+      if (!input.checked) timeInput.value = "";
+    });
+  }
 });
 
 document.body.addEventListener("click", (event) => {
@@ -1304,11 +1800,54 @@ document.body.addEventListener("click", (event) => {
     runMutation(logout, "");
     return;
   }
-  if (action === "staff-attendance") {
+  if (action === "parse-term") {
+    const form = target.closest("form");
+    try {
+      const parsed = parseTermText(form.elements.term_text.value);
+      form.elements.term_name.value = parsed.name;
+      form.elements.starts_on.value = parsed.startsOn;
+      form.elements.ends_on.value = parsed.endsOn;
+      form.elements.opens_at.value = parsed.opensAt;
+      form.elements.closes_at.value = parsed.closesAt;
+      form.elements.closures.value = parsed.closures.map((closure) => `${closure.date} | ${closure.reason}`).join("\n");
+      setParseStatus(form, "Ärtan har fyllt i ett utkast. Granska alla datum och tider innan du sparar.");
+    } catch (error) {
+      setParseStatus(form, error.message, true);
+    }
+    return;
+  }
+  if (action === "parse-weekly-schedule") {
+    const form = target.closest("form");
+    try {
+      parseWeeklyScheduleText(form.elements.schedule_text.value).forEach((parsed) => {
+        const row = form.querySelector(`[data-weekday="${parsed.weekday}"]`);
+        const attending = row.querySelector("[data-schedule-attending]");
+        attending.checked = parsed.attending;
+        row.querySelector(`[name="dropoff_${parsed.weekday}"]`).value = parsed.dropoff_at || "";
+        row.querySelector(`[name="pickup_${parsed.weekday}"]`).value = parsed.pickup_at || "";
+        row.querySelectorAll('input[type="time"]').forEach((timeInput) => { timeInput.disabled = !parsed.attending; });
+      });
+      setParseStatus(form, "Ärtan har fyllt i veckan. Granska varje dag innan du sparar.");
+    } catch (error) {
+      setParseStatus(form, error.message, true);
+    }
+    return;
+  }
+  if (action === "publish-term") {
     runMutation(async () => {
-      await upsertAttendance(target.dataset.childId, { status: target.dataset.status });
+      await rpc("publish_school_term", { target_term_id: target.dataset.id });
       await loadData();
-    });
+    }, "Terminen är publicerad.");
+    return;
+  }
+  if (action === "staff-attendance") {
+    const child = state.children.find((item) => item.id === target.dataset.childId);
+    const transition = target.dataset.transition;
+    const success = transition === "check_out" ? `${child?.name || "Barnet"} är utcheckad.` : transition === "check_in" ? `${child?.name || "Barnet"} är incheckad.` : `${child?.name || "Barnet"} är markerad som ${transition === "absent_sick" ? "sjuk" : "ledig"}.`;
+    runMutation(async () => {
+      await rpc("set_child_attendance", { target_child_id: target.dataset.childId, transition });
+      await loadData();
+    }, success);
     return;
   }
   if (action === "set-consent") {
@@ -1331,6 +1870,15 @@ document.body.addEventListener("click", (event) => {
       });
       await loadData();
     }, "Kommentaren är borttagen.");
+    return;
+  }
+  if (action === "delete-post") {
+    runMutation(async () => {
+      const rows = await rpc("list_post_image_paths_for_delete", { target_post_id: target.dataset.id });
+      await deletePostImages((rows || []).map((row) => row.storage_path));
+      await rpc("delete_post_with_images", { target_post_id: target.dataset.id });
+      await loadData();
+    }, "Inlägget och dess bilder är borttagna.");
     return;
   }
   if (action === "birthday-response") {

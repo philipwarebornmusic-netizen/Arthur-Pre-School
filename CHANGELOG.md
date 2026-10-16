@@ -1,5 +1,39 @@
 # Ändringslogg
 
+## 2026-10-16 — Publicerade terminer och återkommande veckoscheman
+
+- Låter administratörer skapa terminsutkast med datum, vardagsöppettider och namngivna stängningsdagar.
+- Visar terminen för vårdnadshavare först efter en uttrycklig publicering och förhindrar överlappande publicerade terminer.
+- Visar publicerade terminsdatum, öppettider och stängningsdagar för det valda barnets förskola.
+- Låter vårdnadshavare spara ett fullständigt måndag–fredag-schema per barn och termin, inklusive lediga dagar.
+- Kontrollerar att tiderna är ordnade och ryms inom de publicerade öppettiderna.
+- Låter Ärtan tolka tydliga svenska termins- och veckoschemafraser till redigerbara formulär utan att spara automatiskt.
+
+## 2026-10-16 — Samma privata meddelande till alla vårdnadshavare
+
+- Låter personal och administratörer välja **alla vårdnadshavare** för ett visst barn eller en enskild mottagare.
+- Hämtar barnets fullständiga aktuella vårdnadshavarlista på servern och skapar samtliga leveranser i en transaktion.
+- Behåller en separat privat meddelanderad per mottagare så att vårdnadshavarna inte ser varandras identitet.
+- Samlar leveranserna till ett enda skickat kort med alla mottagarnamn för avsändaren.
+- Behåller befintliga behörighetsregler för personal–förälder och frivilliga förälder–förälder-meddelanden.
+
+## 2026-10-16 — Flera bilder i officiella inlägg
+
+- Låter personal och administratörer välja, förhandsgranska och beskriva upp till 20 bilder i samma inlägg.
+- Skalar om bilder i webbläsaren, tar bort källfilens metadata och laddar endast upp storleksbegränsade JPEG-filer.
+- Kräver att publiceraren markerar alla synliga barn eller bekräftar att inga barn syns.
+- Kontrollerar bild- och gruppbildssamtycke på servern innan inlägget skapas.
+- Lagrar bilder privat, delar dem via kortlivade signerade länkar och visar dem i ett responsivt bildgalleri.
+- Rensar uppladdade utkast om publiceringen misslyckas och tar bort lagrade objekt när ett behörigt inlägg raderas.
+
+## 2026-10-16 — Enkel in- och utcheckning
+
+- Gav både personal och operativa administratörer en egen **Närvaro**-vy direkt i huvudnavigeringen.
+- Visar levande antal för incheckade, inte incheckade, utcheckade och frånvarande barn.
+- Ger varje barn en tydlig nästa huvudåtgärd: checka in, checka ut eller checka in igen.
+- Sparar faktiska in- och utcheckningstider separat från vårdnadshavarens planerade tider.
+- Behöll sjuk och ledig som sekundära val och flyttade alla närvaroändringar till behörighetskontrollerade RPC-funktioner.
+
 ## 2026-10-16 — Ärtans karaktär och teståtkomst
 
 - Ersatte robotfiguren med den användarvalda gula Ärtan-karaktären på inloggning, föräldravyer och i assistentpanelen.
