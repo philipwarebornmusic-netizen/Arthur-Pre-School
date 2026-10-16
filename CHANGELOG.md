@@ -1,5 +1,30 @@
 # Ändringslogg
 
+## 2026-10-16 — Ärtans karaktär och teståtkomst
+
+- Ersatte robotfiguren med den användarvalda gula Ärtan-karaktären på inloggning, föräldravyer och i assistentpanelen.
+- Lade till en lugn CSS-animation genom fem poser: hälsning, upptäckt, lärande, gemenskap och på väg.
+- Visar en statisk hälsningspose när användaren föredrar reducerad rörelse.
+- Uppdaterade samtliga sju fasta `@artanpreschool.test`-konton till det gemensamma lösenord som användaren angav och verifierade alla inloggningar.
+- Lösenordet och privilegierade projektuppgifter lagras inte i repositoryt eller verifieringsloggen.
+
+## 2026-10-15 — Privata födelsedagsinbjudningar
+
+- Lade till ett separat, avstängt-som-standard-val för att skicka och ta emot kalasinbjudningar.
+- Låter en vårdnadshavare skapa ett strukturerat kalaskort för ett eget barn med start, slut, plats, OSA-datum, meddelande och en eller flera valda mottagare.
+- Begränsar mottagare till vårdnadshavare som delar avdelning och där båda har aktiverat kalasinbjudningar.
+- Håller gästlistan privat: varje mottagare ser bara sin egen inbjudan och sitt eget svar, medan värden ser alla OSA-statusar.
+- Stöder acceptera, tacka nej, avbryt och permanent borttagning av avbrutna eller avslutade kalas.
+- Lade till säkerhetsdefinierade RPC-funktioner, RLS och nekad direkt tabellåtkomst i migration `003_birthday_invitations.sql`.
+
+## 2026-10-14 — Ärtan hjälper med lämning och hämtning
+
+- Lade till snabbvalet **Ändra lämning/hämtning** på alla föräldravyer.
+- Låter Ärtan sammanfatta dagens sparade tider och hämtare samt länka direkt till dagens plan för granskning och ändring.
+- Känner igen frågor om ändrade tider och om mormor, morfar, farmor eller farfar ska hämta.
+- Visar registrerade kontaktpersoner som får hämta som förslag, men behåller fritext för andra godkända personer.
+- Ärtan skriver inte närvarodata själv; föräldern granskar och sparar alltid det befintliga formuläret.
+
 ## 2026-10-14 — Testorganisationens namn
 
 - Ändrade den fasta testorganisationens visningsnamn från `PreSchool Test` till `Test`.

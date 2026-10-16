@@ -20,6 +20,7 @@ Together, the upgrade preflight and schema handle both a new database and the pr
 - lets guardians register their own children and maintain child, health, contact and consent information;
 - provides an official school feed with comments and private parent–staff messaging;
 - keeps parent-to-parent messaging and playdate requests off until both parents opt in;
+- provides private, same-department birthday invitations with separate mutual opt-in and recipient-isolated RSVP responses;
 - removes the known Solgläntan demo organization and exact @arthur.test accounts.
 
 Required Supabase Auth setting

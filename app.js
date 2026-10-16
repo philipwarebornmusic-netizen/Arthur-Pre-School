@@ -20,6 +20,8 @@ const state = {
   communityMembers: [],
   privateMessages: [],
   playdateRequests: [],
+  birthdayCandidates: [],
+  birthdayInvitations: [],
   invitations: [],
   selectedChildId: null,
   view: inviteFromUrl ? "join" : "home",
@@ -245,6 +247,8 @@ async function logout() {
       communityMembers: [],
       privateMessages: [],
       playdateRequests: [],
+      birthdayCandidates: [],
+      birthdayInvitations: [],
       invitations: [],
       selectedChildId: null,
       view: "home",
@@ -261,7 +265,7 @@ async function loadData() {
   if (!state.session?.access_token) return;
   const userId = state.session.user?.id;
   if (!userId) throw new Error("Sessionen saknar användar-id.");
-  const profiles = await request(`/rest/v1/profiles?select=id,auth_user_id,organization_id,name,email,phone,role,allow_parent_messages,allow_playdate_requests&auth_user_id=eq.${encodeURIComponent(userId)}&limit=1`);
+  const profiles = await request(`/rest/v1/profiles?select=id,auth_user_id,organization_id,name,email,phone,role,allow_parent_messages,allow_playdate_requests,allow_birthday_invitations&auth_user_id=eq.${encodeURIComponent(userId)}&limit=1`);
   state.profile = profiles[0] || null;
   if (!state.profile) {
     state.organization = null;
@@ -271,7 +275,7 @@ async function loadData() {
 
   const organizationId = encodeURIComponent(state.profile.organization_id);
   const date = todayIso();
-  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, posts, invitations, postComments, communityMembers, privateMessages, playdateRequests] = await Promise.all([
+  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, posts, invitations, postComments, communityMembers, privateMessages, playdateRequests, birthdayCandidates, birthdayInvitations] = await Promise.all([
     request(`/rest/v1/organizations?select=id,name,type,created_at&id=eq.${organizationId}&limit=1`),
     request(`/rest/v1/preschools?select=id,organization_id,name,phone,address,postal_code,city,opening_hours,created_at&organization_id=eq.${organizationId}&order=name.asc`),
     request("/rest/v1/departments?select=id,preschool_id,name,created_at&order=name.asc"),
@@ -287,6 +291,8 @@ async function loadData() {
     rpc("list_community_members"),
     rpc("list_private_messages"),
     rpc("list_playdate_requests"),
+    rpc("list_birthday_candidates"),
+    rpc("list_birthday_invitations"),
   ]);
 
   state.organization = organizations[0] || null;
@@ -304,6 +310,8 @@ async function loadData() {
   state.communityMembers = communityMembers;
   state.privateMessages = privateMessages;
   state.playdateRequests = playdateRequests;
+  state.birthdayCandidates = birthdayCandidates;
+  state.birthdayInvitations = birthdayInvitations;
   if (!state.children.some((child) => child.id === state.selectedChildId)) state.selectedChildId = state.children[0]?.id || null;
   const allowedViews = {
     admin: ["overview", "schools", "messages", "people", "account"],
@@ -329,25 +337,15 @@ function noticeHtml() {
 
 function botMascot(decorative = false) {
   const accessibility = decorative ? 'aria-hidden="true"' : 'role="img" aria-label="Ärtan, din digitala hjälpreda"';
-  return `<svg class="bot-mascot" viewBox="0 0 160 150" ${accessibility}>
-    <ellipse class="bot-shadow" cx="80" cy="140" rx="43" ry="7"/>
-    <path class="bot-antenna" d="M80 25V12"/><circle class="bot-antenna-light" cx="80" cy="9" r="7"/>
-    <rect class="bot-ear" x="20" y="49" width="16" height="39" rx="8"/><rect class="bot-ear" x="124" y="49" width="16" height="39" rx="8"/>
-    <rect class="bot-head" x="31" y="28" width="98" height="79" rx="30"/>
-    <rect class="bot-screen" x="44" y="42" width="72" height="48" rx="19"/>
-    <circle class="bot-eye" cx="66" cy="63" r="6"/><circle class="bot-eye" cx="94" cy="63" r="6"/>
-    <path class="bot-smile" d="M68 77c7 6 17 6 24 0"/>
-    <rect class="bot-body" x="57" y="103" width="46" height="28" rx="13"/>
-    <path class="bot-limb" d="M58 113 42 123M102 113l16 10M69 130l-8 9M91 130l8 9"/>
-  </svg>`;
+  return `<span class="bot-mascot" ${accessibility}></span>`;
 }
 
 function assistantQuickActions() {
   const parentActions = {
-    home: [["day", "Vad är dagens plan?"], ["reminders", "Vad behöver jag göra?"], ["messages", "Nytt från skolan?"], ["contact", "Vem kan jag kontakta?"]],
-    child: [["reminders", "Vad saknas?"], ["consents", "Hur ser samtyckena ut?"], ["day", "Vad är dagens plan?"], ["contact", "Kontakta förskolan"]],
-    messages: [["messages", "Sammanfatta skolans flöde"], ["contact", "Vem kan jag skriva till?"], ["playdates", "Hur fungerar lekträffar?"], ["privacy", "Mina integritetsval"]],
-    account: [["privacy", "Mina integritetsval"], ["contact", "Vem kan jag kontakta?"], ["reminders", "Vad behöver jag göra?"], ["day", "Vad är dagens plan?"]],
+    home: [["schedule", "Ändra lämning/hämtning"], ["day", "Vad är dagens plan?"], ["reminders", "Vad behöver jag göra?"], ["messages", "Nytt från skolan?"]],
+    child: [["schedule", "Ändra lämning/hämtning"], ["reminders", "Vad saknas?"], ["consents", "Hur ser samtyckena ut?"], ["contact", "Kontakta förskolan"]],
+    messages: [["birthdays", "Kalasinbjudningar"], ["schedule", "Ändra lämning/hämtning"], ["messages", "Sammanfatta skolans flöde"], ["playdates", "Hur fungerar lekträffar?"]],
+    account: [["schedule", "Ändra lämning/hämtning"], ["privacy", "Mina integritetsval"], ["contact", "Vem kan jag kontakta?"], ["reminders", "Vad behöver jag göra?"]],
   };
   const staffActions = {
     attendance: [["attendance", "Sammanfatta närvaron"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"], ["people", "Öppna barn och inbjudningar"]],
@@ -377,11 +375,30 @@ function schoolForChild(child) {
 
 function parentAssistantAnswer(intent) {
   const child = selectedChild();
-  if (!child && ["day", "reminders", "opening-hours", "consents", "health"].includes(intent)) {
+  if (!child && ["day", "schedule", "reminders", "opening-hours", "consents", "health"].includes(intent)) {
     return assistantResult(
       "Börja med att lägga till ditt barn. Därefter kan jag hjälpa med dagens plan, barnuppgifter och skolans meddelanden.",
       "Ditt konto i ärtan",
       { actionLabel: "Lägg till barn", view: "child" },
+    );
+  }
+  if (intent === "schedule") {
+    const attendance = attendanceFor(child.id);
+    const pickupContacts = contactsFor(child.id).filter((contact) => contact.can_pickup);
+    const currentPlan = attendance
+      ? compact([
+        attendance.dropoff_at ? `lämning ${attendance.dropoff_at.slice(0, 5)}` : "ingen lämningstid",
+        attendance.pickup_at ? `hämtning ${attendance.pickup_at.slice(0, 5)}` : "ingen hämtningstid",
+        attendance.pickup_by ? `hämtas av ${attendance.pickup_by}` : "ingen hämtare angiven",
+      ]).join(", ")
+      : "ingen plan är ifylld";
+    const pickupHelp = pickupContacts.length
+      ? `Registrerade personer som får hämta: ${new Intl.ListFormat("sv-SE").format(pickupContacts.map((contact) => contact.name))}.`
+      : "Du kan skriva exempelvis en vårdnadshavare, mormor, morfar, farmor, farfar eller en annan godkänd person.";
+    return assistantResult(
+      `Dagens plan för ${child.name}: ${currentPlan}.\n${pickupHelp} Öppna planen, ändra uppgifterna och spara när allt stämmer.`,
+      "Dagens plan och barnets kontaktpersoner i ärtan",
+      { actionLabel: "Ändra tider och hämtare", view: "home", target: "daily-plan" },
     );
   }
   if (intent === "day") {
@@ -461,9 +478,19 @@ function parentAssistantAnswer(intent) {
     const status = state.profile.allow_playdate_requests ? `Funktionen är på. ${available} ${available === 1 ? "vårdnadshavare är tillgänglig" : "vårdnadshavare är tillgängliga"} och ${pending} förfrågningar väntar.` : "Lekträffar är avstängda. Du kan aktivera dem under Konto.";
     return assistantResult(status, "Dina inställningar och lekförfrågningar", { actionLabel: state.profile.allow_playdate_requests ? "Öppna lekträffar" : "Öppna Konto", view: state.profile.allow_playdate_requests ? "messages" : "account", target: state.profile.allow_playdate_requests ? "playdates" : "" });
   }
+  if (intent === "birthdays") {
+    const invitations = birthdayInvitationGroups();
+    const received = invitations.filter((invitation) => invitation.host_parent_id !== state.profile.id);
+    const pending = received.filter((invitation) => invitation.invitation_status === "active" && invitation.recipients.some((recipient) => recipient.id === state.profile.id && recipient.status === "pending")).length;
+    const sent = invitations.filter((invitation) => invitation.host_parent_id === state.profile.id && invitation.invitation_status === "active").length;
+    const status = state.profile.allow_birthday_invitations
+      ? `${pending} ${pending === 1 ? "kalasinbjudan väntar" : "kalasinbjudningar väntar"} på ditt svar. Du har ${sent} ${sent === 1 ? "aktivt kalas" : "aktiva kalas"} som värd.`
+      : "Kalasinbjudningar är avstängda. Du kan aktivera dem separat under Konto.";
+    return assistantResult(status, "Dina privata kalasinbjudningar", { actionLabel: state.profile.allow_birthday_invitations ? "Öppna kalasinbjudningar" : "Öppna Konto", view: state.profile.allow_birthday_invitations ? "messages" : "account", target: state.profile.allow_birthday_invitations ? "birthday-invitations" : "" });
+  }
   if (intent === "privacy") {
     return assistantResult(
-      `Föräldrameddelanden är ${state.profile.allow_parent_messages ? "på" : "av"}. Lekförfrågningar är ${state.profile.allow_playdate_requests ? "på" : "av"}. Båda vårdnadshavarna måste välja på för att bli synliga för varandra.`,
+      `Föräldrameddelanden är ${state.profile.allow_parent_messages ? "på" : "av"}. Lekförfrågningar är ${state.profile.allow_playdate_requests ? "på" : "av"}. Kalasinbjudningar är ${state.profile.allow_birthday_invitations ? "på" : "av"}. Varje funktion kräver ett ömsesidigt frivilligt val och gemensam avdelning.`,
       "Dina integritetsinställningar",
       { actionLabel: "Öppna Konto", view: "account" },
     );
@@ -476,7 +503,7 @@ function parentAssistantAnswer(intent) {
     );
   }
   return assistantResult(
-    "Jag kan just nu hjälpa med dagens plan, sådant som saknas, skolans inlägg, öppettider, samtycken och rätt kontakt. Kalender och utvecklingssamtal kommer senare.",
+    "Jag kan just nu hjälpa med dagens plan, ändrade lämningstider, hämtningstider och hämtare, kalasinbjudningar, sådant som saknas, skolans inlägg, öppettider, samtycken och rätt kontakt. Kalender och utvecklingssamtal kommer senare.",
     "Tillgängliga funktioner i ärtan",
   );
 }
@@ -563,7 +590,9 @@ function assistantIntentForQuestion(question) {
   if (/stäng|kalender|utvecklingssamtal|aktivitet|utflykt/.test(text)) return "calendar";
   if (/samtyck|bild|foto/.test(text)) return staff ? "privacy" : "consents";
   if (!staff && /lekträff|lekdejt/.test(text)) return "playdates";
+  if (!staff && /kalas|födelsedag|födelsedags|osa/.test(text)) return "birthdays";
   if (!staff && /hälsa|allerg|medicin|specialkost/.test(text)) return "health";
+  if (!staff && /(?:ändra|justera|uppdatera).*(?:lämn|hämt|tid)|(?:lämn|hämt|tid).*(?:ändra|justera|uppdatera)|vem (?:ska )?(?:lämna|hämta)|hämtas av|mormor|morfar|farmor|farfar/.test(text)) return "schedule";
   if (staff && /publicera|officiell|veckobrev|skriv.*inlägg/.test(text)) return "publish";
   if (staff && /närvaro|inne|hämtad|frånvaro/.test(text)) return "attendance";
   if (staff && /person|inbjud|barn/.test(text)) return "people";
@@ -674,6 +703,7 @@ function renderParentHome() {
   const child = selectedChild();
   if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Min dag</p><h1 class="h1">Välkommen</h1><p class="sub">Börja med att lägga till ditt barn. Därefter hjälper Ärtan-botten dig med barnuppgifter och dagens plan.</p></section>${parentChildCreateForm()}`;
   const attendance = attendanceFor(child.id);
+  const pickupContacts = contactsFor(child.id).filter((contact) => contact.can_pickup);
   const messages = state.posts.filter((post) => !post.child_id || post.child_id === child.id).slice(0, 3);
   const reminders = parentReminders(child);
   const nextReminder = reminders[0];
@@ -682,7 +712,9 @@ function renderParentHome() {
     <form id="daily-plan" class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><p class="kicker">Idag</p><h2>Dagens plan</h2>
       ${selectField("Status", "status", [["in", "På plats"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]], attendance?.status || "in", true)}
       <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
-      ${field("Vem hämtar?", "pickup_by", attendance?.pickup_by || "")}
+      <label>Vem hämtar?<input name="pickup_by" type="text" value="${esc(attendance?.pickup_by || "")}" list="pickup-contact-options" placeholder="Exempelvis mormor eller farfar"></label>
+      ${pickupContacts.length ? `<datalist id="pickup-contact-options">${pickupContacts.map((contact) => `<option value="${esc(contact.name)}"></option>`).join("")}</datalist>` : ""}
+      <p class="form-hint">Skriv vem som hämtar. Kontaktpersoner markerade med ”får hämta” visas som förslag.</p>
       <button class="primary" type="submit">Spara dagens plan</button>
     </form>
     <section><div class="section-head"><div><p class="kicker">Från skolan</p><h2>Meddelanden</h2></div><button class="link" data-action="navigate" data-view="messages">Visa alla</button></div>${messages.map(renderPost).join("") || emptyState("Inga meddelanden", "Nya meddelanden från personalen visas här.")}</section>`;
@@ -781,6 +813,70 @@ function renderPlaydates() {
     }).join("")}</ul>` : ""}</section>`;
 }
 
+function birthdayStatusLabel(status) {
+  return { pending: "Väntar på svar", accepted: "Kommer", declined: "Tackat nej" }[status] || status;
+}
+
+function birthdayInvitationGroups() {
+  const groups = new Map();
+  state.birthdayInvitations.forEach((row) => {
+    if (!groups.has(row.invitation_id)) groups.set(row.invitation_id, { ...row, recipients: [] });
+    groups.get(row.invitation_id).recipients.push({
+      id: row.recipient_id,
+      name: row.recipient_name,
+      status: row.response_status,
+      respondedAt: row.responded_at,
+    });
+  });
+  return Array.from(groups.values());
+}
+
+function renderBirthdayInvitationCard(invitation) {
+  const isHost = invitation.host_parent_id === state.profile.id;
+  const cancelled = invitation.invitation_status === "cancelled";
+  const ended = new Date(invitation.ends_at).getTime() < Date.now();
+  const recipient = invitation.recipients.find((item) => item.id === state.profile.id);
+  const canRespond = !isHost && !cancelled && !ended && invitation.rsvp_by >= todayIso() && recipient?.status === "pending";
+  const eventStatus = cancelled ? "Avbrutet" : ended ? "Avslutat" : "Aktivt";
+  return `<article class="card birthday-card">
+    <p class="kicker">${isHost ? `Ditt kalas för ${esc(invitation.host_child_name)}` : `Från ${esc(invitation.host_parent_name)} · för ${esc(invitation.host_child_name)}`} · ${esc(eventStatus)}</p>
+    <h3>${esc(invitation.title)}</h3>
+    <dl class="birthday-details">
+      <div><dt>Start</dt><dd>${esc(formatTimestamp(invitation.starts_at))}</dd></div>
+      <div><dt>Slut</dt><dd>${esc(formatTimestamp(invitation.ends_at))}</dd></div>
+      <div><dt>Plats</dt><dd>${esc(invitation.location)}</dd></div>
+      <div><dt>OSA senast</dt><dd>${esc(formatDate(invitation.rsvp_by))}</dd></div>
+    </dl>
+    ${invitation.message ? `<p class="pre-line">${esc(invitation.message)}</p>` : ""}
+    ${isHost ? `<section class="birthday-rsvps"><h4>OSA</h4><ul>${invitation.recipients.map((item) => `<li><span>${esc(item.name)}</span><strong>${esc(birthdayStatusLabel(item.status))}</strong></li>`).join("")}</ul></section>` : `<p class="birthday-response">Ditt svar: <strong>${esc(birthdayStatusLabel(recipient?.status || "pending"))}</strong></p>`}
+    ${canRespond ? `<div class="actions"><button class="primary" type="button" data-action="birthday-response" data-id="${esc(invitation.invitation_id)}" data-status="accepted">Jag kommer</button><button class="secondary" type="button" data-action="birthday-response" data-id="${esc(invitation.invitation_id)}" data-status="declined">Tacka nej</button></div>` : ""}
+    ${isHost && !cancelled && !ended ? `<button class="secondary birthday-cancel" type="button" data-action="birthday-cancel" data-id="${esc(invitation.invitation_id)}">Avbryt kalaset</button>` : ""}
+    ${isHost && (cancelled || ended) ? `<button class="link danger-link" type="button" data-action="birthday-delete" data-id="${esc(invitation.invitation_id)}">Ta bort kalaset permanent</button>` : ""}
+  </article>`;
+}
+
+function renderBirthdayInvitations() {
+  if (state.profile.role !== "parent") return "";
+  const enabled = state.profile.allow_birthday_invitations;
+  const candidates = state.birthdayCandidates;
+  const groups = birthdayInvitationGroups();
+  const canCreate = enabled && state.children.length > 0 && candidates.length > 0;
+  return `<section id="birthday-invitations" class="community-section"><div class="section-head"><div><p class="kicker">Privata kalas</p><h2>Födelsedagsinbjudningar</h2></div></div>
+    ${enabled ? `<form class="card form-stack" data-form="birthday-create">
+      <p class="form-hint">Endast vårdnadshavare i samma avdelning som också har aktiverat kalasinbjudningar visas. Varje mottagare ser bara sin egen inbjudan och sitt eget svar.</p>
+      ${state.children.length ? selectField("Barn som fyller år", "host_child_id", state.children.map((child) => [child.id, child.name]), "", true) : `<p class="form-hint">Lägg till ditt barn innan du skapar ett kalas.</p>`}
+      ${field("Rubrik", "title", "", { required: true, maxlength: "120", placeholder: "Exempelvis: Kims födelsedagskalas" })}
+      <div class="form-grid">${field("Start", "starts_at", "", { type: "datetime-local", required: true })}${field("Slut", "ends_at", "", { type: "datetime-local", required: true })}</div>
+      <div class="form-grid">${field("Plats", "location", "", { required: true, maxlength: "300", placeholder: "Exempelvis: Hemma hos oss" })}${field("OSA senast", "rsvp_by", "", { type: "date", required: true, min: todayIso() })}</div>
+      ${textareaField("Meddelande, valfritt", "message", "", "Praktisk information om kalaset")}
+      <fieldset class="preference-group"><legend>Bjud in vårdnadshavare</legend>
+        ${candidates.length ? candidates.map((candidate) => `<label class="check"><input type="checkbox" name="recipient_ids" value="${esc(candidate.profile_id)}"> ${esc(candidate.display_name)}</label>`).join("") : `<p class="form-hint">Ingen annan vårdnadshavare i avdelningen har aktiverat kalasinbjudningar ännu.</p>`}
+      </fieldset>
+      <button class="primary" type="submit" ${canCreate ? "" : "disabled"}>Skicka privat kalasinbjudan</button>
+    </form>` : `<article class="card"><p>Kalasinbjudningar är avstängda. Aktivera dem under Konto för att skicka och ta emot privata inbjudningar.</p><button class="secondary" type="button" data-action="account">Öppna Konto</button></article>`}
+    ${groups.length ? `<div class="birthday-list">${groups.map(renderBirthdayInvitationCard).join("")}</div>` : emptyState("Inga kalasinbjudningar", "Skickade och mottagna kalas visas privat här.")}</section>`;
+}
+
 function renderMessages() {
   const availableDepartments = editableDepartments();
   const canPublish = (state.profile.role === "staff" || state.profile.role === "admin") && availableDepartments.length > 0;
@@ -792,6 +888,7 @@ function renderMessages() {
       <button class="primary" type="submit">Publicera i skolans flöde</button></form>` : ""}
     <section id="official-feed" class="community-section"><div class="section-head"><div><p class="kicker">Officiellt</p><h2>Senaste från skolan</h2></div></div>${state.posts.map(renderPost).join("") || emptyState("Inga inlägg", canPublish ? "Publicera det första inlägget ovan." : "Skolan har inte publicerat något ännu.")}</section>
     ${renderPrivateMessaging()}
+    ${renderBirthdayInvitations()}
     ${renderPlaydates()}`;
 }
 
@@ -863,6 +960,8 @@ function renderAccount() {
       <p class="form-hint">Båda vårdnadshavarna måste ha aktiverat detta. Lärare och administratörer kan alltid skriva privat till dig.</p>
       <label class="check"><input type="checkbox" name="allow_playdate_requests" ${state.profile.allow_playdate_requests ? "checked" : ""}> Visa mig för frivilliga lekförfrågningar</label>
       <p class="form-hint">Båda vårdnadshavarna måste ha aktiverat detta och tillhöra samma avdelning.</p>
+      <label class="check"><input type="checkbox" name="allow_birthday_invitations" ${state.profile.allow_birthday_invitations ? "checked" : ""}> Låt andra vårdnadshavare bjuda in mig till privata födelsedagskalas</label>
+      <p class="form-hint">Kalasinbjudningar har ett separat frivilligt val. Båda måste ha aktiverat funktionen och tillhöra samma avdelning.</p>
     </fieldset>` : "";
   return `${noticeHtml()}<section class="hero-card"><p class="kicker">Konto</p><h1 class="h1">${esc(state.profile.name)}</h1><p class="sub">${esc(state.profile.email)} · ${esc(roleLabel(state.profile.role))}</p></section>
     <form class="card form-stack" data-form="profile-update"><h2>Dina uppgifter</h2>${field("Namn", "name", state.profile.name, { required: true, autocomplete: "name" })}${field("Telefon", "phone", state.profile.phone || "", { type: "tel", autocomplete: "tel" })}${privacySettings}<button class="primary" type="submit">Spara uppgifter</button></form>
@@ -1087,6 +1186,25 @@ document.body.addEventListener("submit", (event) => {
       await loadData();
       return;
     }
+    if (type === "birthday-create") {
+      const recipientIds = Array.from(form.querySelectorAll('input[name="recipient_ids"]:checked'), (input) => input.value);
+      if (!recipientIds.length) throw new Error("Välj minst en vårdnadshavare att bjuda in.");
+      const startsAt = new Date(values.starts_at);
+      const endsAt = new Date(values.ends_at);
+      if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) throw new Error("Ange giltig start- och sluttid.");
+      await rpc("create_birthday_invitation", {
+        host_child_id: values.host_child_id,
+        invitation_title: values.title.trim(),
+        invitation_starts_at: startsAt.toISOString(),
+        invitation_ends_at: endsAt.toISOString(),
+        invitation_location: values.location.trim(),
+        invitation_message: values.message.trim(),
+        invitation_rsvp_by: values.rsvp_by,
+        recipient_profile_ids: recipientIds,
+      });
+      await loadData();
+      return;
+    }
     if (type === "playdate-create") {
       await rpc("create_playdate_request", {
         target_profile_id: values.recipient_id,
@@ -1104,11 +1222,12 @@ document.body.addEventListener("submit", (event) => {
           phone: values.phone.trim() || null,
           allow_parent_messages: state.profile.role === "parent" ? values.allow_parent_messages === "on" : state.profile.allow_parent_messages,
           allow_playdate_requests: state.profile.role === "parent" ? values.allow_playdate_requests === "on" : state.profile.allow_playdate_requests,
+          allow_birthday_invitations: state.profile.role === "parent" ? values.allow_birthday_invitations === "on" : state.profile.allow_birthday_invitations,
         }),
       });
       await loadData();
     }
-  }, type === "login" || type === "register" ? "" : "Sparat.");
+  }, type === "login" || type === "register" ? "" : type === "birthday-create" ? "Kalasinbjudan är skickad privat." : "Sparat.");
 });
 
 document.body.addEventListener("click", (event) => {
@@ -1212,6 +1331,30 @@ document.body.addEventListener("click", (event) => {
       });
       await loadData();
     }, "Kommentaren är borttagen.");
+    return;
+  }
+  if (action === "birthday-response") {
+    runMutation(async () => {
+      await rpc("respond_birthday_invitation", {
+        target_invitation_id: target.dataset.id,
+        response_status: target.dataset.status,
+      });
+      await loadData();
+    }, target.dataset.status === "accepted" ? "Du har svarat att du kommer." : "Du har tackat nej.");
+    return;
+  }
+  if (action === "birthday-cancel") {
+    runMutation(async () => {
+      await rpc("cancel_birthday_invitation", { target_invitation_id: target.dataset.id });
+      await loadData();
+    }, "Kalaset är avbrutet och mottagarna ser ändringen.");
+    return;
+  }
+  if (action === "birthday-delete") {
+    runMutation(async () => {
+      await rpc("delete_birthday_invitation", { target_invitation_id: target.dataset.id });
+      await loadData();
+    }, "Kalaset är permanent borttaget.");
     return;
   }
   if (action === "playdate-response") {

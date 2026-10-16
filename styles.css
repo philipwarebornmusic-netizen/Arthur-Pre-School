@@ -127,6 +127,19 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .private-message.received { margin-right: auto; }
 .playdate-actions { display: grid; flex: 0 0 min(180px, 42%); gap: 7px; }
 .playdate-actions .primary, .playdate-actions .secondary { min-height: 42px; }
+.birthday-list { display: grid; gap: 12px; }
+.birthday-card { margin-bottom: 0; }
+.birthday-card h3 { font-size: clamp(24px, 6vw, 32px); }
+.birthday-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.birthday-details div { padding: 12px; background: #fffcf7; border: 1px solid var(--line); border-radius: 14px; }
+.birthday-details dt { color: var(--muted); font-size: 11px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.birthday-details dd { margin: 4px 0 0; font-weight: 900; line-height: 1.35; }
+.birthday-rsvps { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
+.birthday-rsvps h4 { margin: 0 0 8px; }
+.birthday-rsvps ul { margin: 0; padding: 0; list-style: none; }
+.birthday-rsvps li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.birthday-response { margin-top: 18px; padding: 12px 14px; background: var(--sun-soft); border-radius: 14px; }
+.birthday-cancel { margin-top: 16px; }
 .preference-group { display: grid; gap: 8px; margin: 4px 0; padding: 18px; border: 1px solid var(--line); border-radius: 17px; }
 .preference-group legend { padding: 0 6px; font-weight: 900; }
 
@@ -155,14 +168,26 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .steps li { color: var(--muted); font-weight: 800; }
 .steps li.done { color: #3f6b52; text-decoration: line-through; }
 
-.bot-mascot { display: block; width: clamp(84px, 24vw, 124px); overflow: visible; }
-.bot-shadow { fill: rgb(47 62 70 / 12%); }
-.bot-head, .bot-ear, .bot-body { fill: var(--sun); stroke: #d99b16; stroke-width: 2; }
-.bot-screen { fill: #183342; }
-.bot-eye { fill: #fffcf7; }
-.bot-smile { fill: none; stroke: #fffcf7; stroke-linecap: round; stroke-width: 4; }
-.bot-antenna, .bot-limb { fill: none; stroke: #d99b16; stroke-linecap: round; stroke-width: 7; }
-.bot-antenna-light { fill: var(--coral); stroke: #c85749; stroke-width: 2; }
+.bot-mascot {
+  display: block;
+  flex: 0 0 auto;
+  width: clamp(84px, 24vw, 124px);
+  aspect-ratio: 16 / 15;
+  background-image: url("images/artan-mascot-sprite.png");
+  background-position: 0 0;
+  background-repeat: no-repeat;
+  background-size: 500% 100%;
+  animation: artan-poses 12s step-end infinite;
+}
+
+@keyframes artan-poses {
+  0%, 19% { background-position: 0 0; }
+  20%, 39% { background-position: 25% 0; }
+  40%, 59% { background-position: 50% 0; }
+  60%, 79% { background-position: 75% 0; }
+  80%, 99% { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
 
 .assistant-launcher { position: fixed; right: max(14px, calc((100vw - 1120px) / 2 + 14px)); bottom: calc(86px + env(safe-area-inset-bottom)); z-index: 30; display: flex; align-items: center; gap: 7px; min-height: 64px; padding: 5px 15px 5px 7px; background: var(--paper); border: 1px solid #e5c878; border-radius: 999px; box-shadow: 0 12px 36px rgb(47 62 70 / 20%); text-align: left; }
 .assistant-launcher .bot-mascot { width: 55px; height: 52px; margin: -5px 0 -3px; }
@@ -222,4 +247,5 @@ html[data-busy]::after { position: fixed; inset: 0; z-index: 100; display: grid;
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   * { transition: none !important; }
+  .bot-mascot { animation: none; background-position: 0 0; }
 }
