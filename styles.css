@@ -171,6 +171,11 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .term-closures { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .term-closures li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; padding: 10px 0; border-top: 1px solid var(--line); }
 .term-closures span { color: var(--muted); }
+.term-warning { margin: 12px 0; padding: 12px 14px; background: var(--coral-soft); border: 1px solid #ffd4cc; border-radius: 16px; color: var(--coral-text); }
+.term-warning p { margin: 0; }
+.term-warning ul { margin: 8px 0 0; padding-left: 18px; }
+.term-warning li { margin: 4px 0; overflow-wrap: anywhere; }
+.weekly-schedule-row.schedule-outside-hours { background: var(--coral-soft); border-color: #ffd4cc; }
 .assistant-form { display: grid; gap: 10px; padding: 16px; background: var(--sun-soft); border: 1px solid #eedb92; border-radius: 18px; }
 .assistant-form textarea { background: var(--paper); }
 .assistant-form .secondary { justify-self: start; }
