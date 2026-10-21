@@ -1,5 +1,13 @@
 # Ändringslogg
 
+## 2026-10-21 — Personal kan publicera utkast och rätta en publicerad termin
+
+- Visar terminsutkast för den personal som är kopplad till förskolan, med en egen **Terminer**-vy där utkastet kan hittas och publiceras.
+- Låter samma personal och administratörer ändra datum, vardagsöppettider och stängningsdagar även efter publicering.
+- Behåller förbudet mot överlappande publicerade terminer. Vårdnadshavare ser bara publicerade terminer, inklusive senare ändringar.
+- Markerar vårdnadshavarens veckoschema när tiderna inte längre ryms inom öppettiderna, i stället för att ta bort det.
+- Kräver migration `supabase/008_term_staff_publish_and_edits.sql` innan den nya behörigheten gäller i drift. Migrationen är inte körd mot produktionsdatabasen.
+
 ## 2026-10-21 — Responsiv layout på mobil, surfplatta och dator
 
 - Tog bort horisontell sidförskjutning från långa kontonamn och inbjudningsåtgärder på smala mobilskärmar.
