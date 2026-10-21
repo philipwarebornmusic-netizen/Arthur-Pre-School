@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 2026-10-21 — Skrivbordslayout som fyller skärmen
+
+- Låter appen använda hela fönstret på breda skärmar i stället för en centrerad kolumn.
+- Flyttar huvudmenyn från nederkanten till en vänsterspalt, med samma val som tidigare.
+- Låter översikter, listor, terminsytor och formulär använda den bredare ytan, och håller löptext inom en läsbar bredd.
+- Behåller bottenmenyn och de tidigare anpassningarna på mobil och surfplatta.
+- Placerar Ärtan längst ner till höger på skrivbordet så att hjälpredan inte täcker menyn.
+- Lägger till en synlig väg förbi menyn för den som navigerar med tangentbord.
+
 ## 2026-10-21 — Responsiv layout på mobil, surfplatta och dator
 
 - Tog bort horisontell sidförskjutning från långa kontonamn och inbjudningsåtgärder på smala mobilskärmar.
