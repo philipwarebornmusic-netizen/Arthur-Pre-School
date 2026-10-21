@@ -9,6 +9,15 @@
 - Placerar Ärtan längst ner till höger på skrivbordet så att hjälpredan inte täcker menyn.
 - Lägger till en synlig väg förbi menyn för den som navigerar med tangentbord.
 
+## 2026-10-21 — Administratörer äger terminer och kan rätta en publicerad termin
+
+- Behåller skapande, publicering och redigering av terminer hos administratörer. Personal ser ingen knapp för att skapa, publicera eller ändra, och inga utkast.
+- Visar den publicerade terminens datum, öppettider och stängningsdagar för personal på samma sätt som för vårdnadshavare, utan redigering.
+- Låter administratörer ändra datum, vardagsöppettider och stängningsdagar även efter publicering.
+- Behåller förbudet mot överlappande publicerade terminer. Personal och vårdnadshavare ser bara publicerade terminer, inklusive senare ändringar.
+- Markerar vårdnadshavarens veckoschema när tiderna inte längre ryms inom öppettiderna, i stället för att ta bort det.
+- Kräver migration `supabase/008_term_staff_publish_and_edits.sql` innan den nya behörigheten gäller i drift. Migrationen är inte körd mot produktionsdatabasen.
+
 ## 2026-10-21 — Responsiv layout på mobil, surfplatta och dator
 
 - Tog bort horisontell sidförskjutning från långa kontonamn och inbjudningsåtgärder på smala mobilskärmar.
