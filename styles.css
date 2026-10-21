@@ -352,6 +352,7 @@ html[data-busy]::after { position: fixed; inset: 0; z-index: 100; display: grid;
   .app-frame:has(#bottomNav button) .bottom-nav button[aria-current="page"] { background: var(--sun-soft); box-shadow: inset 3px 0 0 var(--sun); }
   .app-frame:has(#bottomNav button) .bottom-nav .ico { display: grid; flex: 0 0 28px; place-items: center; width: 28px; height: 28px; margin: 0; font-size: 18px; }
   body:has(#bottomNav button) .skip-link { left: calc(var(--side-width, 272px) + 16px); }
+  #staff-access > form { max-width: 720px; }
 }
 
 @media (min-width: 1400px) {
