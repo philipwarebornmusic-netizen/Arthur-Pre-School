@@ -13,14 +13,17 @@
   <link rel="icon" href="mark.svg">
 </head>
 <body>
+  <a class="skip-link" href="#screen">Hoppa till innehåll</a>
   <div class="app-frame">
     <header class="topbar">
       <img src="logo.svg" width="188" height="56" alt="ärtan">
       <button class="ghost" type="button" data-action="account" hidden>Konto</button>
     </header>
-    <main id="screen" class="screen" aria-live="polite"></main>
+    <div class="workspace">
+      <main id="screen" class="screen" aria-live="polite" tabindex="-1"></main>
+      <nav id="bottomNav" class="bottom-nav" aria-label="ärtans huvudmeny"></nav>
+    </div>
     <div id="assistantRoot" class="assistant-root"></div>
-    <nav id="bottomNav" class="bottom-nav" aria-label="ärtans huvudmeny"></nav>
   </div>
   <script src="supabase-config.js"></script>
   <script src="app.js"></script>
