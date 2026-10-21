@@ -16,8 +16,8 @@ Together, the upgrade preflight and schema handle both a new database and the pr
 - creates the production tables, indexes and RPC functions;
 - installs organization-scoped row-level security;
 - supports organization and school creation;
-- supports email-bound invitations for staff and guardians;
-- lets guardians register their own children and maintain child, health, contact and consent information;
+- supports email-bound, single-use invitations for staff and guardians;
+- lets guardians maintain child, health, contact and consent information after staff has linked the child;
 - provides an official school feed with comments, private parent–staff messaging, atomic staff messages to every guardian of a child, and consent-gated multi-image posts in a private Storage bucket;
 - separates guardian-planned attendance from staff-recorded check-in and check-out times;
 - lets administrators publish immutable, non-overlapping school terms with weekday hours and closures, then lets guardians save recurring Monday–Friday schedules for their children;
@@ -30,12 +30,21 @@ Required Supabase Auth setting
 - Add local/deployment redirect URLs if email confirmation is enabled.
 - Keep leaked-password protection and email confirmation enabled for production.
 
+Invite-only onboarding
+- Run supabase/009_invite_onboarding.sql once in the SQL editor after the earlier migrations.
+- Do not run it against production until the new onboarding should go live. Deploy previews use the production database.
+- The file hashes any existing invitation codes. Previously sent links keep working. It does not delete profiles, children, or guardian links.
+- Staff invitations expire after 7 days. Guardian invitations expire after 14 days. Both are single-use.
+- The app shows each new link or school code once so it can be copied. It does not send that link itself.
+
 First real account
 1. Open the app and create an account.
-2. Confirm the email if required, then log in.
-3. Choose "Starta en organisation" and provide organization, first school and first department.
-4. Add children under Personer.
-5. Invite staff by department and guardians by child. Invitations are restricted to the exact email address entered.
+2. Confirm the email if required, then log in. Supabase Auth sends that confirmation with the project's own email, not a separate paid service.
+3. Choose "Jag startar en ny organisation" and provide organization, first school and first department.
+4. Add departments on Skolor, then add children under Personer.
+5. Invite staff to a school and department, and invite each guardian to one child. Copy the link and send it with the school's existing email or message channel.
+6. A school code is optional. A person who uses it stays on a waiting screen with no child data until an administrator approves a department.
+7. Guardians request an additional child from the app. Staff approve the request before the child is linked.
 
 Fake Test organization and PreSchool Test preschool
 1. Keep this tenant free from real child, health, contact and consent data.

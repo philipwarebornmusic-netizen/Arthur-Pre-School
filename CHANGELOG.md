@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 2026-10-21 — Inbjudningar styr vem som kommer in
+
+- En administratör skapar organisationen, skolan och avdelningarna och bjuder in personal till en bestämd skola och avdelning.
+- Personal bjuder in varje vårdnadshavare till ett visst barn. En andra vårdnadshavare får en egen länk, och ett befintligt konto kan ta emot ytterligare ett barn.
+- En skolkod kan användas som reserv, men ansökan visar inga uppgifter förrän en administratör godkänner den och väljer avdelning.
+- Vårdnadshavare kan inte längre koppla ett barn själva. Ett syskon kopplas först när personalen godkänner förfrågan.
+- Inbjudningslänkar kan användas en gång. Personalens länk gäller i 7 dagar och vårdnadshavarens i 14 dagar. Administratören kan se, skicka igen och återkalla väntande inbjudningar samt ta bort personalens åtkomst.
+- Råa inbjudningskoder lagras inte. Migreringen `supabase/009_invite_onboarding.sql` ska köras för hand och har inte körts mot produktion.
+
 ## 2026-10-21 — Responsiv layout på mobil, surfplatta och dator
 
 - Tog bort horisontell sidförskjutning från långa kontonamn och inbjudningsåtgärder på smala mobilskärmar.
