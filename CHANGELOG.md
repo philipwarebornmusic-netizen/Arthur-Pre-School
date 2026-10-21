@@ -1,5 +1,13 @@
 # Ändringslogg
 
+## 2026-10-21 — Responsiv layout på mobil, surfplatta och dator
+
+- Tog bort horisontell sidförskjutning från långa kontonamn och inbjudningsåtgärder på smala mobilskärmar.
+- Håller administratörens sex navigeringsval på en rad med fullstora tryckytor även vid 320 pixlars bredd.
+- Använder 16-pixelstext i formulärfält för att undvika automatisk inzoomning när iOS-fält får fokus.
+- Visar en kompakt Ärtan-knapp på mobil så att hjälpredan inte täcker formulärinnehåll.
+- Behåller surfplattans och datorns flerkolumnslayouter utan horisontell skrollning.
+
 ## 2026-10-16 — Publicerade terminer och återkommande veckoscheman
 
 - Låter administratörer skapa terminsutkast med datum, vardagsöppettider och namngivna stängningsdagar.
