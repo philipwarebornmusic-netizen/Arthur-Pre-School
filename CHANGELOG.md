@@ -8,6 +8,7 @@
 - Vårdnadshavare kan inte längre koppla ett barn själva. Ett syskon kopplas först när personalen godkänner förfrågan.
 - Inbjudningslänkar kan användas en gång. Personalens länk gäller i 7 dagar och vårdnadshavarens i 14 dagar. Administratören kan se, skicka igen och återkalla väntande inbjudningar samt ta bort personalens åtkomst.
 - Råa inbjudningskoder lagras inte. Migreringen `supabase/009_invite_onboarding.sql` ska köras för hand och har inte körts mot produktion.
+- Inbjudningssidorna följer skrivbordets vänsterspalt från 1200 px och bottenmenyn på smalare skärmar. Den som ännu inte har en profil ser samma breda välkomstsida som övriga kontosidor.
 
 ## 2026-10-21 — Skrivbordslayout som fyller skärmen
 
