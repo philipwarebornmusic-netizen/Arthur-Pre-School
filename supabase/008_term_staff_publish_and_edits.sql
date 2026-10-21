@@ -1,5 +1,5 @@
--- Let assigned staff manage the same term drafts they can already read, and allow a
--- published term to be corrected without deleting guardian weekly schedules.
+-- Administrators own term drafts and published terms. Other roles only see published
+-- terms. A published term can be corrected without deleting guardian weekly schedules.
 -- Run in the Supabase SQL editor. Do not apply until the product owner approves it.
 
 begin;
@@ -13,22 +13,50 @@ set search_path = public
 as $$
   select auth.uid() is not null
     and public.current_profile_id() is not null
+    and public.is_admin()
     and exists (
       select 1
       from public.preschools school
       where school.id = target_preschool_id
         and school.organization_id = public.current_organization_id()
+    )
+$$;
+
+create or replace function public.can_read_school_term(target_term_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select auth.uid() is not null
+    and public.current_profile_id() is not null
+    and exists (
+      select 1
+      from public.school_terms term
+      join public.preschools school on school.id = term.preschool_id
+      where term.id = target_term_id
+        and school.organization_id = public.current_organization_id()
         and (
           public.is_admin()
           or (
-            public.current_role() = 'staff'
-            and exists (
-              select 1
-              from public.departments department
-              join public.staff_departments assignment
-                on assignment.department_id = department.id
-              where department.preschool_id = school.id
-                and assignment.staff_id = public.current_profile_id()
+            term.status = 'published'
+            and (
+              exists (
+                select 1
+                from public.departments department
+                join public.staff_departments assignment on assignment.department_id = department.id
+                where department.preschool_id = school.id
+                  and assignment.staff_id = public.current_profile_id()
+              )
+              or exists (
+                select 1
+                from public.departments department
+                join public.children child on child.department_id = department.id
+                join public.child_guardians guardian on guardian.child_id = child.id
+                where department.preschool_id = school.id
+                  and guardian.profile_id = public.current_profile_id()
+              )
             )
           )
         )
@@ -58,7 +86,7 @@ declare
 begin
   if auth.uid() is null then raise exception 'Du måste vara inloggad'; end if;
   if not public.can_manage_preschool_term(target_preschool_id) then
-    raise exception 'Du kan bara hantera terminer för förskolor där du är administratör eller kopplad personal';
+    raise exception 'Du saknar behörighet att hantera terminer';
   end if;
   if char_length(trim(coalesce(term_name, ''))) not between 2 and 100 then raise exception 'Terminens namn måste innehålla mellan 2 och 100 tecken'; end if;
   if term_starts_on is null or term_ends_on is null or term_starts_on > term_ends_on then raise exception 'Ange ett giltigt datumintervall'; end if;
@@ -198,6 +226,7 @@ as $$
 $$;
 
 revoke all on function public.can_manage_preschool_term(uuid) from public, anon, authenticated;
+revoke all on function public.can_read_school_term(uuid) from public, anon, authenticated;
 revoke all on function public.save_school_term(uuid, uuid, text, date, date, time, time, jsonb) from public, anon, authenticated;
 revoke all on function public.publish_school_term(uuid) from public, anon, authenticated;
 revoke all on function public.list_child_weekly_schedules() from public, anon, authenticated;
