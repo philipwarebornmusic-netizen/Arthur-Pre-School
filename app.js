@@ -39,6 +39,7 @@ const state = {
   authView: inviteFromUrl ? "register" : "login",
   inviteCode: inviteFromUrl,
   inviteResult: null,
+  termEditor: null,
   notice: null,
   busy: false,
   assistantOpen: false,
@@ -520,6 +521,7 @@ async function logout() {
       inviteResult: null,
       inviteCode: "",
       migrationReady: true,
+      termEditor: null,
       selectedChildId: null,
       view: "home",
       notice: null,
@@ -604,9 +606,16 @@ async function loadData() {
   state.contacts = contacts;
   state.consents = consents;
   state.attendance = attendance;
-  state.schoolTerms = schoolTerms;
-  state.termClosures = termClosures;
-  state.weeklySchedules = weeklySchedules;
+  state.schoolTerms = schoolTerms || [];
+  state.termClosures = termClosures || [];
+  state.weeklySchedules = weeklySchedules || [];
+  if (state.profile.role !== "admin") {
+    const publishedIds = new Set(state.schoolTerms.filter((term) => term.term_status === "published").map((term) => term.term_id));
+    state.schoolTerms = state.schoolTerms.filter((term) => publishedIds.has(term.term_id));
+    state.termClosures = state.termClosures.filter((closure) => publishedIds.has(closure.term_id));
+    state.weeklySchedules = state.weeklySchedules.filter((schedule) => publishedIds.has(schedule.term_id));
+    state.termEditor = null;
+  }
   state.posts = posts;
   state.postImages = await signPostImages(postImages);
   state.invitations = invitations;
@@ -703,7 +712,7 @@ function assistantQuickActions() {
     account: [["schedule", "Ändra lämning/hämtning"], ["privacy", "Mina integritetsval"], ["contact", "Vem kan jag kontakta?"], ["reminders", "Vad behöver jag göra?"]],
   };
   const staffActions = {
-    attendance: [["attendance", "Sammanfatta närvaron"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"], ["people", "Öppna barn och inbjudningar"]],
+    attendance: [["attendance", "Sammanfatta närvaron"], ["calendar", "Publicerad termin"], ["publish", "Skriv till föräldrar"], ["people", "Öppna barn och inbjudningar"]],
     messages: [["publish", "Publicera ett inlägg"], ["private", "Skicka privat"], ["posts", "Sammanfatta flödet"], ["attendance", "Hur ser närvaron ut?"]],
     people: [["people", "Sammanfatta personer"], ["attendance", "Hur ser närvaron ut?"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"]],
     account: [["private", "Kontakta en förälder"], ["attendance", "Hur ser närvaron ut?"], ["publish", "Skriv till föräldrar"], ["people", "Öppna barn och inbjudningar"]],
@@ -870,6 +879,7 @@ function parentAssistantAnswer(intent) {
 }
 
 function staffAssistantAnswer(intent) {
+  const isAdmin = state.profile.role === "admin";
   if (intent === "attendance") {
     const counts = state.children.reduce((result, child) => {
       const status = attendanceState(attendanceFor(child.id));
@@ -936,12 +946,29 @@ function staffAssistantAnswer(intent) {
     );
   }
   if (intent === "calendar") {
-    const published = state.schoolTerms.filter((term) => term.term_status === "published").length;
+    const publishedTerms = state.schoolTerms.filter((term) => term.term_status === "published");
+    if (!isAdmin) {
+      if (!publishedTerms.length) {
+        return assistantResult(
+          "Ingen publicerad termin är synlig för dig ännu.",
+          "Publicerade terminer",
+          { actionLabel: "Öppna Närvaro", view: "attendance", target: "term-overview" },
+        );
+      }
+      const summary = publishedTerms.map((term) => {
+        const closures = closuresForTerm(term.term_id);
+        const closureText = closures.length
+          ? ` Stängt: ${closures.map((closure) => `${formatDate(closure.closure_date)} (${closure.reason})`).join(", ")}.`
+          : " Inga stängningsdagar.";
+        return `${term.term_name}: ${termDateSummary(term)}.${closureText}`;
+      }).join("\n");
+      return assistantResult(summary, "Publicerade terminer", { actionLabel: "Visa publicerad termin", view: "attendance", target: "term-overview" });
+    }
     const drafts = state.schoolTerms.filter((term) => term.term_status === "draft").length;
     return assistantResult(
-      `${published} publicerade terminer och ${drafts} utkast är synliga för dig.`,
+      `${publishedTerms.length} publicerade terminer och ${drafts} utkast är synliga för dig.`,
       "Terminer och veckoscheman",
-      isAdmin ? { actionLabel: "Planera terminer", view: "schools" } : {},
+      { actionLabel: "Planera terminer", view: "schools" },
     );
   }
   return assistantResult(
@@ -1110,30 +1137,81 @@ function schedulesForTermChild(termId, childId) {
 }
 
 function termDateSummary(term) {
-  return `${formatDate(term.starts_on)}–${formatDate(term.ends_on)} · vardagar ${term.opens_at.slice(0, 5)}–${term.closes_at.slice(0, 5)}`;
+  return `${formatDate(term.starts_on)}–${formatDate(term.ends_on)} · vardagar ${String(term.opens_at).slice(0, 5)}–${String(term.closes_at).slice(0, 5)}`;
+}
+
+function clockMinutes(value) {
+  const match = String(value || "").match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function timesFitTerm(term, dropoff, pickup) {
+  const dropoffMinutes = clockMinutes(dropoff);
+  const pickupMinutes = clockMinutes(pickup);
+  const opens = clockMinutes(term?.opens_at);
+  const closes = clockMinutes(term?.closes_at);
+  return dropoffMinutes !== null && pickupMinutes !== null && opens !== null && closes !== null && dropoffMinutes >= opens && pickupMinutes <= closes && dropoffMinutes < pickupMinutes;
+}
+
+function scheduleRowFitsTerm(term, row) {
+  if (!row?.attending) return true;
+  if (typeof row.within_opening_hours === "boolean") return row.within_opening_hours;
+  return timesFitTerm(term, row.dropoff_at, row.pickup_at);
+}
+
+function scheduleConflictLabel(term, row) {
+  const weekday = WEEKDAYS[Number(row.weekday) - 1] || "Dag";
+  const opens = String(term.opens_at || "").slice(0, 5);
+  const closes = String(term.closes_at || "").slice(0, 5);
+  const dropoff = String(row.dropoff_at || "").slice(0, 5);
+  const pickup = String(row.pickup_at || "").slice(0, 5);
+  if (clockMinutes(dropoff) !== null && clockMinutes(dropoff) < clockMinutes(opens)) return `${weekday}: lämning ${dropoff} är före öppning ${opens}`;
+  if (clockMinutes(pickup) !== null && clockMinutes(pickup) > clockMinutes(closes)) return `${weekday}: hämtning ${pickup} är efter stängning ${closes}`;
+  return `${weekday}: tiderna ryms inte inom ${opens}–${closes}`;
+}
+
+function termScheduleConflicts(term) {
+  return state.weeklySchedules
+    .filter((row) => row.term_id === term.term_id && !scheduleRowFitsTerm(term, row))
+    .flatMap((row) => {
+      const child = state.children.find((item) => item.id === row.child_id);
+      return child ? [{ child, row }] : [];
+    })
+    .sort((left, right) => left.child.name.localeCompare(right.child.name, "sv") || Number(left.row.weekday) - Number(right.row.weekday));
 }
 
 function renderTermClosures(termId) {
   const closures = closuresForTerm(termId);
   return closures.length
     ? `<ul class="term-closures">${closures.map((closure) => `<li><strong>${esc(formatDate(closure.closure_date))}</strong><span>${esc(closure.reason)}</span></li>`).join("")}</ul>`
-    : `<p class="form-hint">Inga stängningsdagar är publicerade.</p>`;
+    : `<p class="form-hint">Inga stängningsdagar den här terminen.</p>`;
 }
 
 function renderWeeklyScheduleForm(term, child) {
   const saved = schedulesForTermChild(term.term_id, child.id);
+  const conflicts = saved.filter((row) => !scheduleRowFitsTerm(term, row));
   const rows = WEEKDAYS.map((label, index) => {
     const weekday = index + 1;
     const row = saved.find((item) => Number(item.weekday) === weekday);
     const attending = Boolean(row?.attending);
-    return `<div class="weekly-schedule-row" data-weekday="${weekday}">
+    const outside = Boolean(row && !scheduleRowFitsTerm(term, row));
+    return `<div class="weekly-schedule-row${outside ? " schedule-outside-hours" : ""}" data-weekday="${weekday}" ${outside ? 'data-schedule-conflict="true"' : ""}>
       <label class="check"><input type="checkbox" name="attending_${weekday}" data-schedule-attending ${attending ? "checked" : ""}> ${esc(label)}</label>
       <label>Lämning<input type="time" name="dropoff_${weekday}" value="${esc(row?.dropoff_at?.slice(0, 5) || "")}" ${attending ? "" : "disabled"}></label>
       <label>Hämtning<input type="time" name="pickup_${weekday}" value="${esc(row?.pickup_at?.slice(0, 5) || "")}" ${attending ? "" : "disabled"}></label>
+      ${outside ? `<p class="form-hint error-text">Ryms inte inom ${esc(String(term.opens_at).slice(0, 5))}–${esc(String(term.closes_at).slice(0, 5))}.</p>` : ""}
     </div>`;
   }).join("");
+  const warning = conflicts.length
+    ? `<p class="notice error" role="status">Ditt sparade schema ryms inte i de uppdaterade öppettiderna. Tiderna finns kvar men är markerade. Justera dem och spara igen.</p>`
+    : "";
   return `<form class="card form-stack term-schedule-card" data-form="weekly-schedule" data-term-id="${esc(term.term_id)}" data-child-id="${esc(child.id)}">
     <p class="kicker">Återkommande veckoschema</p><h3>${esc(child.name)}</h3>
+    ${warning}
     <div class="assistant-form">
       <label>Berätta för Ärtan<textarea name="schedule_text" placeholder="08.00–16.30 alla dagar utom torsdagar, då 08.00–15.00"></textarea></label>
       <button class="secondary" type="button" data-action="parse-weekly-schedule">Tolka och fyll i</button>
@@ -1439,7 +1517,24 @@ function renderAttendance() {
         attendance?.pickup_by ? `av ${attendance.pickup_by}` : "",
       ]).join(" · ");
       return `<article class="card attendance-row"><div class="attendance-child"><div><strong>${esc(child.name)}</strong><span>${esc(departmentName(child.department_id))}${plan ? ` · ${esc(plan)}` : ""}</span></div><span class="attendance-state ${esc(status)}">${esc(actualTime)}</span></div><div class="attendance-actions"><button class="primary attendance-primary" type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="${primaryTransition}">${primaryLabel}</button>${active ? "" : `<div class="attendance-secondary" role="group" aria-label="Markera frånvaro för ${esc(child.name)}"><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_sick" aria-pressed="${status === "absent_sick"}">Sjuk</button><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_leave" aria-pressed="${status === "absent_leave"}">Ledig</button></div>`}</div></article>`;
-    }).join("")}</div>` : emptyState("Inga barn", "Du behöver kopplas till en avdelning innan närvarolistan visas.")}`;
+    }).join("")}</div>` : emptyState("Inga barn", "Du behöver kopplas till en avdelning innan närvarolistan visas.")}
+    ${state.profile.role === "staff" ? renderPublishedTermReadOnly() : ""}`;
+}
+
+function renderPublishedTermReadOnly() {
+  const terms = state.schoolTerms
+    .filter((term) => term.term_status === "published")
+    .sort((left, right) => String(right.starts_on).localeCompare(String(left.starts_on)) || left.term_name.localeCompare(right.term_name, "sv"));
+  const cards = terms.map((term) => {
+    const school = state.schools.find((item) => item.id === term.preschool_id);
+    return `<article class="card term-card" data-term-id="${esc(term.term_id)}" data-term-status="published">
+      <p class="kicker">${esc(school?.name || "Förskola")}</p>
+      <h3>${esc(term.term_name)}</h3>
+      <p>${esc(termDateSummary(term))}</p>
+      <h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}
+    </article>`;
+  }).join("");
+  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Publicerad termin</h2></div></div>${cards || emptyState("Ingen publicerad termin", "När en administratör publicerar terminen visas datum, öppettider och stängningsdagar här.")}</section>`;
 }
 
 function editableDepartments() {
@@ -1496,35 +1591,75 @@ function staffGroups() {
   return [...groups.values()];
 }
 
-function renderAdminTerm(term) {
-  return `<article class="card term-card"><p class="kicker">${term.term_status === "published" ? "Publicerad" : "Utkast"}</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p><h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}${term.term_status === "draft" ? `<button class="primary" type="button" data-action="publish-term" data-id="${esc(term.term_id)}">Publicera termin</button>` : ""}</article>`;
+function termsForSchool(preschoolId) {
+  return state.schoolTerms
+    .filter((term) => term.preschool_id === preschoolId)
+    .sort((left, right) => {
+      if (left.term_status !== right.term_status) return left.term_status === "draft" ? -1 : 1;
+      return String(right.starts_on).localeCompare(String(left.starts_on));
+    });
 }
 
-function renderTermCreateForm(school) {
-  return `<form class="card form-stack" data-form="term-create" data-preschool-id="${esc(school.id)}"><p class="kicker">Ny termin</p><h3>Planera och publicera</h3>
+function closureLines(termId) {
+  return closuresForTerm(termId).map((closure) => `${closure.closure_date} | ${closure.reason}`).join("\n");
+}
+
+function renderManagedTerm(term) {
+  const draft = term.term_status === "draft";
+  const conflicts = termScheduleConflicts(term);
+  const conflictList = conflicts.length
+    ? `<div class="term-warning" role="status"><p>Veckoscheman som inte ryms inom öppettiderna är markerade hos vårdnadshavaren. Inget schema har tagits bort.</p><ul>${conflicts.map((item) => `<li>${esc(item.child.name)} · ${esc(scheduleConflictLabel(term, item.row))}</li>`).join("")}</ul></div>`
+    : "";
+  return `<article class="card term-card" data-term-id="${esc(term.term_id)}" data-term-status="${esc(term.term_status)}">
+    <p class="kicker">${draft ? "Utkast" : "Publicerad"}</p>
+    <h3>${esc(term.term_name)}</h3>
+    <p>${esc(termDateSummary(term))}</p>
+    <p class="form-hint">${draft ? "Bara administratörer ser utkastet. Personal och vårdnadshavare ser terminen när du publicerar den." : "Personal och vårdnadshavare ser den här terminen, inklusive senare ändringar."}</p>
+    <h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}
+    ${conflictList}
+    <div class="actions">
+      ${draft ? `<button class="primary" type="button" data-action="publish-term" data-id="${esc(term.term_id)}">Publicera termin</button>` : ""}
+      <button class="secondary" type="button" data-action="edit-term" data-id="${esc(term.term_id)}" data-preschool-id="${esc(term.preschool_id)}">Redigera</button>
+    </div>
+  </article>`;
+}
+
+function renderTermEditor(school) {
+  const editing = state.termEditor?.preschoolId === school.id
+    ? state.schoolTerms.find((term) => term.term_id === state.termEditor.termId && term.preschool_id === school.id) || null
+    : null;
+  const published = editing?.term_status === "published";
+  return `<form class="card form-stack" ${editing ? 'id="term-editor"' : ""} data-form="term-save" data-preschool-id="${esc(school.id)}" data-term-id="${editing ? esc(editing.term_id) : ""}">
+    <p class="kicker">${editing ? (published ? "Publicerad termin" : "Utkast") : "Ny termin"}</p>
+    <h3>${editing ? (published ? "Redigera publicerad termin" : "Redigera utkast") : "Planera och publicera"}</h3>
     <div class="assistant-form">
       <label>Berätta för Ärtan<textarea name="term_text" placeholder="Höstterminen 3 augusti–18 december, öppet 06.30–17.30. Stängt 13 september för planeringsdag och 11 november för studiedag."></textarea></label>
       <button class="secondary" type="button" data-action="parse-term">Tolka och fyll i</button>
-      <p class="form-hint" data-parse-status aria-live="polite">Ärtan fyller bara i utkastet. Granska allt innan du sparar.</p>
+      <p class="form-hint" data-parse-status aria-live="polite">Ärtan fyller bara i formuläret. Granska allt innan du sparar.</p>
     </div>
-    ${field("Terminens namn", "term_name", "", { required: true })}
-    <div class="form-grid">${field("Startdatum", "starts_on", "", { type: "date", required: true })}${field("Slutdatum", "ends_on", "", { type: "date", required: true })}</div>
-    <div class="form-grid">${field("Öppnar vardagar", "opens_at", "", { type: "time", required: true })}${field("Stänger vardagar", "closes_at", "", { type: "time", required: true })}</div>
-    ${textareaField("Stängningsdagar", "closures", "", "En rad per dag: 2026-09-13 | Planeringsdag")}
-    <p class="form-hint">Spara först som utkast. Vårdnadshavare ser terminen först när du publicerar den.</p>
-    <button class="primary" type="submit">Spara utkast</button>
+    ${field("Terminens namn", "term_name", editing?.term_name || "", { required: true })}
+    <div class="form-grid">${field("Startdatum", "starts_on", editing?.starts_on || "", { type: "date", required: true })}${field("Slutdatum", "ends_on", editing?.ends_on || "", { type: "date", required: true })}</div>
+    <div class="form-grid">${field("Öppnar vardagar", "opens_at", editing ? String(editing.opens_at).slice(0, 5) : "", { type: "time", required: true })}${field("Stänger vardagar", "closes_at", editing ? String(editing.closes_at).slice(0, 5) : "", { type: "time", required: true })}</div>
+    ${textareaField("Stängningsdagar", "closures", editing ? closureLines(editing.term_id) : "", "En rad per dag: 2026-09-13 | Planeringsdag")}
+    <p class="form-hint">${published ? "Ändringarna syns direkt för vårdnadshavare. Scheman som inte längre ryms markeras, de tas inte bort." : "Skapa först ett utkast. Det visas i listan ovan. Vårdnadshavare ser terminen först när du publicerar den."}</p>
+    ${editing ? `<button class="secondary" type="button" data-action="cancel-term-edit">Avbryt redigering</button>` : ""}
+    <button class="primary" type="submit">${editing ? "Spara ändringar" : "Skapa utkast"}</button>
   </form>`;
+}
+
+function renderTermManager(school) {
+  const terms = termsForSchool(school.id);
+  return `<div class="term-admin-list">${terms.map(renderManagedTerm).join("") || emptyState("Ingen termin", "Skapa ett terminsutkast. Det visas här tills du publicerar det.")}${renderTermEditor(school)}</div>`;
 }
 
 function renderSchoolAdmin(school) {
   const departments = state.departments.filter((department) => department.preschool_id === school.id);
-  const terms = state.schoolTerms.filter((term) => term.preschool_id === school.id);
   return `<section class="school-admin"><article class="card"><p class="kicker">Skola</p><h2>${esc(school.name)}</h2><p>${esc(compact([school.address, compact([school.postal_code, school.city]).join(" ")]).join(", ") || "Ingen adress registrerad")}</p><p class="meta">${esc(compact([school.phone, school.opening_hours]).join(" · ") || "Inga kontaktuppgifter registrerade")}</p>
     <ul class="rows">${departments.map((department) => `<li><span>${esc(department.name)}</span><span class="status">${state.children.filter((child) => child.department_id === department.id).length} barn</span></li>`).join("") || "<li><span>Inga avdelningar</span></li>"}</ul>
     <form class="form-stack school-department-form" data-form="department-create" data-preschool-id="${esc(school.id)}">${field("Ny avdelning", "department_name", "", { required: true, placeholder: "Till exempel Solen" })}<button class="secondary" type="submit">Lägg till avdelning</button></form>
     <button class="secondary" type="button" data-action="rotate-school-code" data-id="${esc(school.id)}">Skapa ny skolkod</button>
     <p class="form-hint">Skolkoden är ett reservspår för personal. Ansökan väntar tills du godkänner den och väljer avdelning.</p>
-  </article><div class="term-admin-list">${terms.map(renderAdminTerm).join("") || emptyState("Ingen termin", "Skapa ett terminsutkast och publicera det när uppgifterna är granskade.")}${renderTermCreateForm(school)}</div></section>`;
+  </article>${renderTermManager(school)}</section>`;
 }
 
 function renderStaffAccess() {
@@ -1545,7 +1680,8 @@ function renderStaffAccess() {
 }
 
 function renderSchools() {
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">Skolor och personal</h1><p class="sub">${esc(state.organization?.name || "")}</p></section>
+  if (state.profile.role !== "admin") return renderAttendance();
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">Skolor och terminer</h1><p class="sub">${esc(state.organization?.name || "")}</p></section>
     ${renderSchoolCodeResult()}
     ${renderInviteResult("staff")}
     ${state.schools.map(renderSchoolAdmin).join("") || emptyState("Ingen skola skapad", "Skapa organisationens första skola nedan.")}
@@ -1697,6 +1833,24 @@ document.body.addEventListener("submit", (event) => {
     requestAnimationFrame(() => document.getElementById("assistantAnswer")?.focus());
     return;
   }
+  const editingTerm = state.schoolTerms.find((term) => term.term_id === form.dataset.termId);
+  const successText = type === "login" || type === "register"
+    ? ""
+    : type === "birthday-create"
+      ? "Kalasinbjudan är skickad privat."
+      : type === "term-save"
+        ? (form.dataset.termId
+          ? (editingTerm?.term_status === "published"
+            ? "Terminen är uppdaterad. Vårdnadshavare ser ändringen direkt. Scheman som inte ryms markeras och tas inte bort."
+            : "Utkastet är uppdaterat.")
+          : "Utkastet är skapat. Du hittar det i listan och kan publicera det när det är granskat.")
+        : {
+          "invite-create": "Inbjudan är skapad. Kopiera länken nu. Den visas inte igen.",
+          "staff-invite": "Personalinbjudan är skapad. Kopiera länken nu. Den visas inte igen.",
+          "sibling-request": "Förfrågan är skickad. Barnet kopplas först när personalen godkänner den.",
+          "school-code-join": "Ansökan är skickad. Uppgifter visas först efter godkännande.",
+          "department-create": "Avdelningen är skapad.",
+        }[type] || "Sparat.";
   runMutation(async () => {
     if (type === "login") {
       await login(values.email.trim(), values.password);
@@ -1772,9 +1926,10 @@ document.body.addEventListener("submit", (event) => {
       await loadData();
       return;
     }
-    if (type === "term-create") {
+    if (type === "term-save") {
+      if (state.profile.role !== "admin") throw new Error("Bara administratörer kan hantera terminer.");
       await rpc("save_school_term", {
-        target_term_id: null,
+        target_term_id: form.dataset.termId || null,
         target_preschool_id: form.dataset.preschoolId,
         term_name: values.term_name.trim(),
         term_starts_on: values.starts_on,
@@ -1783,6 +1938,7 @@ document.body.addEventListener("submit", (event) => {
         term_closes_at: values.closes_at,
         closures: parseClosureLines(values.closures),
       });
+      state.termEditor = null;
       await loadData();
       return;
     }
@@ -1853,6 +2009,10 @@ document.body.addEventListener("submit", (event) => {
           pickup_at: attending ? row.querySelector(`[name="pickup_${weekday}"]`).value : null,
         };
       });
+      const term = state.schoolTerms.find((item) => item.term_id === form.dataset.termId);
+      if (term && weeklySchedule.some((row) => row.attending && !timesFitTerm(term, row.dropoff_at, row.pickup_at))) {
+        throw new Error("Schemat måste följa terminens öppettider och ha giltiga tider. Justera de markerade dagarna.");
+      }
       await rpc("save_child_weekly_schedule", {
         target_term_id: form.dataset.termId,
         target_child_id: form.dataset.childId,
@@ -1927,16 +2087,7 @@ document.body.addEventListener("submit", (event) => {
       });
       await loadData();
     }
-  }, {
-    login: "",
-    register: "",
-    "birthday-create": "Kalasinbjudan är skickad privat.",
-    "invite-create": "Inbjudan är skapad. Kopiera länken nu. Den visas inte igen.",
-    "staff-invite": "Personalinbjudan är skapad. Kopiera länken nu. Den visas inte igen.",
-    "sibling-request": "Förfrågan är skickad. Barnet kopplas först när personalen godkänner den.",
-    "school-code-join": "Ansökan är skickad. Uppgifter visas först efter godkännande.",
-    "department-create": "Avdelningen är skapad.",
-  }[type] ?? "Sparat.");
+  }, successText);
 });
 
 document.body.addEventListener("change", (event) => {
@@ -2065,7 +2216,22 @@ document.body.addEventListener("click", (event) => {
     }
     return;
   }
+  if (action === "edit-term") {
+    if (state.profile.role !== "admin") return;
+    state.termEditor = { preschoolId: target.dataset.preschoolId, termId: target.dataset.id };
+    state.notice = null;
+    render();
+    requestAnimationFrame(() => document.getElementById("term-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    return;
+  }
+  if (action === "cancel-term-edit") {
+    state.termEditor = null;
+    state.notice = null;
+    render();
+    return;
+  }
   if (action === "publish-term") {
+    if (state.profile.role !== "admin") return;
     runMutation(async () => {
       await rpc("publish_school_term", { target_term_id: target.dataset.id });
       await loadData();

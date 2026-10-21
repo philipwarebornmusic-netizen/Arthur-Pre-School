@@ -9,6 +9,24 @@
 - Inbjudningslänkar kan användas en gång. Personalens länk gäller i 7 dagar och vårdnadshavarens i 14 dagar. Administratören kan se, skicka igen och återkalla väntande inbjudningar samt ta bort personalens åtkomst.
 - Råa inbjudningskoder lagras inte. Migreringen `supabase/009_invite_onboarding.sql` ska köras för hand och har inte körts mot produktion.
 
+## 2026-10-21 — Skrivbordslayout som fyller skärmen
+
+- Låter appen använda hela fönstret på breda skärmar i stället för en centrerad kolumn.
+- Flyttar huvudmenyn från nederkanten till en vänsterspalt, med samma val som tidigare.
+- Låter översikter, listor, terminsytor och formulär använda den bredare ytan, och håller löptext inom en läsbar bredd.
+- Behåller bottenmenyn och de tidigare anpassningarna på mobil och surfplatta.
+- Placerar Ärtan längst ner till höger på skrivbordet så att hjälpredan inte täcker menyn.
+- Lägger till en synlig väg förbi menyn för den som navigerar med tangentbord.
+
+## 2026-10-21 — Administratörer äger terminer och kan rätta en publicerad termin
+
+- Behåller skapande, publicering och redigering av terminer hos administratörer. Personal ser ingen knapp för att skapa, publicera eller ändra, och inga utkast.
+- Visar den publicerade terminens datum, öppettider och stängningsdagar för personal på samma sätt som för vårdnadshavare, utan redigering.
+- Låter administratörer ändra datum, vardagsöppettider och stängningsdagar även efter publicering.
+- Behåller förbudet mot överlappande publicerade terminer. Personal och vårdnadshavare ser bara publicerade terminer, inklusive senare ändringar.
+- Markerar vårdnadshavarens veckoschema när tiderna inte längre ryms inom öppettiderna, i stället för att ta bort det.
+- Kräver migration `supabase/008_term_staff_publish_and_edits.sql` innan den nya behörigheten gäller i drift. Migrationen är redan körd mot produktionsdatabasen.
+
 ## 2026-10-21 — Responsiv layout på mobil, surfplatta och dator
 
 - Tog bort horisontell sidförskjutning från långa kontonamn och inbjudningsåtgärder på smala mobilskärmar.
