@@ -1,5 +1,9 @@
 # Ändringslogg
 
+## 2026-10-22 — Engångspass hittar pgcrypto
+
+- `supabase/017_fix_pickup_pass_random_bytes.sql` innehåller bara `alter function public.create_pickup_pass(uuid, date, time, time, text, text, text) set search_path = public, extensions;`. Funktionen skrivs inte om. Samma sats appliceras mot databasen separat. Kör inte filen igen.
+
 ## 2026-10-22 — Dela och skriv ut för vårdnadshavare
 
 - På Min dag kan en vårdnadshavare dela och skriva ut en publicerad termin. Delningen är en textsammanfattning och en `.ics`-fil med terminen och stängningsdagarna. Barnets schema och den personliga kalenderlänken följer inte med.
