@@ -997,9 +997,11 @@ for select using (
 );
 
 revoke all on table public.invitations from public, anon, authenticated;
+-- code stays readable so pre-merge clients keep loading; after this migration
+-- it only holds a non-secret ref:<uuid> (the real token lives hashed in token_hash).
 grant select (
   id, organization_id, preschool_id, department_id, child_id,
-  email, role, relation, status, invited_by, accepted_by,
+  email, role, relation, code, status, invited_by, accepted_by,
   max_uses, uses_count, expires_at, accepted_at, revoked_at, created_at
 ) on public.invitations to authenticated;
 
