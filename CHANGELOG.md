@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 2026-10-22 — Kortöversikt i stället för långa menysidor
+
+- Barnet, Skolor och Personer/Barn öppnas som ett rutnät av kort. Ett tryck visar den delen för sig, med ‹ Tillbaka och rubrik.
+- På Barnet finns också Hämtlista, Profilbild, Klasslista-samtycke och Synka terminsschemat. Terminer på Skolor innehåller behörigheten Får hantera terminsschema. Klasslistan är kvar som egen vy. Närvaro skannar hämtpass som tidigare. Administratören spärrar personer under Personer.
+- Webbläsarens bakåtknapp och en direktlänk, till exempel `#barnet/uppgifter`, öppnar samma vy.
+- Barnväljaren ligger kvar överst när en vårdnadshavare har flera barn.
+- Min dag, Närvaro, Gemenskap, Konto och Översikt är oförändrade listor.
+- En ny del läggs till med ett anrop till `registerHubCard`. Inga nya databasmigrationer.
+
 ## 2026-10-22 — Signerade bildadresser
 
 - Profilbilder och bilder i inlägg får `/storage/v1` i den signerade adressen, så att de inte blir 404.
