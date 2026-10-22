@@ -32,6 +32,7 @@ const state = {
   siblingRequests: [],
   joinRequests: [],
   staffMembers: [],
+  organizationPeople: [],
   onboarding: null,
   schoolCodeResult: null,
   migrationReady: true,
@@ -536,22 +537,14 @@ function allowedViewsForRole(role) {
   }[role] || ["home", "child", "classlist", "messages", "account"];
 }
 
-function peopleChildStatus(child) {
-  const birth = child.birth_date ? formatDate(child.birth_date) : "Saknar födelsedatum";
-  return `${departmentName(child.department_id)} · ${birth}`;
-}
-
 function cardsForHub(hub) {
   const registered = (hubCards[hub] || []).filter((card) => !card.visible || card.visible());
   if (hub !== "people") return registered;
-  const childCards = state.children.map((child) => ({
-    id: `barn-${child.id}`,
-    icon: "🌱",
-    title: child.name,
-    status: () => peopleChildStatus(child),
-    render: () => `<article class="card" id="child-info-read">${renderChildFacts(child)}</article>`,
-  }));
-  return registered.concat(childCards);
+  return registered.concat(peopleDetailCards());
+}
+
+function hubGridCards(hub) {
+  return cardsForHub(hub).filter((card) => !card.detail);
 }
 
 function readHubHash() {
@@ -604,7 +597,7 @@ function renderHubView({ hub, before = "", heroHtml = "" }) {
   if (open) {
     return `${noticeHtml()}${before}<section class="hub-panel"><button class="hub-back" type="button" data-action="hub-back">‹ Tillbaka</button><h1 class="h1">${esc(open.title)}</h1>${open.render()}</section>`;
   }
-  return `${noticeHtml()}${before}${heroHtml}${hubClosedBanner(hub)}${renderHubGrid(cardsForHub(hub))}`;
+  return `${noticeHtml()}${before}${heroHtml}${hubClosedBanner(hub)}${renderHubGrid(hubGridCards(hub))}`;
 }
 
 function showView(view, { section = "", scrollTarget = "", push = true } = {}) {
@@ -939,6 +932,7 @@ async function logout() {
       siblingRequests: [],
       joinRequests: [],
       staffMembers: [],
+      organizationPeople: [],
       onboarding: null,
       schoolCodeResult: null,
       inviteResult: null,
@@ -1014,7 +1008,7 @@ async function loadData() {
   const organizationId = encodeURIComponent(state.profile.organization_id);
   const date = todayIso();
   state.termManagersReady = true;
-  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, schoolTerms, termClosures, weeklySchedules, posts, postImages, invitations, postComments, communityMembers, guardianMessageTargets, privateMessages, playdateRequests, birthdayCandidates, birthdayInvitations, siblingRequests, joinRequests, staffMembers, termPermissions, termManagers] = await Promise.all([
+  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, schoolTerms, termClosures, weeklySchedules, posts, postImages, invitations, postComments, communityMembers, guardianMessageTargets, privateMessages, playdateRequests, birthdayCandidates, birthdayInvitations, siblingRequests, joinRequests, staffMembers, termPermissions, termManagers, organizationPeople] = await Promise.all([
     request(`/rest/v1/organizations?select=id,name,type,created_at&id=eq.${organizationId}&limit=1`),
     request(`/rest/v1/preschools?select=id,organization_id,name,phone,address,postal_code,city,opening_hours,created_at&organization_id=eq.${organizationId}&order=name.asc`),
     request("/rest/v1/departments?select=id,preschool_id,name,created_at&order=name.asc"),
@@ -1042,6 +1036,7 @@ async function loadData() {
     state.profile.role === "admin" ? optionalRpc("list_staff_members") : Promise.resolve([]),
     state.profile.role === "admin" || state.profile.role === "staff" ? optionalTermRpc("my_term_permissions") : Promise.resolve([]),
     state.profile.role === "admin" ? optionalTermRpc("list_term_managers") : Promise.resolve([]),
+    state.profile.role === "admin" ? loadOrganizationPeople(organizationId) : Promise.resolve([]),
   ]);
 
   state.organization = organizations[0] || null;
@@ -1079,6 +1074,7 @@ async function loadData() {
   state.siblingRequests = siblingRequests || [];
   state.joinRequests = joinRequests || [];
   state.staffMembers = staffMembers || [];
+  state.organizationPeople = organizationPeople || [];
   state.pickupReady = true;
   state.incidentReady = true;
   await incidentRpc("remind_incident_copies");
@@ -1158,6 +1154,7 @@ function clearLoadedData() {
     siblingRequests: [],
     joinRequests: [],
     staffMembers: [],
+    organizationPeople: [],
     pickupContacts: [],
     pickupPasses: [],
     pickupNotices: [],
@@ -1294,6 +1291,16 @@ function optionalClassListRpc(name, args) {
     }
     throw error;
   });
+}
+
+async function loadOrganizationPeople(organizationId) {
+  const filtered = `/rest/v1/profiles?organization_id=eq.${organizationId}&order=name.asc`;
+  try {
+    return await request(`${filtered}&select=id,name,email,role,removed_at`);
+  } catch (error) {
+    if (!/removed_at|schema cache|column/i.test(error.message)) throw error;
+    return request(`${filtered}&select=id,name,email,role`);
+  }
 }
 
 async function loadChildren() {
@@ -3078,14 +3085,279 @@ function peopleCountStatus(count, empty, one, many) {
   return count === 1 ? one : `${count} ${many}`;
 }
 
-function renderPeople() {
-  const heading = state.profile.role === "staff" ? "Barn" : "Personer";
-  return renderHubView({
-    hub: "people",
-    heroHtml: `<section class="hero-card"><p class="kicker">Barn och vårdnadshavare</p><h1 class="h1">${heading}</h1><p class="sub">Lägg till barnet på avdelningen. Bjud sedan in varje vårdnadshavare med en egen länk.</p></section>`,
+function peopleDirectoryVisible(name, departmentIds, query, departmentId) {
+  const haystack = String(name || "").toLocaleLowerCase("sv-SE");
+  const needle = String(query || "").trim().toLocaleLowerCase("sv-SE");
+  const nameMatches = !needle || haystack.includes(needle);
+  const departmentMatches = !departmentId || departmentIds.includes(departmentId);
+  return nameMatches && departmentMatches;
+}
+
+function childGroupStatus(childCount, missingBirthCount) {
+  if (!childCount) return "Inga barn";
+  const count = childCount === 1 ? "1 barn" : `${childCount} barn`;
+  if (!missingBirthCount) return count;
+  const missing = missingBirthCount === 1 ? "1 saknar födelsedatum" : `${missingBirthCount} saknar födelsedatum`;
+  return `${count} · ${missing}`;
+}
+
+function guardianGroupStatus(guardianCount, pendingCount) {
+  const linked = !guardianCount ? "Inga kopplade" : guardianCount === 1 ? "1 vårdnadshavare" : `${guardianCount} vårdnadshavare`;
+  if (!pendingCount) return guardianCount ? linked : "Inga vårdnadshavare";
+  const pending = pendingCount === 1 ? "1 väntande inbjudan" : `${pendingCount} väntande inbjudningar`;
+  return `${linked} · ${pending}`;
+}
+
+function staffGroupStatus(adminCount, staffCount, termCount) {
+  if (!adminCount && !staffCount) return "Ingen personal";
+  const parts = [];
+  if (adminCount) parts.push(adminCount === 1 ? "1 administratör" : `${adminCount} administratörer`);
+  if (staffCount) parts.push(staffCount === 1 ? "1 personal" : `${staffCount} personal`);
+  if (termCount) parts.push(termCount === 1 ? "1 terminsschema" : `${termCount} terminsschema`);
+  return parts.join(" · ");
+}
+
+function childRowStatus(guardianCount, missingBirth) {
+  const guardians = guardianCount === 1 ? "1 vårdnadshavare" : guardianCount ? `${guardianCount} vårdnadshavare` : "Ingen vårdnadshavare";
+  return missingBirth ? `Saknar födelsedatum · ${guardians}` : guardians;
+}
+
+function compareSwedishName(left, right) {
+  return String(left || "").localeCompare(String(right || ""), "sv");
+}
+
+function pendingGuardianInviteCount() {
+  return state.invitations.filter((invite) => invite.role === "parent" && invite.status === "pending").length;
+}
+
+function guardiansForChild(childId) {
+  return new Set(state.guardianMessageTargets.filter((target) => target.child_id === childId).map((target) => target.guardian_id)).size;
+}
+
+function childDirectoryRows() {
+  return state.children.map((child) => ({
+    section: `barn-${child.id}`,
+    name: child.name || "Namn saknas",
+    departmentIds: child.department_id ? [child.department_id] : [],
+    departmentNames: child.department_id ? [departmentName(child.department_id)] : [],
+    departmentLabel: departmentName(child.department_id),
+    status: childRowStatus(guardiansForChild(child.id), !child.birth_date),
+    avatar: childAvatarHtml(child.name, childPhotoUrl(child.photo_path), child.avatar_color),
+  })).sort((left, right) => compareSwedishName(left.name, right.name));
+}
+
+function guardianDirectoryRows() {
+  const byId = new Map();
+  state.guardianMessageTargets.forEach((target) => {
+    if (!byId.has(target.guardian_id)) {
+      byId.set(target.guardian_id, {
+        id: target.guardian_id,
+        name: target.guardian_name || "Namn saknas",
+        relation: target.guardian_relation || "Vårdnadshavare",
+        children: [],
+        departmentIds: [],
+        departments: [],
+      });
+    }
+    const person = byId.get(target.guardian_id);
+    if (!person.children.some((child) => child.id === target.child_id)) {
+      const child = state.children.find((item) => item.id === target.child_id);
+      person.children.push({ id: target.child_id, name: target.child_name || child?.name || "Barn" });
+      if (child?.department_id && !person.departmentIds.includes(child.department_id)) {
+        person.departmentIds.push(child.department_id);
+        person.departments.push(departmentName(child.department_id));
+      }
+    }
+  });
+  return [...byId.values()].sort((left, right) => compareSwedishName(left.name, right.name)).map((person) => {
+    const names = [...person.children].sort((left, right) => compareSwedishName(left.name, right.name)).map((child) => child.name);
+    return {
+      section: `vardnad-${person.id}`,
+      name: person.name,
+      departmentIds: person.departmentIds,
+      departmentNames: person.departments,
+      departmentLabel: person.departments.join(", ") || "Ingen avdelning",
+      status: names.length ? names.join(", ") : "Inget barn kopplat",
+      avatar: childAvatarHtml(person.name, ""),
+      person,
+    };
   });
 }
 
+function staffDirectoryRows() {
+  if (state.profile.role !== "admin") return [];
+  const byId = new Map();
+  (state.organizationPeople || []).forEach((person) => {
+    if (person.removed_at) return;
+    if (person.role !== "admin" && person.role !== "staff") return;
+    byId.set(person.id, {
+      id: person.id,
+      name: person.name || "Namn saknas",
+      email: person.email || "",
+      role: person.role,
+      departmentIds: [],
+      departments: [],
+      termManager: person.role === "staff" && staffManagesTerms(person.id),
+    });
+  });
+  if (!byId.size) {
+    staffGroups().forEach((person) => {
+      byId.set(person.id, {
+        id: person.id,
+        name: person.name || "Namn saknas",
+        email: person.email || "",
+        role: "staff",
+        departmentIds: [],
+        departments: [],
+        termManager: staffManagesTerms(person.id),
+      });
+    });
+  }
+  state.staffMembers.forEach((row) => {
+    const person = byId.get(row.staff_id);
+    if (!person || !row.department_id || person.departmentIds.includes(row.department_id)) return;
+    person.departmentIds.push(row.department_id);
+    person.departments.push(row.department_name || departmentName(row.department_id));
+  });
+  return [...byId.values()].sort((left, right) => compareSwedishName(left.name, right.name)).map((person) => {
+    const roleText = person.role === "admin" ? "Administratör" : "Personal";
+    return {
+      section: `personal-${person.id}`,
+      name: person.name,
+      departmentIds: person.departmentIds,
+      departmentNames: person.departments,
+      departmentLabel: person.departments.join(", ") || (person.role === "admin" ? "Hela organisationen" : "Ingen avdelning"),
+      status: person.termManager ? `${roleText} · Terminsschema` : roleText,
+      avatar: childAvatarHtml(person.name, ""),
+      person,
+    };
+  });
+}
+
+function peopleDetailCards() {
+  const cards = state.children.map((child) => ({
+    id: `barn-${child.id}`,
+    detail: true,
+    title: child.name || "Barn",
+    render: () => `<article class="card" id="child-info-read">${renderChildFacts(child)}</article>`,
+  }));
+  guardianDirectoryRows().forEach((row) => {
+    cards.push({
+      id: row.section,
+      detail: true,
+      title: row.name,
+      render: () => renderGuardianDetail(row.person),
+    });
+  });
+  staffDirectoryRows().forEach((row) => {
+    cards.push({
+      id: row.section,
+      detail: true,
+      title: row.name,
+      render: () => renderStaffPersonDetail(row.person),
+    });
+  });
+  return cards;
+}
+
+function directoryDepartments(rows) {
+  const names = new Map();
+  rows.forEach((row) => {
+    row.departmentIds.forEach((id, index) => {
+      if (!names.has(id)) names.set(id, row.departmentNames?.[index] || departmentName(id));
+    });
+  });
+  return [...names.entries()].sort((left, right) => compareSwedishName(left[1], right[1]));
+}
+
+function renderPeopleDirectory(rows, emptyText) {
+  const departments = directoryDepartments(rows);
+  const options = departments.map(([id, name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join("");
+  const departmentFilter = departments.length
+    ? `<label>Avdelning<select data-people-department><option value="">Alla avdelningar</option>${options}</select></label>`
+    : "";
+  const list = rows.map((row) => `<li class="people-row" data-people-row data-people-name="${esc(row.name.toLocaleLowerCase("sv-SE"))}" data-people-departments="${esc(row.departmentIds.join("|"))}"><button type="button" class="people-row-button" data-action="hub-open" data-section="${esc(row.section)}">${row.avatar}<span class="people-row-copy"><strong>${esc(row.name)}</strong><span>${esc(row.departmentLabel)}</span></span><span class="people-row-status">${esc(row.status)}</span></button></li>`).join("");
+  return `<div class="people-directory"><div class="people-filters"><label>Namn<input type="search" data-people-query placeholder="Sök namn" autocomplete="off" enterkeyhint="search"></label>${departmentFilter}</div><p class="form-hint" data-people-count>${rows.length} i listan</p><p class="form-hint" data-people-empty hidden>Ingen träff.</p>${rows.length ? `<ul class="people-rows">${list}</ul>` : `<p class="form-hint">${esc(emptyText)}</p>`}</div>`;
+}
+
+function applyPeopleDirectoryFilter(root) {
+  const query = root.querySelector("[data-people-query]")?.value || "";
+  const departmentId = root.querySelector("[data-people-department]")?.value || "";
+  const rows = [...root.querySelectorAll("[data-people-row]")];
+  let shown = 0;
+  rows.forEach((row) => {
+    const visible = peopleDirectoryVisible(row.dataset.peopleName || "", (row.dataset.peopleDepartments || "").split("|").filter(Boolean), query, departmentId);
+    row.hidden = !visible;
+    if (visible) shown += 1;
+  });
+  const empty = root.querySelector("[data-people-empty]");
+  if (empty) empty.hidden = !rows.length || shown > 0;
+  const count = root.querySelector("[data-people-count]");
+  if (count) count.textContent = shown === rows.length ? `${rows.length} i listan` : `${shown} av ${rows.length}`;
+}
+
+function renderGuardianDetail(person) {
+  const children = [...person.children].sort((left, right) => compareSwedishName(left.name, right.name));
+  const list = children.map((child) => {
+    const record = state.children.find((item) => item.id === child.id);
+    return `<li><button type="button" class="people-row-button" data-action="hub-open" data-section="barn-${esc(child.id)}">${childAvatarHtml(child.name, childPhotoUrl(record?.photo_path), record?.avatar_color)}<span class="people-row-copy"><strong>${esc(child.name)}</strong><span>${esc(record ? departmentName(record.department_id) : "Okänd avdelning")}</span></span></button></li>`;
+  }).join("");
+  return `<article class="card"><p class="kicker">${esc(person.relation || "Vårdnadshavare")}</p><h2>Kopplade barn</h2>${list ? `<ul class="people-rows">${list}</ul>` : `<p class="form-hint">Inget barn är kopplat.</p>`}</article>`;
+}
+
+function renderStaffPersonDetail(person) {
+  const departments = person.departments.length ? person.departments.join(", ") : (person.role === "admin" ? "Hela organisationen" : "Ingen avdelning");
+  const term = person.role === "admin"
+    ? "Administratörer hanterar terminsscheman."
+    : person.termManager ? "Får hantera terminsschema." : "Får inte hantera terminsschema.";
+  const remove = person.role === "staff" && person.id !== state.profile.id
+    ? `<button class="link danger-link" type="button" data-action="remove-staff" data-id="${esc(person.id)}" data-name="${esc(person.name)}">Ta bort åtkomst</button>`
+    : "";
+  return `<article class="card"><p class="kicker">${esc(person.role === "admin" ? "Administratör" : "Personal")}</p>${person.email ? `<p>${esc(person.email)}</p>` : ""}<p class="meta">${esc(departments)}</p><p class="form-hint">${esc(term)} Behörigheten ändras under Skolor och terminer.</p>${remove}</article>`;
+}
+
+function renderPeopleGroup(kind) {
+  if (kind === "children") return renderPeopleDirectory(childDirectoryRows(), "Inga barn är tillagda ännu.");
+  if (kind === "guardians") {
+    const pending = pendingGuardianInviteCount();
+    const note = pending ? `<p class="form-hint">${pending === 1 ? "1 väntande inbjudan" : `${pending} väntande inbjudningar`} finns under Väntande inbjudningar.</p>` : "";
+    return `${note}${renderPeopleDirectory(guardianDirectoryRows(), "Ingen vårdnadshavare är kopplad ännu.")}`;
+  }
+  return renderPeopleDirectory(staffDirectoryRows(), "Ingen personal är kopplad ännu.");
+}
+
+function childPeopleStatus() {
+  return childGroupStatus(state.children.length, state.children.filter((child) => !child.birth_date).length);
+}
+
+function guardianPeopleStatus() {
+  return guardianGroupStatus(guardianDirectoryRows().length, pendingGuardianInviteCount());
+}
+
+function staffPeopleStatus() {
+  const rows = staffDirectoryRows();
+  return staffGroupStatus(
+    rows.filter((row) => row.person.role === "admin").length,
+    rows.filter((row) => row.person.role === "staff").length,
+    rows.filter((row) => row.person.termManager).length,
+  );
+}
+
+function renderPeople() {
+  const staff = state.profile.role === "staff";
+  const heading = staff ? "Barn" : "Personer";
+  const sub = staff
+    ? "Öppna Barn eller Vårdnadshavare för att söka. Lägg sedan till barn eller bjud in vårdnadshavare."
+    : "Grupperna samlar barn, vårdnadshavare och personal. Öppna en grupp för att söka, och lägg sedan till barn eller bjud in vårdnadshavare.";
+  return renderHubView({
+    hub: "people",
+    heroHtml: `<section class="hero-card"><p class="kicker">Barn och vårdnadshavare</p><h1 class="h1">${heading}</h1><p class="sub">${sub}</p></section>`,
+  });
+}
+
+registerHubCard("people", { id: "barn", icon: "🌱", title: "Barn", status: childPeopleStatus, render: () => renderPeopleGroup("children") });
+registerHubCard("people", { id: "vardnadshavare", icon: "☺", title: "Vårdnadshavare", status: guardianPeopleStatus, render: () => renderPeopleGroup("guardians") });
+registerHubCard("people", { id: "personal", icon: "👥", title: "Personal", status: staffPeopleStatus, visible: () => state.profile.role === "admin", render: () => renderPeopleGroup("staff") });
 registerHubCard("people", { id: "lagg-till", icon: "🌱", title: "Lägg till barn", status: () => peopleCountStatus(state.children.length, "Inget barn ännu", "1 barn", "barn"), render: renderChildCreateForm });
 registerHubCard("people", { id: "bjud-in", icon: "✉", title: "Bjud in vårdnadshavare", status: () => "Egen länk per person", render: () => `${renderInviteResult("parent")}${renderGuardianInviteForm()}` });
 registerHubCard("people", { id: "vantande", icon: "…", title: "Väntande inbjudningar", status: () => peopleCountStatus(state.invitations.filter((invite) => invite.role === "parent" && invite.status === "pending").length, "Inga väntande", "1 väntande", "väntande"), render: () => `${renderInviteResult("parent")}${renderPendingGuardianInvites()}` });
@@ -3857,6 +4129,15 @@ document.body.addEventListener("submit", (event) => {
     }
   }, successText);
 });
+
+function onPeopleDirectoryFilter(event) {
+  const root = event.target.closest?.(".people-directory");
+  if (!root || !event.target.matches("[data-people-query], [data-people-department]")) return;
+  applyPeopleDirectoryFilter(root);
+}
+
+document.body.addEventListener("input", onPeopleDirectoryFilter);
+document.body.addEventListener("change", onPeopleDirectoryFilter);
 
 document.body.addEventListener("change", (event) => {
   const input = event.target;
