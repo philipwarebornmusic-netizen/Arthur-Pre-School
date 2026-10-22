@@ -1294,22 +1294,87 @@ function renderPost(post) {
   </article>`;
 }
 
+function factValue(value, empty = "Ingen uppgift") {
+  const text = Array.isArray(value) ? value.filter(Boolean).join(", ") : String(value || "").trim();
+  return text ? esc(text) : `<span class="muted-value">${esc(empty)}</span>`;
+}
+
+function contactFlags(contact) {
+  return [contact.relation, contact.can_pickup ? "får hämta" : "får inte hämta", contact.is_primary ? "primär kontakt" : ""].filter(Boolean).join(" · ");
+}
+
+function renderContactEditor(child, contact = null) {
+  const editing = Boolean(contact);
+  return `<form class="form-stack contact-editor" data-form="contact-save" data-child-id="${esc(child.id)}" ${editing ? `data-contact-id="${esc(contact.id)}"` : ""}>
+    <h3>${editing ? "Redigera kontaktperson" : "Lägg till kontaktperson"}</h3>
+    <div class="form-grid">${field("Namn", "name", contact?.name || "", { required: true })}${field("Relation", "relation", contact?.relation || "", { required: true, placeholder: "Exempelvis mormor" })}</div>
+    ${field("Telefon", "phone", contact?.phone || "", { type: "tel", autocomplete: "tel" })}
+    <label class="check"><input type="checkbox" name="can_pickup" ${contact?.can_pickup ? "checked" : ""}> Personen får hämta barnet</label>
+    <label class="check"><input type="checkbox" name="is_primary" ${contact?.is_primary ? "checked" : ""}> Primär kontakt</label>
+    <div class="contact-actions">
+      <button class="primary" type="submit">${editing ? "Spara kontakt" : "Lägg till kontakt"}</button>
+      ${editing ? `<button class="danger" type="button" data-action="delete-contact" data-child-id="${esc(child.id)}" data-contact-id="${esc(contact.id)}" data-contact-name="${esc(contact.name)}">Ta bort</button>` : ""}
+    </div>
+  </form>`;
+}
+
+function renderConsentChoices(child) {
+  return `<div class="consent-grid">${CONSENT_OPTIONS.map(([type, label]) => {
+    const recorded = consentRecorded(child.id, type);
+    const allowed = consentFor(child.id, type);
+    return `<div class="consent-question"><div><strong>${esc(label)}</strong><span>${recorded ? allowed ? "Ja" : "Nej" : "Ej besvarat"}</span></div><div class="consent-choices" role="group" aria-label="${esc(label)}"><button type="button" data-action="set-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}" data-allowed="true" aria-pressed="${recorded && allowed}">Ja</button><button type="button" data-action="set-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}" data-allowed="false" aria-pressed="${recorded && !allowed}">Nej</button></div></div>`;
+  }).join("")}</div>`;
+}
+
+function renderChildFacts(child) {
+  const health = healthFor(child.id);
+  const contacts = contactsFor(child.id);
+  const move = state.profile.role === "admin" && departmentOptions().length
+    ? `<form class="form-stack child-move" data-form="move-child" data-child-id="${esc(child.id)}"><h4>Avdelning</h4>${selectField("Flytta till avdelning", "department_id", departmentOptions(), child.department_id, true)}<button class="secondary" type="submit">Flytta barnet</button><p class="form-hint">Flytten ändrar bara avdelning. Namn, hälsa, kontakter och samtycken rörs inte.</p></form>`
+    : "";
+  return `<article class="child-facts"><header><h3>${esc(child.name)}</h3><p class="meta">${esc(departmentName(child.department_id))}${child.birth_date ? ` · ${esc(formatDate(child.birth_date))}` : ""}</p></header>
+    <dl class="fact-list">
+      <div><dt>Anteckning</dt><dd>${factValue(child.notes)}</dd></div>
+      <div><dt>Allergier</dt><dd>${factValue(health.allergies)}</dd></div>
+      <div><dt>Sjukdomar eller tillstånd</dt><dd>${factValue(health.conditions)}</dd></div>
+      <div><dt>Specialkost</dt><dd>${factValue(health.diet)}</dd></div>
+      <div><dt>Medicin</dt><dd>${factValue(health.medication)}</dd></div>
+      <div><dt>Akut information</dt><dd>${factValue(health.emergency)}</dd></div>
+    </dl>
+    <h4>Kontaktpersoner</h4>
+    ${contacts.length ? `<ul class="contact-list">${contacts.map((contact) => `<li><div><strong>${esc(contact.name)}</strong><span>${esc(contactFlags(contact))}</span></div>${contact.phone ? `<a href="tel:${esc(String(contact.phone).replace(/\s/g, ""))}">${esc(contact.phone)}</a>` : ""}</li>`).join("")}</ul>` : `<p class="form-hint">Ingen kontaktperson är sparad.</p>`}
+    <h4>Samtycken</h4>
+    <ul class="consent-readout">${CONSENT_OPTIONS.map(([type, label]) => {
+      const recorded = consentRecorded(child.id, type);
+      const answer = recorded ? consentFor(child.id, type) ? "Ja" : "Nej" : "Ej besvarat";
+      return `<li><span>${esc(label)}</span><strong>${esc(answer)}</strong></li>`;
+    }).join("")}</ul>
+    ${move}
+  </article>`;
+}
+
 function renderChildInfo() {
+  if (state.profile.role !== "parent") {
+    const child = selectedChild();
+    if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">Inget barn att visa</h1></section>`;
+    return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">Vårdnadshavarna äger uppgifterna. Du kan läsa dem här.</p></section><article class="card" id="child-info-read">${renderChildFacts(child)}</article>`;
+  }
   const child = selectedChild();
   if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">Inget barn kopplat</h1><p class="sub">Personalen bjuder in dig till ett barn, eller godkänner en förfrågan innan barnet syns här.</p></section>${renderSiblingRequestForm()}`;
   const health = healthFor(child.id);
   const contacts = contactsFor(child.id);
   const checklist = childInfoChecklist(child);
   const completed = checklist.filter((item) => item.complete).length;
-  return `${noticeHtml()}${childTabs()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">Fyra tydliga steg. Du kan spara ett steg i taget och fortsätta senare.</p></section>
+  return `${noticeHtml()}${childTabs()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">Fyra tydliga steg. Du kan spara ett steg i taget, tömma ett fält eller ta bort en kontakt.</p></section>
     <section class="card info-progress"><div><p class="kicker">Din översikt</p><h2>${completed} av ${checklist.length} steg klara</h2><progress max="${checklist.length}" value="${completed}" aria-label="${completed} av ${checklist.length} steg klara"></progress></div><ol class="info-steps">${checklist.map((item, index) => `<li class="${item.complete ? "done" : ""}"><button type="button" data-action="scroll-section" data-target="${esc(item.id)}"><span>${item.complete ? "✓" : index + 1}</span>${esc(item.label)}</button></li>`).join("")}</ol></section>
     <form id="child-basics" class="card form-stack child-step" data-form="child-profile" data-child-id="${esc(child.id)}"><p class="kicker">Steg 1 av 4</p><h2>Grunduppgifter</h2>
       ${field("Barnets namn", "name", child.name, { required: true, autocomplete: "name" })}
       ${field("Födelsedatum", "birth_date", child.birth_date || "", { type: "date", required: true })}
       ${textareaField("Det här behöver personalen veta", "notes", child.notes || "", "Trygghet, språk, rutiner eller annat viktigt")}
+      <p class="form-hint">Lämna anteckningen tom och spara om den ska tas bort. Namn och födelsedatum behöver finnas kvar.</p>
       <button class="primary" type="submit">Spara grunduppgifter</button>
     </form>
-    <form id="child-health" class="card form-stack child-step" data-form="child-health" data-child-id="${esc(child.id)}"><p class="kicker">Steg 2 av 4</p><h2>Hälsa och omsorg</h2><p class="form-hint">Gå igenom steget och spara även om barnet inte har allergier, medicin eller andra särskilda behov.</p>
+    <form id="child-health" class="card form-stack child-step" data-form="child-health" data-child-id="${esc(child.id)}"><p class="kicker">Steg 2 av 4</p><h2>Hälsa och omsorg</h2><p class="form-hint">Gå igenom steget och spara även om barnet inte har allergier, medicin eller andra särskilda behov. Ett tomt fält tar bort just den uppgiften. De andra fälten behålls.</p>
       ${field("Allergier, separera med kommatecken", "allergies", health.allergies?.join(", ") || "")}
       ${field("Sjukdomar eller tillstånd", "conditions", health.conditions?.join(", ") || "")}
       ${textareaField("Specialkost", "diet", health.diet || "")}
@@ -1318,19 +1383,10 @@ function renderChildInfo() {
       <button class="primary" type="submit">Spara och markera som genomgånget</button>
       ${health.updated_at ? `<p class="form-hint">Senast uppdaterad ${esc(formatTimestamp(health.updated_at))}</p>` : ""}
     </form>
-    <section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2>${contacts.length ? `<ul class="contact-list">${contacts.map((contact) => `<li><div><strong>${esc(contact.name)}</strong><span>${esc(contact.relation)}${contact.can_pickup ? " · får hämta" : ""}${contact.is_primary ? " · primär" : ""}</span></div>${contact.phone ? `<a href="tel:${esc(contact.phone.replace(/\s/g, ""))}">${esc(contact.phone)}</a>` : ""}</li>`).join("")}</ul>` : `<p class="form-hint">Lägg till minst en person som skolan kan kontakta.</p>`}</section>
-    <form class="card form-stack" data-form="contact-create" data-child-id="${esc(child.id)}"><h3>Lägg till kontaktperson</h3>
-      <div class="form-grid">${field("Namn", "name", "", { required: true })}${field("Relation", "relation", "", { required: true, placeholder: "Exempelvis mormor" })}</div>
-      ${field("Telefon", "phone", "", { type: "tel", autocomplete: "tel" })}
-      <label class="check"><input type="checkbox" name="can_pickup"> Personen får hämta barnet</label>
-      <label class="check"><input type="checkbox" name="is_primary"> Primär kontakt</label>
-      <button class="primary" type="submit">Lägg till kontakt</button>
-    </form>
-    <section id="child-consents" class="card child-step"><p class="kicker">Steg 4 av 4</p><h2>Samtycken</h2><p class="form-hint">Välj ja eller nej för varje punkt. Du kan ändra svaren när som helst.</p><div class="consent-grid">${CONSENT_OPTIONS.map(([type, label]) => {
-      const recorded = consentRecorded(child.id, type);
-      const allowed = consentFor(child.id, type);
-      return `<div class="consent-question"><div><strong>${esc(label)}</strong><span>${recorded ? allowed ? "Ja" : "Nej" : "Ej besvarat"}</span></div><div class="consent-choices" role="group" aria-label="${esc(label)}"><button type="button" data-action="set-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}" data-allowed="true" aria-pressed="${recorded && allowed}">Ja</button><button type="button" data-action="set-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}" data-allowed="false" aria-pressed="${recorded && !allowed}">Nej</button></div></div>`;
-    }).join("")}</div></section>${renderSiblingRequestForm(true)}`;
+    <section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2><p class="form-hint">Ändra namn, relation, telefon, om personen får hämta och om kontakten är primär. Ta bort frågar en gång till innan kontakten försvinner.</p>
+      <div class="contact-editors">${contacts.map((contact) => renderContactEditor(child, contact)).join("")}${renderContactEditor(child)}</div>
+    </section>
+    <section id="child-consents" class="card child-step"><p class="kicker">Steg 4 av 4</p><h2>Samtycken</h2><p class="form-hint">Välj ja eller nej för varje punkt. Nej tar tillbaka ett tidigare ja. Du kan ändra svaren när som helst.</p>${renderConsentChoices(child)}</section>${renderSiblingRequestForm(true)}`;
 }
 
 function groupedPrivateMessages() {
@@ -1727,7 +1783,7 @@ function renderPeople() {
     </form>
     <article class="card"><h2>Väntande vårdnadshavarinbjudningar</h2>${guardianInvites.length ? `<ul class="invite-list">${guardianInvites.map((invite) => `<li><div><strong>${esc(invite.email)}</strong><span>${esc(invite.relation || "Vårdnadshavare")} · ${esc(invitePlace(invite))} · ${esc(inviteExpiryLabel(invite))}</span></div>${renderInviteActions(invite)}</li>`).join("")}</ul>` : `<p class="form-hint">Inga väntande inbjudningar.</p>`}</article>
     <article class="card"><h2>Syskonförfrågningar</h2><p class="form-hint">Godkänn bara när du vet att vårdnadshavaren ska kopplas till barnet. Välj ett barn som redan finns, eller låt förfrågan skapa ett nytt.</p>${reviews.length ? reviews.map(renderSiblingReview).join("") : `<p class="form-hint">Inga förfrågningar väntar.</p>`}</article>
-    <article class="card"><h2>Barn</h2>${state.children.length ? `<ul class="rows">${state.children.map((child) => `<li><span><strong>${esc(child.name)}</strong><br><small>${esc(departmentName(child.department_id))}</small></span><span class="status">${child.birth_date ? esc(formatDate(child.birth_date)) : "Födelsedatum saknas"}</span></li>`).join("")}</ul>` : `<p class="form-hint">Inga barn registrerade.</p>`}</article>`;
+    <article class="card" id="child-info-read"><h2>Barnens uppgifter</h2><p class="form-hint">Vårdnadshavarna äger barnets uppgifter. Personal och administratörer kan läsa dem, till exempel allergier, men inte ändra dem.${state.profile.role === "admin" ? " En administratör kan flytta barnet mellan avdelningar." : ""}</p>${state.children.length ? `<div class="child-facts-grid">${state.children.map((child) => renderChildFacts(child)).join("")}</div>` : `<p class="form-hint">Inga barn registrerade.</p>`}</article>`;
 }
 
 function renderOverview() {
@@ -1850,6 +1906,8 @@ document.body.addEventListener("submit", (event) => {
           "sibling-request": "Förfrågan är skickad. Barnet kopplas först när personalen godkänner den.",
           "school-code-join": "Ansökan är skickad. Uppgifter visas först efter godkännande.",
           "department-create": "Avdelningen är skapad.",
+          "contact-save": form.dataset.contactId ? "Kontaktpersonen är uppdaterad." : "Kontaktpersonen är tillagd.",
+          "move-child": "Barnet är flyttat till den valda avdelningen.",
         }[type] || "Sparat.";
   runMutation(async () => {
     if (type === "login") {
@@ -1964,6 +2022,9 @@ document.body.addEventListener("submit", (event) => {
       await loadData();
       return;
     }
+    if (type === "child-profile" || type === "child-health" || type === "contact-save") {
+      if (state.profile.role !== "parent") throw new Error("Bara vårdnadshavare kan ändra barnets uppgifter.");
+    }
     if (type === "child-profile") {
       await rpc("update_child_profile", {
         target_child_id: form.dataset.childId,
@@ -1975,19 +2036,35 @@ document.body.addEventListener("submit", (event) => {
       return;
     }
     if (type === "child-health") {
-      await request("/rest/v1/child_health?on_conflict=child_id", {
-        method: "POST",
-        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify({ child_id: form.dataset.childId, allergies: csv(values.allergies), conditions: csv(values.conditions), diet: values.diet.trim() || null, medication: values.medication.trim() || null, emergency: values.emergency.trim() || null, updated_by: state.profile.id, updated_at: new Date().toISOString() }),
+      await rpc("save_child_health", {
+        target_child_id: form.dataset.childId,
+        allergy_list: csv(values.allergies),
+        condition_list: csv(values.conditions),
+        diet_text: values.diet.trim() || null,
+        medication_text: values.medication.trim() || null,
+        emergency_text: values.emergency.trim() || null,
       });
       await loadData();
       return;
     }
-    if (type === "contact-create") {
-      await request("/rest/v1/child_contacts", {
-        method: "POST",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ child_id: form.dataset.childId, name: values.name.trim(), relation: values.relation.trim(), phone: values.phone.trim() || null, can_pickup: values.can_pickup === "on", is_primary: values.is_primary === "on" }),
+    if (type === "contact-save") {
+      await rpc("save_child_contact", {
+        target_child_id: form.dataset.childId,
+        target_contact_id: form.dataset.contactId || null,
+        contact_name: values.name.trim(),
+        contact_relation: values.relation.trim(),
+        contact_phone: values.phone.trim() || null,
+        contact_can_pickup: values.can_pickup === "on",
+        contact_is_primary: values.is_primary === "on",
+      });
+      await loadData();
+      return;
+    }
+    if (type === "move-child") {
+      if (state.profile.role !== "admin") throw new Error("Bara administratörer kan flytta ett barn mellan avdelningar.");
+      await rpc("move_child_department", {
+        target_child_id: form.dataset.childId,
+        target_department_id: values.department_id,
       });
       await loadData();
       return;
@@ -2249,15 +2326,26 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "set-consent") {
+    if (state.profile.role !== "parent") return;
+    const allowed = target.dataset.allowed === "true";
     runMutation(async () => {
-      const allowed = target.dataset.allowed === "true";
-      await request("/rest/v1/consents?on_conflict=child_id,type", {
-        method: "POST",
-        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify({ child_id: target.dataset.childId, type: target.dataset.type, allowed, updated_by: state.profile.id, updated_at: new Date().toISOString() }),
+      await rpc("set_child_consent", {
+        target_child_id: target.dataset.childId,
+        consent_kind: target.dataset.type,
+        consent_allowed: allowed,
       });
       await loadData();
-    });
+    }, allowed ? "Samtycket är sparat." : "Samtycket är tillbakadraget.");
+    return;
+  }
+  if (action === "delete-contact") {
+    if (state.profile.role !== "parent") return;
+    const name = target.dataset.contactName || "kontaktpersonen";
+    if (!window.confirm(`Ta bort ${name} som kontaktperson?`)) return;
+    runMutation(async () => {
+      await rpc("delete_child_contact", { target_contact_id: target.dataset.contactId });
+      await loadData();
+    }, "Kontaktpersonen är borttagen.");
     return;
   }
   if (action === "delete-comment") {

@@ -17,7 +17,8 @@ Together, the upgrade preflight and schema handle both a new database and the pr
 - installs organization-scoped row-level security;
 - supports organization and school creation;
 - supports email-bound, single-use invitations for staff and guardians;
-- lets guardians maintain child, health, contact and consent information after staff has linked the child;
+- lets guardians maintain, clear, and remove their child's profile notes, health, emergency contacts, and consents after staff has linked the child;
+- lets staff and administrators read that child information, including allergies, without editing it;
 - provides an official school feed with comments, private parent–staff messaging, atomic staff messages to every guardian of a child, and consent-gated multi-image posts in a private Storage bucket;
 - separates guardian-planned attendance from staff-recorded check-in and check-out times;
 - lets administrators publish immutable, non-overlapping school terms with weekday hours and closures, then lets guardians save recurring Monday–Friday schedules for their children;
@@ -31,8 +32,8 @@ Required Supabase Auth setting
 - Keep leaked-password protection and email confirmation enabled for production.
 
 Invite-only onboarding
-- Run supabase/009_invite_onboarding.sql once in the SQL editor after the earlier migrations.
-- Do not run it against production until the new onboarding should go live. Deploy previews use the production database.
+- supabase/009_invite_onboarding.sql and supabase/010_pickup_passes.sql are already applied in production. Do not run them again.
+- Deploy previews use the production database.
 - The file hashes any existing invitation codes. Previously sent links keep working. It does not delete profiles, children, or guardian links.
 - Staff invitations expire after 7 days. Guardian invitations expire after 14 days. Both are single-use.
 - The app shows each new link or school code once so it can be copied. It does not send that link itself.
@@ -45,6 +46,13 @@ First real account
 5. Invite staff to a school and department, and invite each guardian to one child. Copy the link and send it with the school's existing email or message channel.
 6. A school code is optional. A person who uses it stays on a waiting screen with no child data until an administrator approves a department.
 7. Guardians request an additional child from the app. Staff approve the request before the child is linked.
+
+Guardian-owned child information
+- Run supabase/011_guardian_owned_child_info.sql once in the SQL editor after the earlier migrations.
+- Do not run it against production until guardians should be the only people who can change child information. Deploy previews use the production database, so saving from this version fails there until 011 has been applied on a non-production database.
+- The file does not delete rows or drop columns. It does not touch pickup_contacts, pickup_passes, or pickup_events, so it is safe before or after 010.
+- 010 does not grant staff or admin any write on the child profile, health, emergency contacts, or consents.
+- After 011, guardians edit and remove that information. Staff and administrators keep read access. Creating a child, including name and department, stays with staff and administrators. An administrator can move a child between departments and can still delete a child.
 
 Fake Test organization and PreSchool Test preschool
 1. Keep this tenant free from real child, health, contact and consent data.
