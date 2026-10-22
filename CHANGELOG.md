@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 2026-10-22 — Personer som grupper, inte ett kort per barn
+
+- Personer visar grupperna Barn, Vårdnadshavare och, för administratören, Personal. Varje grupp öppnas för sig med tillbaka-knapp och egen adress, till exempel `#personer/barn`.
+- Listan är kompakt och går att söka på namn och avdelning. Den är sorterad alfabetiskt och tål många personer. En rad visar bild eller initialer, namn, avdelning och en kort status. Ett tryck öppnar samma detaljvy som tidigare.
+- Barnlistan visar hur många vårdnadshavare som är kopplade. Vårdnadshavarlistan visar de kopplade barnen. Personal visar administratörer och personal, och om någon får hantera terminsschemat.
+- Lägg till barn, Bjud in vårdnadshavare, Väntande inbjudningar, Syskonförfrågningar och Får ej hämta finns kvar. Personal ser fortfarande barnuppgifter utan att kunna ändra dem.
+
 ## 2026-10-22 — Kortöversikt i stället för långa menysidor
 
 - Barnet, Skolor och Personer/Barn öppnas som ett rutnät av kort. Ett tryck visar den delen för sig, med ‹ Tillbaka och rubrik.
