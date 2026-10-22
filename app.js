@@ -50,6 +50,11 @@ const state = {
   incidentId: null,
   incidentDetail: null,
   createdPass: null,
+  openedPass: null,
+  pickupCalendars: {},
+  pickupWeekReady: true,
+  departmentPickup: [],
+  pickupEditor: null,
   checkout: null,
   scan: null,
   publicPass: null,
@@ -504,11 +509,14 @@ function parentReminders(child) {
   if ((state.incidentCopies || []).some((copy) => copy.child_name === child.name && !copy.acknowledged_at)) {
     reminders.unshift({ text: "Bekräfta att du har läst informationen från förskolan.", view: "child", target: "incident-copies" });
   }
+  if (state.pickupWeekReady && typeof ArtanPickup !== "undefined" && ArtanPickup.buildTermGrid(pickupGridInput(child)).unfilled) {
+    reminders.unshift({ text: "Fyll i vem som hämtar den närmaste veckan.", view: "pickup", target: "pickup-today" });
+  }
   return reminders.slice(0, 3);
 }
 
 // Card hubs. One registerHubCard call is one section.
-// Barnet: Grunduppgifter, Hälsa, Kontaktpersoner, Samtycken, Syskon, Hämtlista,
+// Barnet: Grunduppgifter, Hälsa, Kontaktpersoner, Samtycken, Syskon,
 // Profilbild, Klasslista (samtycke), Kalender, and Information att läsa when a
 // guardian copy is waiting. Klasslista stays its own nav view.
 // Personer/Barn includes Incidentrapporter for staff and administrators.
@@ -535,8 +543,8 @@ function allowedViewsForRole(role) {
   return {
     admin: ["overview", "attendance", "schools", "messages", "people", "incidents", "account"],
     staff: ["attendance", "messages", "people", "incidents", "account"],
-    parent: ["home", "child", "classlist", "messages", "account"],
-  }[role] || ["home", "child", "classlist", "messages", "account"];
+    parent: ["home", "pickup", "child", "classlist", "messages", "account"],
+  }[role] || ["home", "pickup", "child", "classlist", "messages", "account"];
 }
 
 function cardsForHub(hub) {
@@ -579,10 +587,7 @@ function hubClosedBanner(hub) {
   if (hub === "schools") return `${renderSchoolCodeResult()}${renderInviteResult("staff")}`;
   if (hub === "people") return renderInviteResult("parent");
   if (hub === "child") {
-    const child = selectedChild();
-    const pass = child ? renderCreatedPass(child.id) : "";
-    const calendar = state.calendarToken ? renderTermCalendarCard() : "";
-    return `${pass}${calendar}`;
+    return state.calendarToken ? renderTermCalendarCard() : "";
   }
   return "";
 }
@@ -1097,6 +1102,11 @@ async function logout() {
       permanentPassesReady: true,
       pickupNotices: [],
       createdPass: null,
+      openedPass: null,
+      pickupCalendars: {},
+      pickupWeekReady: true,
+      departmentPickup: [],
+      pickupEditor: null,
       checkout: null,
       scan: null,
       publicPass: null,
@@ -1255,6 +1265,32 @@ async function loadData() {
   } else {
     state.permanentPasses = [];
   }
+  state.pickupCalendars = {};
+  state.pickupWeekReady = true;
+  state.departmentPickup = [];
+  if (state.profile.role === "parent" && state.children.length) {
+    const calendars = await Promise.all(state.children.map(async (child) => {
+      try {
+        return [child.id, await rpc("list_pickup_calendar", { target_child_id: child.id })];
+      } catch (error) {
+        if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
+          state.pickupWeekReady = false;
+          return [child.id, null];
+        }
+        throw error;
+      }
+    }));
+    calendars.forEach(([id, calendar]) => {
+      if (calendar) state.pickupCalendars[id] = calendar;
+    });
+  } else if (state.profile.role === "staff" || state.profile.role === "admin") {
+    try {
+      state.departmentPickup = (await rpc("list_department_pickup_plans")) || [];
+    } catch (error) {
+      if (!/schema cache|could not find the function|pgrst202/i.test(error.message)) throw error;
+      state.departmentPickup = [];
+    }
+  }
   if (state.pickupReady) {
     try { await rpc("purge_expired_pickup_details"); } catch { /* Cleanup can wait for the next signed-in visit. */ }
   }
@@ -1325,6 +1361,12 @@ function clearLoadedData() {
     incidentScreen: "list",
     incidentId: null,
     incidentDetail: null,
+    createdPass: null,
+    openedPass: null,
+    pickupCalendars: {},
+    pickupWeekReady: true,
+    departmentPickup: [],
+    pickupEditor: null,
     checkout: null,
     scan: null,
     calendarFeed: null,
@@ -2052,7 +2094,12 @@ function renderParentTermSchedules(child) {
   const preschoolId = childSchoolId(child);
   const terms = state.schoolTerms.filter((term) => term.preschool_id === preschoolId && term.term_status === "published");
   if (!terms.length) return `<section><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${emptyState("Ingen publicerad termin", "När förskolan publicerar terminen visas öppettider, stängningsdagar och veckoschema här.")}</section>`;
-  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${terms.map((term) => `<article class="card term-card" data-term-id="${esc(term.term_id)}"><p class="kicker">Publicerad</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p><h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}${renderShareActions("term", term.term_id, term.term_name)}<p class="form-hint">Dela skickar terminen och stängningsdagarna. Barnets schema och kalenderlänken följer inte med.</p></article>${renderWeeklyScheduleForm(term, child)}`).join("")}</section>`;
+  const grid = typeof ArtanPickup === "undefined" ? "" : ArtanPickup.renderTermGrid(pickupGridInput(child));
+  const cards = terms.map((term) => `<article class="card term-card" data-term-id="${esc(term.term_id)}"><p class="kicker">Publicerad</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p>${renderShareActions("term", term.term_id, term.term_name)}<p class="form-hint">Dela skickar terminen och stängningsdagarna. Barnets schema och kalenderlänken följer inte med.</p></article>`).join("");
+  const edit = state.pickupWeekReady
+    ? `<button class="secondary" type="button" data-action="navigate" data-view="pickup">Ändra i Hämtning</button>`
+    : terms.map((term) => renderWeeklyScheduleForm(term, child)).join("");
+  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${cards}${grid ? `<article class="card term-card">${grid}<p class="form-hint">Varje rad är en vecka. Rosa dagar är stängda, grå dagar ligger utanför terminen, och dagens ruta är markerad.</p></article>` : ""}${edit}</section>`;
 }
 
 function parseClosureLines(value) {
@@ -2106,6 +2153,26 @@ function passLink(token) {
   url.hash = "";
   url.searchParams.set("pass", token);
   return url.toString();
+}
+
+function showPickupPlace() {
+  if (state.view === "pickup") return;
+  state.view = "pickup";
+  history.pushState({ hub: false, view: "pickup", section: "" }, "", `${location.pathname}${location.search}`);
+}
+
+async function keepPassToken(passId, kind, token) {
+  if (!passId || !token) return;
+  try {
+    await rpc("remember_pickup_pass_token", {
+      target_pass_id: passId,
+      pass_kind: kind,
+      presented_token: token,
+    });
+  } catch (error) {
+    if (/schema cache|could not find the function|pgrst202/i.test(error.message)) return;
+    throw new Error(`${error.message} Passet visas nu, men kan inte öppnas igen senare.`);
+  }
 }
 
 function presentedPickupSecret(raw) {
@@ -2170,13 +2237,14 @@ function stopPickupScanner() {
 }
 
 function paintPassQr() {
-  const slot = document.querySelector("#pass-qr");
-  const payload = state.publicPass?.qr_payload;
-  if (!slot || !payload || typeof qrcode !== "function") return;
-  const qr = qrcode(0, "M");
-  qr.addData(passLink(payload));
-  qr.make();
-  slot.innerHTML = qr.createSvgTag(4, 2);
+  document.querySelectorAll("[data-pass-qr]").forEach((slot) => {
+    const payload = slot.getAttribute("data-pass-qr");
+    if (!payload || typeof qrcode !== "function") return;
+    const qr = qrcode(0, "M");
+    qr.addData(passLink(payload));
+    qr.make();
+    slot.innerHTML = qr.createSvgTag(4, 2);
+  });
 }
 
 async function loadPublicPass() {
@@ -2204,18 +2272,124 @@ function renderPublicPass() {
     const privacy = several
       ? "Passet visar bara barnens förnamn. Visa det för personalen och dela inte länken."
       : "Passet visar bara barnets förnamn. Visa det för personalen och dela inte länken.";
-    return `<section class="pass-sheet"><p class="kicker">Permanent hämtpass</p><h1>Visa för personalen</h1><p class="pass-child">${esc(pass.first_name || "")}</p><p>${esc(permanentValidityLabel(pass.ends_on))}</p><div id="pass-qr" class="pass-qr" role="img" aria-label="QR-kod för hämtpasset"></div><p class="pass-code">${esc(pickupShortCode(pass.qr_payload))}</p><p class="pass-privacy">${privacy}</p></section>`;
+    return `<section class="pass-sheet"><p class="kicker">Permanent hämtpass</p><h1>Visa för personalen</h1><p class="pass-child">${esc(pass.first_name || "")}</p><p>${esc(permanentValidityLabel(pass.ends_on))}</p><div class="pass-qr" data-pass-qr="${esc(pass.qr_payload)}" role="img" aria-label="QR-kod för hämtpasset"></div><p class="pass-code">${esc(pickupShortCode(pass.qr_payload))}</p><p class="pass-privacy">${privacy}</p></section>`;
   }
-  return `<section class="pass-sheet"><p class="kicker">Hämtpass</p><h1>Visa för personalen</h1><p class="pass-child">${esc(pass.first_name || "")}</p><p>${esc(formatDate(pass.pickup_date))}</p><div id="pass-qr" class="pass-qr" role="img" aria-label="QR-kod för hämtpasset"></div><p class="pass-code">${esc(pickupShortCode(pass.qr_payload))}</p><p class="pass-privacy">Passet visar bara barnets förnamn. Visa det för personalen och dela inte länken.</p></section>`;
+  return `<section class="pass-sheet"><p class="kicker">Hämtpass</p><h1>Visa för personalen</h1><p class="pass-child">${esc(pass.first_name || "")}</p><p>${esc(formatDate(pass.pickup_date))}</p><div class="pass-qr" data-pass-qr="${esc(pass.qr_payload)}" role="img" aria-label="QR-kod för hämtpasset"></div><p class="pass-code">${esc(pickupShortCode(pass.qr_payload))}</p><p class="pass-privacy">Passet visar bara barnets förnamn. Visa det för personalen och dela inte länken.</p></section>`;
+}
+
+function childFirstName(child) {
+  return String(child?.name || "").trim().split(/\s+/)[0] || "";
+}
+
+function pickupGridInput(child) {
+  const preschoolId = child ? childSchoolId(child) : null;
+  const terms = state.schoolTerms
+    .filter((term) => term.preschool_id === preschoolId && term.term_status === "published")
+    .map((term) => ({
+      starts_on: term.starts_on,
+      ends_on: term.ends_on,
+      closures: closuresForTerm(term.term_id).map((closure) => closure.closure_date),
+      closureReasons: Object.fromEntries(closuresForTerm(term.term_id).map((closure) => [closure.closure_date, closure.reason])),
+      standard: schedulesForTermChild(term.term_id, child.id),
+    }));
+  const calendar = state.pickupCalendars[child?.id] || {};
+  return {
+    today: todayIso(),
+    terms,
+    dayPlans: calendar.day_plans || [],
+    standardPickers: calendar.standard_pickers || [],
+    markUnfilled: state.pickupWeekReady !== false,
+  };
+}
+
+function renderPickupWeekNudge(child) {
+  if (!child || !state.pickupWeekReady || typeof ArtanPickup === "undefined") return "";
+  if (!ArtanPickup.buildTermGrid(pickupGridInput(child)).unfilled) return "";
+  return `<section class="card pickup-nudge"><p class="kicker">Hämtning</p><h2>Nästa vecka är inte ifylld</h2><p>Fyll i tider och vem som hämtar för de närmaste vardagarna. En standardvecka eller samma tider som förra veckan räcker.</p><button class="primary" type="button" data-action="navigate" data-view="pickup">Öppna hämtningen</button></section>`;
+}
+
+function pickerToken(picker) {
+  if (!picker) return "";
+  const kind = picker.kind || picker.picker_kind;
+  const id = picker.id || picker.picker_id;
+  const passKind = picker.passKind || picker.pass_kind || "";
+  if (!kind || !id) return "";
+  if (kind === "pass") return `pass:${passKind || "permanent"}:${id}`;
+  return `${kind}:${id}`;
+}
+
+function parsePickerToken(value) {
+  const [kind, first, second] = String(value || "").split(":");
+  if ((kind === "guardian" || kind === "contact") && first) return { picker_kind: kind, picker_id: first, pass_kind: null };
+  if (kind === "pass" && (first === "day" || first === "permanent") && second) return { picker_kind: "pass", picker_id: second, pass_kind: first };
+  return null;
+}
+
+function pickerSelect(name, calendar, date, selected, required = true) {
+  const groups = [
+    ["Vårdnadshavare", (calendar.guardians || []).map((person) => [`guardian:${person.id}`, person.name])],
+    ["Hämtlista", (calendar.contacts || []).map((person) => [`contact:${person.id}`, `${person.relation} ${person.name}`])],
+  ];
+  if (date) {
+    const passes = (calendar.day_passes || []).filter((pass) => pass.pickup_date === date).map((pass) => [`pass:day:${pass.id}`, pass.label]);
+    if (passes.length) groups.push(["Hämtpass", passes]);
+  }
+  const permanent = (calendar.permanent_passes || []).map((pass) => [`pass:permanent:${pass.id}`, `${pass.label} · permanent`]);
+  if (permanent.length) groups.push(["Permanent pass", permanent]);
+  const options = groups.filter(([, items]) => items.length).map(([label, items]) => `<optgroup label="${esc(label)}">${items.map(([value, text]) => `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(text)}</option>`).join("")}</optgroup>`).join("");
+  return `<label>Vem hämtar?<select name="${esc(name)}" ${required ? "required" : ""}><option value="">Välj</option>${options}</select></label>`;
+}
+
+function renderGuardianPassFace(pass) {
+  if (!pass?.token) return "";
+  const code = pass.short_code || pickupShortCode(pass.token);
+  const first = pass.first_name || pass.child_first_name || pass.child_names || "";
+  const when = pass.permanent ? permanentValidityLabel(pass.ends_on) : formatDate(pass.pickup_date);
+  const kicker = pass.permanent ? "Permanent hämtpass" : "Hämtpass";
+  const label = `${kicker} för ${first}`.trim();
+  return `<section class="pass-sheet guardian-pass"><p class="kicker">${esc(kicker)}</p><h1>Visa för personalen</h1><p class="pass-child">${esc(first)}</p><p>${esc(when)}</p><div class="pass-qr" data-pass-qr="${esc(pass.token)}" role="img" aria-label="QR-kod för hämtpasset"></div><p class="pass-code">${esc(code)}</p><p class="pass-privacy">Passet visar bara förnamn. Visa det för personalen och dela inte länken.</p><div class="share-actions pass-share no-print"><button class="primary" type="button" data-action="share-pass" data-token="${esc(pass.token)}" data-code="${esc(code)}" data-label="${esc(label)}">Dela</button><button class="secondary" type="button" data-action="print-pass">Skriv ut/Spara</button></div></section>`;
+}
+
+function renderVisiblePasses(childId) {
+  const faces = [];
+  if (state.createdPass?.token && state.createdPass.child_id === childId) faces.push(renderGuardianPassFace(state.createdPass));
+  if (state.openedPass?.token && state.openedPass.pass_id !== state.createdPass?.pass_id && state.openedPass.child_id === childId) {
+    faces.push(renderGuardianPassFace(state.openedPass));
+  }
+  return faces.join("");
+}
+
+function renderPickupDayEditor(child) {
+  const date = state.pickupEditor?.date;
+  if (!date || typeof ArtanPickup === "undefined") return "";
+  const day = ArtanPickup.buildTermGrid(pickupGridInput(child)).weeks.flatMap((week) => week.days).find((item) => item.iso === date);
+  if (!day?.open) return "";
+  const calendar = state.pickupCalendars[child.id] || {};
+  return `<form id="pickup-editor" class="card form-stack" data-form="pickup-day" data-child-id="${esc(child.id)}" data-date="${esc(date)}"><p class="kicker">Ändra dag</p><h2>${esc(ArtanPickup.shortDate(date))}</h2><div class="form-grid">${field("Lämning", "dropoff_at", day.dropoff || "", { type: "time", required: true })}${field("Hämtning", "pickup_at", day.pickup || "", { type: "time", required: true })}</div>${pickerSelect("picker", calendar, date, pickerToken(day.picker))}<div class="stack-actions"><button class="primary" type="submit">Spara dagen</button><button class="secondary" type="button" data-action="close-pickup-editor">Avbryt</button></div></form>`;
+}
+
+function renderPickupStandardEditor(child) {
+  const input = pickupGridInput(child);
+  const term = input.terms.find((item) => input.today >= item.starts_on && input.today <= item.ends_on) || input.terms[0];
+  const calendar = state.pickupCalendars[child.id] || {};
+  const rows = [1, 2, 3, 4, 5].map((weekday) => {
+    const saved = (term?.standard || []).find((row) => Number(row.weekday) === weekday);
+    const attending = Boolean(saved?.attending);
+    const picker = (calendar.standard_pickers || []).find((row) => Number(row.weekday) === weekday);
+    return `<div class="weekly-schedule-row" data-weekday="${weekday}"><label class="check"><input type="checkbox" name="attending_${weekday}" data-schedule-attending ${attending ? "checked" : ""}> ${esc(WEEKDAYS[weekday - 1])}</label><label>Lämning<input type="time" name="dropoff_${weekday}" value="${esc(String(saved?.dropoff_at || "").slice(0, 5))}" ${attending ? "" : "disabled"}></label><label>Hämtning<input type="time" name="pickup_${weekday}" value="${esc(String(saved?.pickup_at || "").slice(0, 5))}" ${attending ? "" : "disabled"}></label>${pickerSelect(`picker_${weekday}`, calendar, "", pickerToken(picker), false)}</div>`;
+  }).join("");
+  return `<form id="pickup-editor" class="card form-stack" data-form="pickup-standard" data-child-id="${esc(child.id)}"><p class="kicker">Standardvecka</p><h2>Samma tider varje vecka</h2><div class="assistant-form"><label>Berätta för Ärtan<textarea name="schedule_text" placeholder="08.00–16.30 alla dagar utom torsdagar, då 08.00–15.00"></textarea></label><button class="secondary" type="button" data-action="parse-weekly-schedule">Tolka och fyll i</button><p class="form-hint" data-parse-status aria-live="polite">Ärtan fyller bara i tiderna. Välj vem som hämtar och spara.</p></div><fieldset class="weekly-schedule"><legend>Måndag till fredag</legend>${rows}</fieldset><div class="stack-actions"><button class="primary" type="submit">Spara standardvecka</button><button class="secondary" type="button" data-action="close-pickup-editor">Avbryt</button></div></form>`;
+}
+
+function renderPickupPlanner(child) {
+  if (!state.pickupEditor) return "";
+  if (state.pickupEditor.mode === "day") return renderPickupDayEditor(child);
+  if (state.pickupEditor.mode === "standard") return renderPickupStandardEditor(child);
+  return `<section id="pickup-editor" class="card"><p class="kicker">Hämtning</p><h2>Planera</h2><div class="stack-actions"><button class="primary" type="button" data-action="pickup-standard">Standardvecka</button><button class="secondary" type="button" data-action="copy-pickup-week">Kopiera den här veckan till nästa</button><button class="secondary" type="button" data-action="close-pickup-editor">Stäng</button></div><p class="form-hint">Standardveckan fyller terminen. Kopiera lägger den här veckans tider och hämtare på nästa vecka. Ett engångspass följer inte med.</p></section>`;
 }
 
 function renderCreatedPass(childId) {
-  if (!state.createdPass?.token || state.createdPass.child_id !== childId) return "";
-  const code = state.createdPass.short_code || pickupShortCode(state.createdPass.token);
-  if (state.createdPass.permanent) {
-    return `<article class="card success-card"><p class="kicker">Kopiera länken nu</p><h3>Permanent hämtpass ${esc(code)}</h3><p class="form-hint">Den som hämtar behöver inget konto. Länken visar förnamn, QR-kod och samma sexsiffriga kod. ${esc(permanentValidityLabel(state.createdPass.ends_on))}. En ny kod gör den här länken ogiltig.</p><code class="secret-value">${esc(passLink(state.createdPass.token))}</code><button class="primary" type="button" data-action="copy-pass" data-token="${esc(state.createdPass.token)}">Kopiera länk</button></article>`;
-  }
-  return `<article class="card success-card"><p class="kicker">Kopiera länken nu</p><h3>Hämtpass till ${esc(code)}</h3><p class="form-hint">Den som hämtar behöver inget konto. Länken visar förnamn, datum, QR-kod och samma sexsiffriga kod.</p><code class="secret-value">${esc(passLink(state.createdPass.token))}</code><button class="primary" type="button" data-action="copy-pass" data-token="${esc(state.createdPass.token)}">Kopiera länk</button></article>`;
+  return renderVisiblePasses(childId);
 }
 
 function renderPermanentPassSection(child) {
@@ -2228,7 +2402,7 @@ function renderPermanentPassSection(child) {
     const live = pass.pass_status === "active";
     const extra = live ? "" : ` · ${permanentPassStatusLabel(pass.pass_status)}`;
     const actions = live
-      ? `<button class="link" type="button" data-action="regenerate-permanent-pass" data-id="${esc(pass.pass_id)}" data-child-id="${esc(child.id)}">Ny kod</button><button class="link danger-link" type="button" data-action="revoke-permanent-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>`
+      ? `<button class="link" type="button" data-action="open-pass" data-id="${esc(pass.pass_id)}" data-kind="permanent">Visa pass</button><button class="link" type="button" data-action="regenerate-permanent-pass" data-id="${esc(pass.pass_id)}" data-child-id="${esc(child.id)}">Ny kod</button><button class="link danger-link" type="button" data-action="revoke-permanent-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>`
       : pass.pass_status === "blocked" || pass.pass_status === "removed"
         ? `<button class="link danger-link" type="button" data-action="revoke-permanent-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>`
         : "";
@@ -2236,7 +2410,7 @@ function renderPermanentPassSection(child) {
   }).join("");
   const firstContact = allowed[0]?.contact_id || "";
   const form = allowed.length
-    ? `<form class="form-stack" data-form="permanent-pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa permanent hämtpass</h3>${selectField("Person som får hämta", "contact_id", allowed.map((contact) => [contact.contact_id, `${contact.relation} ${contact.name}`]), firstContact, true)}${field("Slutdatum, valfritt", "ends_on", "", { type: "date", min: todayIso(), max: addDaysIso(todayIso(), 1825) })}<div data-permanent-linked-slot>${renderPermanentLinkedField(firstContact)}</div><p class="form-hint">Passet kan användas flera gånger. Utan slutdatum gäller det tills det återkallas. Länken visas en gång.</p><button class="primary" type="submit">Skapa permanent hämtpass</button></form>`
+    ? `<form class="form-stack" data-form="permanent-pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa permanent hämtpass</h3>${selectField("Person som får hämta", "contact_id", allowed.map((contact) => [contact.contact_id, `${contact.relation} ${contact.name}`]), firstContact, true)}${field("Slutdatum, valfritt", "ends_on", "", { type: "date", min: todayIso(), max: addDaysIso(todayIso(), 1825) })}<div data-permanent-linked-slot>${renderPermanentLinkedField(firstContact)}</div><p class="form-hint">Passet kan användas flera gånger. Utan slutdatum gäller det tills det återkallas. Du kan öppna QR-koden igen så länge passet gäller.</p><button class="primary" type="submit">Skapa permanent hämtpass</button></form>`
     : `<p class="form-hint">Lägg först till personen på hämtlistan. Ett permanent pass kan bara kopplas till någon som får hämta.</p>`;
   return `<section class="card" id="permanent-passes"><h2>Permanent hämtpass</h2><p class="form-hint">För någon som redan får hämta, till exempel en mor- eller farförälder. Båda vårdnadshavarna kan se och återkalla passet. Det slutar fungera om personen spärras, tas bort eller inte längre får hämta.</p>${rows ? `<ul class="invite-list">${rows}</ul>` : `<p class="form-hint">Inget permanent hämtpass är skapat.</p>`}${form}</section>`;
 }
@@ -2249,9 +2423,25 @@ function renderPickupSection(child) {
   return `<section id="pickup-list" class="card child-step"><p class="kicker">Hämtning</p><h2>Hämtlista</h2><p class="form-hint">Lägg till personer som brukar hämta. En administratör kan sätta spärren får ej hämta. Den gäller före pass och manuell utcheckning.</p>${contacts.length ? `<ul class="contact-list">${contacts.map((contact) => `<li><div><strong>${esc(contact.name)}</strong><span>${esc(contact.relation)}${contact.blocked ? " · får ej hämta" : ""}</span></div><div class="invite-actions">${contact.phone ? `<a href="tel:${esc(String(contact.phone).replace(/\s/g, ""))}">${esc(contact.phone)}</a>` : ""}${contact.blocked ? "" : `<button class="link danger-link" type="button" data-action="delete-pickup-contact" data-id="${esc(contact.contact_id)}">Ta bort</button>`}</div></li>`).join("")}</ul>` : `<p class="form-hint">Ingen person är tillagd ännu.</p>`}</section>
     <form class="card form-stack" data-form="pickup-contact" data-child-id="${esc(child.id)}"><h3>Lägg till på hämtlistan</h3><div class="form-grid">${field("Namn", "name", "", { required: true, maxlength: "80" })}${field("Relation", "relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "phone", "", { type: "tel", maxlength: "40", autocomplete: "tel" })}<button class="primary" type="submit">Spara på hämtlistan</button></form>
     ${renderCreatedPass(child.id)}
-    <section class="card" id="pickup-passes"><h2>Hämtpass</h2><p class="form-hint">Ett pass gäller ett barn och en dag, kan användas en gång och kan återkallas av båda vårdnadshavarna.</p>${passes.length ? `<ul class="invite-list">${passes.map((pass) => `<li><div><strong>${esc(pass.person_relation || "")} ${esc(pass.person_name || "Personuppgiften är rensad")}</strong><span>${esc(formatDate(pass.pickup_date))} · ${esc(pass.window_start)}–${esc(pass.window_end)} · ${esc(passStatusLabel(pass.pass_status))}</span></div>${pass.pass_status === "active" || pass.pass_status === "scheduled" ? `<button class="link danger-link" type="button" data-action="revoke-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>` : ""}</li>`).join("")}</ul>` : `<p class="form-hint">Inget hämtpass är skapat.</p>`}</section>
-    <form class="card form-stack" data-form="pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa hämtpass</h3>${field("Datum", "pickup_date", todayIso(), { type: "date", required: true, min: todayIso(), max: maxDate })}<div class="form-grid">${field("Från", "window_start", "14:00", { type: "time", required: true })}${field("Till", "window_end", "17:00", { type: "time", required: true })}</div><div class="form-grid">${field("Hämtas av", "person_name", "", { required: true, maxlength: "80" })}${field("Relation", "person_relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "person_phone", "", { type: "tel", maxlength: "40" })}<p class="form-hint">Inget foto används. Länken visas en gång så att du kan skicka den själv.</p><button class="primary" type="submit">Skapa hämtpass</button></form>
+    <section class="card" id="pickup-passes"><h2>Hämtpass</h2><p class="form-hint">Ett pass gäller ett barn och en dag, kan användas en gång och kan återkallas av båda vårdnadshavarna. Ett pass som fortfarande gäller kan öppnas igen.</p>${passes.length ? `<ul class="invite-list">${passes.map((pass) => {
+      const openable = pass.pass_status === "active" || pass.pass_status === "scheduled";
+      return `<li><div><strong>${esc(pass.person_relation || "")} ${esc(pass.person_name || "Personuppgiften är rensad")}</strong><span>${esc(formatDate(pass.pickup_date))} · ${esc(pass.window_start)}–${esc(pass.window_end)} · ${esc(passStatusLabel(pass.pass_status))}</span></div><div class="invite-actions">${openable ? `<button class="link" type="button" data-action="open-pass" data-id="${esc(pass.pass_id)}" data-kind="day">Visa pass</button><button class="link danger-link" type="button" data-action="revoke-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>` : ""}</div></li>`;
+    }).join("")}</ul>` : `<p class="form-hint">Inget hämtpass är skapat.</p>`}</section>
+    <form class="card form-stack" data-form="pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa hämtpass</h3>${field("Datum", "pickup_date", todayIso(), { type: "date", required: true, min: todayIso(), max: maxDate })}<div class="form-grid">${field("Från", "window_start", "14:00", { type: "time", required: true })}${field("Till", "window_end", "17:00", { type: "time", required: true })}</div><div class="form-grid">${field("Hämtas av", "person_name", "", { required: true, maxlength: "80" })}${field("Relation", "person_relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "person_phone", "", { type: "tel", maxlength: "40" })}<p class="form-hint">Inget foto används. Passet visas direkt, med QR-kod och den sexsiffriga koden.</p><button class="primary" type="submit">Skapa hämtpass</button></form>
     ${renderPermanentPassSection(child)}`;
+}
+
+function renderPickupHub() {
+  if (state.profile.role !== "parent") return "";
+  const child = selectedChild();
+  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Hämtning</p><h1 class="h1">Inget barn ännu</h1></section>`;
+  const grid = typeof ArtanPickup === "undefined" ? "" : ArtanPickup.renderTermGrid(pickupGridInput(child), { editable: state.pickupWeekReady });
+  const schedule = state.pickupWeekReady
+    ? `${renderPickupPlanner(child)}${grid || `<p class="form-hint">Ingen publicerad termin att visa ännu.</p>`}<button class="term-add no-print" type="button" data-action="pickup-add" aria-label="Planera vecka">+</button>`
+    : `<section class="card"><h2>Veckoschema</h2><p class="form-hint">Veckoschemat för hämtning är inte aktiverat i databasen ännu.</p>${grid}</section>`;
+  return `${noticeHtml()}${childTabs()}<section class="hero-card"><p class="kicker">Hämtning</p><h1 class="h1">${esc(childFirstName(child) || child.name)}</h1><p class="sub">Schema, hämtpass och hämtlista för ${esc(departmentName(child.department_id))}.</p></section>
+    <section class="card term-card" id="pickup-schedule"><div class="section-head"><div><p class="kicker">Schema</p><h2>Terminen</h2></div></div>${schedule}<p class="form-hint">Tryck på en dag för att ändra tider och vem som hämtar. En personikon betyder att någon annan än en vårdnadshavare hämtar. Veckor som saknar plan den närmaste veckan är markerade.</p></section>
+    ${renderPickupSection(child)}`;
 }
 
 function renderNoticeList(kicker, title, notices) {
@@ -2436,6 +2626,7 @@ function renderParentHome() {
     ${renderIncidentCopies()}
     ${renderNoticeList("Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}
     <section class="card bot-card"><div class="bot-card-mascot">${botMascot()}</div><div><p class="kicker">Ärtan-botten</p><h2>${reminders.length ? "Jag hjälper dig komma ihåg" : "Allt är uppdaterat"}</h2>${reminders.length ? `<ul class="bot-reminders">${reminders.map((reminder) => `<li>${esc(reminder.text)}</li>`).join("")}</ul>` : `<p class="bot-done">Dagens plan och barnets uppgifter ser kompletta ut.</p>`}${nextReminder ? `<button class="primary bot-next" type="button" data-action="bot-reminder" data-view="${esc(nextReminder.view)}" data-target="${esc(nextReminder.target)}">Ta hand om nästa sak</button>` : ""}</div></section>
+    ${renderPickupWeekNudge(child)}
     ${renderParentTermSchedules(child)}
     <form id="daily-plan" class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><p class="kicker">Idag</p><h2>Dagens plan</h2>
       ${selectField("Planerad status", "status", [["in", "Kommer"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]], ["absent_sick", "absent_leave"].includes(attendance?.status) ? attendance.status : "in", true)}
@@ -2734,7 +2925,7 @@ function renderChildHealth(child) {
 
 function renderChildContacts(child) {
   const contacts = contactsFor(child.id);
-  return `<section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2><p class="form-hint">Ändra namn, relation, telefon, om personen får hämta och om kontakten är primär. Ta bort frågar en gång till innan kontakten försvinner.</p>
+  return `<section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2><p class="form-hint">Ändra namn, relation, telefon, om personen får hämta och om kontakten är primär. Ta bort frågar en gång till innan kontakten försvinner. Hämtlistan, hämtpassen och veckoschemat finns under Hämtning.</p><button class="secondary" type="button" data-action="navigate" data-view="pickup">Öppna Hämtning</button>
       <div class="contact-editors">${contacts.map((contact) => renderContactEditor(child, contact)).join("")}${renderContactEditor(child)}</div>
     </section>`;
 }
@@ -2861,7 +3052,6 @@ registerHubCard("child", { id: "halsa", icon: "✚", title: "Hälsa", status: ch
 registerHubCard("child", { id: "kontakter", icon: "☎", title: "Kontaktpersoner", status: childContactsStatus, render: () => renderChildContacts(selectedChild()) });
 registerHubCard("child", { id: "samtycken", icon: "✓", title: "Samtycken", status: childConsentsStatus, render: () => renderChildConsents(selectedChild()) });
 registerHubCard("child", { id: "syskon", icon: "☺", title: "Syskon", status: childSiblingStatus, render: () => renderSiblingRequestForm(true) });
-registerHubCard("child", { id: "hamtlista", icon: "◎", title: "Hämtlista", status: childPickupStatus, render: renderChildPickupCard });
 registerHubCard("child", { id: "profilbild", icon: "☺", title: "Profilbild", status: childPhotoStatus, render: () => renderChildPhoto(selectedChild()) });
 registerHubCard("child", { id: "klasslista", icon: "☰", title: "Klasslista", status: childClassListStatus, render: () => renderClassListConsent(selectedChild()) });
 registerHubCard("child", { id: "kalender", icon: "▦", title: "Kalender", status: calendarHubStatus, render: () => renderTermCalendarCard() });
@@ -3052,7 +3242,8 @@ function renderAttendance() {
         attendance?.pickup_at ? `hämtning ${attendance.pickup_at.slice(0, 5)}` : "",
         attendance?.pickup_by ? `av ${attendance.pickup_by}` : "",
       ]).join(" · ");
-      return `<article class="card attendance-row"><div class="attendance-child"><div class="attendance-identity">${childAvatarHtml(child.name, childPhotoUrl(child.photo_path), child.avatar_color)}<div><strong>${esc(child.name)}</strong><span>${esc(departmentName(child.department_id))}${plan ? ` · ${esc(plan)}` : ""}</span></div></div><span class="attendance-state ${esc(status)}">${esc(actualTime)}</span></div><div class="attendance-actions"><button class="primary attendance-primary" type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="${primaryTransition}">${primaryLabel}</button>${active ? "" : `<div class="attendance-secondary" role="group" aria-label="Markera frånvaro för ${esc(child.name)}"><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_sick" aria-pressed="${status === "absent_sick"}">Sjuk</button><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_leave" aria-pressed="${status === "absent_leave"}">Ledig</button></div>`}</div></article>`;
+      const pickupCaption = typeof ArtanPickup === "undefined" ? { todayText: "", weekText: "" } : ArtanPickup.staffPickupCaption((state.departmentPickup || []).filter((row) => row.child_id === child.id), todayIso());
+      return `<article class="card attendance-row"><div class="attendance-child"><div class="attendance-identity">${childAvatarHtml(child.name, childPhotoUrl(child.photo_path), child.avatar_color)}<div><strong>${esc(child.name)}</strong><span>${esc(departmentName(child.department_id))}${plan ? ` · ${esc(plan)}` : ""}${pickupCaption.todayText ? ` · ${esc(pickupCaption.todayText)}` : ""}</span>${pickupCaption.weekText ? `<span class="pickup-plan-week">${esc(pickupCaption.weekText)}</span>` : ""}</div></div><span class="attendance-state ${esc(status)}">${esc(actualTime)}</span></div><div class="attendance-actions"><button class="primary attendance-primary" type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="${primaryTransition}">${primaryLabel}</button>${active ? "" : `<div class="attendance-secondary" role="group" aria-label="Markera frånvaro för ${esc(child.name)}"><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_sick" aria-pressed="${status === "absent_sick"}">Sjuk</button><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_leave" aria-pressed="${status === "absent_leave"}">Ledig</button></div>`}</div></article>`;
     }).join("")}</div>` : emptyState("Inga barn", "Du behöver kopplas till en avdelning innan närvarolistan visas.")}
     ${state.profile.role === "staff" ? renderStaffTermSection() : ""}`;
 }
@@ -3065,9 +3256,25 @@ function renderStaffTermSection() {
     .filter((term) => term.term_status === "published" && !managedIds.has(term.preschool_id))
     .map((term) => {
       const school = state.schools.find((item) => item.id === term.preschool_id);
-      return `<article class="card term-card" data-term-id="${esc(term.term_id)}" data-term-status="published"><p class="kicker">${esc(school?.name || "Förskola")}</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p><h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}</article>`;
+      return `<article class="card term-card" data-term-id="${esc(term.term_id)}" data-term-status="published"><p class="kicker">${esc(school?.name || "Förskola")}</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p>${termClosureGrid(term)}</article>`;
     }).join("");
   return `<section id="term-overview" class="term-overview term-staff-manage"><div class="section-head"><div><p class="kicker">Termin</p><h2>Terminsschema</h2><p class="form-hint">Du kan skapa, ändra och publicera terminer för din skola.</p></div></div>${managedSchools.map((school) => `<div class="term-managed-school"><p class="kicker">${esc(school.name)}</p>${renderTermManager(school)}</div>`).join("")}${otherCards}</section>`;
+}
+
+function termClosureGrid(term) {
+  if (typeof ArtanPickup === "undefined") return renderTermClosures(term.term_id);
+  const closures = closuresForTerm(term.term_id);
+  return ArtanPickup.renderTermGrid({
+    today: todayIso(),
+    markUnfilled: false,
+    terms: [{
+      starts_on: term.starts_on,
+      ends_on: term.ends_on,
+      closures: closures.map((closure) => closure.closure_date),
+      closureReasons: Object.fromEntries(closures.map((closure) => [closure.closure_date, closure.reason])),
+      standard: [],
+    }],
+  });
 }
 
 function renderPublishedTermReadOnly() {
@@ -3080,7 +3287,7 @@ function renderPublishedTermReadOnly() {
       <p class="kicker">${esc(school?.name || "Förskola")}</p>
       <h3>${esc(term.term_name)}</h3>
       <p>${esc(termDateSummary(term))}</p>
-      <h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}
+      ${termClosureGrid(term)}
     </article>`;
   }).join("");
   return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Publicerad termin</h2></div></div>${cards || emptyState("Ingen publicerad termin", "När terminen publiceras visas datum, öppettider och stängningsdagar här.")}</section>`;
@@ -3887,7 +4094,7 @@ function renderNav() {
     ? [["overview", "▦", "Översikt"], ["attendance", "✓", "Närvaro"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["incidents", "⚑", "Avvikelse"], ["account", "⚙", "Konto"]]
     : role === "staff"
       ? [["attendance", "✓", "Närvaro"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Barn"], ["incidents", "⚑", "Avvikelse"], ["account", "⚙", "Konto"]]
-      : [["home", "●", "Min dag"], ["child", "🌱", "Barnet"], ["classlist", "☰", "Klasslista"], ["messages", "✉", "Gemenskap"], ["account", "⚙", "Konto"]];
+      : [["home", "●", "Min dag"], ["pickup", "◎", "Hämtning"], ["child", "🌱", "Barnet"], ["classlist", "☰", "Klasslista"], ["messages", "✉", "Gemenskap"], ["account", "⚙", "Konto"]];
   nav.innerHTML = items.map(([view, icon, label]) => `<button data-action="navigate" data-view="${view}" aria-current="${state.view === view ? "page" : "false"}"><span class="ico">${icon}</span>${label}</button>`).join("");
 }
 
@@ -3920,6 +4127,7 @@ function render() {
   }
   const views = {
     home: renderParentHome,
+    pickup: renderPickupHub,
     child: renderChildInfo,
     classlist: renderClassList,
     messages: renderMessages,
@@ -3935,6 +4143,7 @@ function render() {
   renderNav();
   renderAssistant();
   prefetchGuardianAttachments();
+  paintPassQr();
 }
 
 async function runMutation(work, successText = "Sparat.") {
@@ -4073,6 +4282,56 @@ document.body.addEventListener("submit", (event) => {
     }, "Personen är sparad på hämtlistan.");
     return;
   }
+  if (type === "pickup-day") {
+    const parsed = parsePickerToken(values.picker);
+    if (!parsed) {
+      state.notice = { type: "error", text: "Välj vem som hämtar." };
+      render();
+      return;
+    }
+    runMutation(async () => {
+      await rpc("save_pickup_day", {
+        target_child_id: form.dataset.childId,
+        plan_date: form.dataset.date,
+        dropoff_at: values.dropoff_at,
+        pickup_at: values.pickup_at,
+        picker_kind: parsed.picker_kind,
+        picker_id: parsed.picker_id,
+        pass_kind: parsed.pass_kind,
+      });
+      state.pickupEditor = null;
+      await loadData();
+    }, "Dagen är sparad.");
+    return;
+  }
+  if (type === "pickup-standard") {
+    const weekly = [];
+    for (const weekday of [1, 2, 3, 4, 5]) {
+      const row = form.querySelector(`[data-weekday="${weekday}"]`);
+      const attending = row.querySelector("[data-schedule-attending]").checked;
+      const parsed = attending ? parsePickerToken(row.querySelector(`[name="picker_${weekday}"]`).value) : null;
+      if (attending && !parsed) {
+        state.notice = { type: "error", text: `Välj vem som hämtar på ${WEEKDAYS[weekday - 1].toLowerCase()}.` };
+        render();
+        return;
+      }
+      weekly.push({
+        weekday,
+        attending,
+        dropoff_at: attending ? row.querySelector(`[name="dropoff_${weekday}"]`).value : null,
+        pickup_at: attending ? row.querySelector(`[name="pickup_${weekday}"]`).value : null,
+        picker_kind: parsed?.picker_kind || null,
+        picker_id: parsed?.picker_id || null,
+        pass_kind: parsed?.pass_kind || null,
+      });
+    }
+    runMutation(async () => {
+      await rpc("save_pickup_standard_week", { target_child_id: form.dataset.childId, weekly_schedule: weekly });
+      state.pickupEditor = null;
+      await loadData();
+    }, "Standardveckan är sparad.");
+    return;
+  }
   if (type === "pickup-pass") {
     runMutation(async () => {
       const created = await rpc("create_pickup_pass", {
@@ -4084,9 +4343,17 @@ document.body.addEventListener("submit", (event) => {
         person_relation: values.person_relation.trim(),
         person_phone: values.person_phone.trim() || null,
       });
-      state.createdPass = { ...(Array.isArray(created) ? created[0] : created), child_id: form.dataset.childId };
+      const row = { ...(Array.isArray(created) ? created[0] : created), child_id: form.dataset.childId, permanent: false, first_name: childFirstName(state.children.find((child) => child.id === form.dataset.childId)) };
+      state.createdPass = row;
+      state.openedPass = null;
+      showPickupPlace();
+      await keepPassToken(row.pass_id, "day", row.token);
       await loadData();
-    }, "Hämtpasset är skapat. Kopiera länken nu.");
+      const saved = state.pickupPasses.find((pass) => pass.pass_id === row.pass_id);
+      if (saved && state.createdPass?.pass_id === row.pass_id) {
+        state.createdPass = { ...state.createdPass, first_name: saved.child_first_name, pickup_date: saved.pickup_date };
+      }
+    }, "Hämtpasset är skapat.");
     return;
   }
   if (type === "permanent-pickup-pass") {
@@ -4101,9 +4368,17 @@ document.body.addEventListener("submit", (event) => {
         ends_on: values.ends_on || null,
         include_linked: values.include_linked === "on",
       });
-      state.createdPass = { ...(Array.isArray(created) ? created[0] : created), child_id: form.dataset.childId, permanent: true };
+      const row = { ...(Array.isArray(created) ? created[0] : created), child_id: form.dataset.childId, permanent: true, first_name: childFirstName(state.children.find((child) => child.id === form.dataset.childId)) };
+      state.createdPass = row;
+      state.openedPass = null;
+      showPickupPlace();
+      await keepPassToken(row.pass_id, "permanent", row.token);
       await loadData();
-    }, "Det permanenta hämtpasset är skapat. Kopiera länken nu.");
+      const saved = state.permanentPasses.find((pass) => pass.pass_id === row.pass_id);
+      if (saved && state.createdPass?.pass_id === row.pass_id) {
+        state.createdPass = { ...state.createdPass, first_name: saved.child_names, ends_on: saved.ends_on, permanent: true };
+      }
+    }, "Det permanenta hämtpasset är skapat.");
     return;
   }
   if (type === "pickup-block-create") {
@@ -4626,7 +4901,7 @@ document.body.addEventListener("click", (event) => {
       state.incidentId = null;
       state.incidentDetail = null;
     }
-    showView(view);
+    showView(view, view === "pickup" ? { scrollTarget: "pickup-today" } : {});
     return;
   }
   if (action === "hub-open") {
@@ -4833,6 +5108,72 @@ document.body.addEventListener("click", (event) => {
     }, `${childName} är utcheckad.`);
     return;
   }
+  if (action === "share-pass") {
+    const text = [target.dataset.label, target.dataset.code ? `Kod ${target.dataset.code}` : "", passLink(target.dataset.token)].filter(Boolean).join("\n");
+    sharePrepared({ title: "Hämtpass", text });
+    return;
+  }
+  if (action === "print-pass") {
+    const sheet = target.closest(".guardian-pass");
+    if (!sheet) return;
+    const clone = sheet.cloneNode(true);
+    clone.querySelectorAll(".pass-share, button").forEach((node) => node.remove());
+    openPrint(clone.outerHTML);
+    return;
+  }
+  if (action === "edit-pickup-day") {
+    state.pickupEditor = { mode: "day", date: target.dataset.date };
+    state.notice = null;
+    render();
+    requestAnimationFrame(() => document.getElementById("pickup-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    return;
+  }
+  if (action === "pickup-add") {
+    state.pickupEditor = state.pickupEditor?.mode === "menu" ? null : { mode: "menu" };
+    state.notice = null;
+    render();
+    return;
+  }
+  if (action === "pickup-standard") {
+    state.pickupEditor = { mode: "standard" };
+    state.notice = null;
+    render();
+    requestAnimationFrame(() => document.getElementById("pickup-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    return;
+  }
+  if (action === "close-pickup-editor") {
+    state.pickupEditor = null;
+    render();
+    return;
+  }
+  if (action === "copy-pickup-week") {
+    const child = selectedChild();
+    if (!child || typeof ArtanPickup === "undefined") return;
+    runMutation(async () => {
+      await rpc("copy_pickup_week", { target_child_id: child.id, source_monday: ArtanPickup.weekMonday(todayIso()) });
+      state.pickupEditor = null;
+      await loadData();
+    }, "Veckan är kopierad till nästa.");
+    return;
+  }
+  if (action === "open-pass") {
+    const kind = target.dataset.kind === "permanent" ? "permanent" : "day";
+    runMutation(async () => {
+      const revealed = await rpc("reveal_pickup_pass", { target_pass_id: target.dataset.id, pass_kind: kind });
+      const token = revealed?.token;
+      if (!token) throw new Error(kind === "permanent" ? "Länken kan inte visas igen. Välj Ny kod." : "Länken kan inte visas igen. Skapa passet på nytt.");
+      if (kind === "day") {
+        const pass = state.pickupPasses.find((item) => item.pass_id === target.dataset.id);
+        state.openedPass = { ...pass, token, permanent: false };
+      } else {
+        const pass = state.permanentPasses.find((item) => item.pass_id === target.dataset.id);
+        state.openedPass = { ...pass, token, permanent: true, first_name: pass?.child_names, child_id: selectedChild()?.id };
+      }
+      state.createdPass = null;
+      showPickupPlace();
+    }, "");
+    return;
+  }
   if (action === "copy-pass") {
     runMutation(async () => navigator.clipboard.writeText(passLink(target.dataset.token)), "Hämtlänken är kopierad.");
     return;
@@ -4841,6 +5182,7 @@ document.body.addEventListener("click", (event) => {
     runMutation(async () => {
       await rpc("revoke_pickup_pass", { target_pass_id: target.dataset.id });
       if (state.createdPass?.pass_id === target.dataset.id) state.createdPass = null;
+      if (state.openedPass?.pass_id === target.dataset.id) state.openedPass = null;
       await loadData();
     }, "Hämtpasset är återkallat.");
     return;
@@ -4849,6 +5191,7 @@ document.body.addEventListener("click", (event) => {
     runMutation(async () => {
       await rpc("revoke_permanent_pickup_pass", { target_pass_id: target.dataset.id });
       if (state.createdPass?.pass_id === target.dataset.id) state.createdPass = null;
+      if (state.openedPass?.pass_id === target.dataset.id) state.openedPass = null;
       await loadData();
     }, "Det permanenta hämtpasset är återkallat.");
     return;
@@ -4856,8 +5199,16 @@ document.body.addEventListener("click", (event) => {
   if (action === "regenerate-permanent-pass") {
     runMutation(async () => {
       const created = await rpc("regenerate_permanent_pickup_pass", { target_pass_id: target.dataset.id });
-      state.createdPass = { ...(Array.isArray(created) ? created[0] : created), child_id: target.dataset.childId, permanent: true };
+      const row = { ...(Array.isArray(created) ? created[0] : created), child_id: target.dataset.childId, permanent: true, first_name: childFirstName(state.children.find((child) => child.id === target.dataset.childId)) };
+      state.createdPass = row;
+      state.openedPass = null;
+      showPickupPlace();
+      await keepPassToken(row.pass_id, "permanent", row.token);
       await loadData();
+      const saved = state.permanentPasses.find((pass) => pass.pass_id === row.pass_id);
+      if (saved && state.createdPass?.pass_id === row.pass_id) {
+        state.createdPass = { ...state.createdPass, first_name: saved.child_names, ends_on: saved.ends_on, permanent: true };
+      }
     }, "Ny kod skapad. Den gamla länken fungerar inte längre.");
     return;
   }

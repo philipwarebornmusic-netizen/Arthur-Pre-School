@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 2026-10-22 — Hämtning samlad, med pass och terminskalender
+
+- Vårdnadshavare har en egen plats, Hämtning, i menyn. Där ligger veckoschemat, engångspass, permanenta pass och hämtlistan. Kontaktpersoner ligger kvar under Barnet och länkar dit. Kortet Hämtlista under Barnet är borttaget.
+- Ett nyskapat pass visas som på den publika sidan: förnamn, datum eller giltighet, QR-kod och den sexsiffriga koden. Dela öppnar delningsytan, eller kopierar texten. Skriv ut/Spara skriver ut passet utan knapparna.
+- Ett pass som fortfarande gäller kan öppnas igen. Den råa koden sparas i `pickup_pass_secrets`, som bara `reveal_pickup_pass` läser, och bara för en vårdnadshavare till barnet. Personal och anonyma får den inte. De gamla kontrollsummorna är oförändrade. Pass som skapades innan den här ändringen kan inte öppnas igen. Då står det att passet ska skapas på nytt, eller Ny kod för ett permanent pass.
+- Schemat är en kalender för hela den publicerade terminen. Varje rad är en vecka, måndag till fredag, med datum och veckonummer. Rutan visar lämning och hämtning. Dagen är markerad, stängda dagar är rosa med en stängd-symbol, och dagar utanför terminen är grå. En personikon betyder att någon annan än en vårdnadshavare hämtar. Ett tryck ändrar den dagen. Plusknappen sätter en standardvecka eller kopierar veckan framåt.
+- Tider hämtas från dagen, annars från samma dag förra veckan, annars från standardveckan. Ett engångspass följer inte med till en annan dag. Veckor de närmaste sju dagarna som saknar tid eller hämtare markeras, och Min dag påminner. Samma kalender visas skrivskyddad på Min dag. Personal ser dagens och veckans planerade tider per barn i närvaron.
+- Båda vårdnadshavarna kan ändra. Ändringarna loggas. Migrationen `supabase/018_pickup_hub.sql` är inte körd. Innan den är applicerad ligger det gamla veckoschemat kvar på Min dag, och påminnelsen visas inte.
+
 ## 2026-10-22 — Engångspass hittar pgcrypto
 
 - `supabase/017_fix_pickup_pass_random_bytes.sql` innehåller bara `alter function public.create_pickup_pass(uuid, date, time, time, text, text, text) set search_path = public, extensions;`. Funktionen skrivs inte om. Samma sats appliceras mot databasen separat. Kör inte filen igen.
