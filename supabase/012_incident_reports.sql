@@ -175,6 +175,7 @@ create or replace function public.incident_type_label(kind text)
 returns text
 language sql
 immutable
+set search_path = public
 as $$
   select case kind
     when 'accident' then 'Olycksfall/skada'
@@ -188,6 +189,7 @@ create or replace function public.incident_first_name(value text)
 returns text
 language sql
 immutable
+set search_path = public
 as $$
   select split_part(btrim(coalesce(value, '')), ' ', 1)
 $$;
@@ -542,18 +544,18 @@ begin
     update public.incident_reports set
       department_id = target_department_id,
       incident_type = incident_kind::public.incident_type,
-      occurred_at = occurred_at,
+      occurred_at = save_incident_draft.occurred_at,
       place = btrim(place_text),
       what_happened = btrim(happened_text),
       immediate_actions = btrim(actions_text),
       staff_present = btrim(present_text),
       guardians_contacted = btrim(contacted_text),
-      injury_type = nullif(btrim(coalesce(injury_type, '')), ''),
-      body_location = nullif(btrim(coalesce(body_location, '')), ''),
+      injury_type = nullif(btrim(coalesce(save_incident_draft.injury_type, '')), ''),
+      body_location = nullif(btrim(coalesce(save_incident_draft.body_location, '')), ''),
       first_aid = nullif(btrim(coalesce(first_aid_text, '')), ''),
       care = nullif(btrim(coalesce(care_kind, '')), ''),
       subjected_name = nullif(btrim(coalesce(subjected_text, '')), ''),
-      alleged_by = nullif(btrim(coalesce(alleged_by, '')), ''),
+      alleged_by = nullif(btrim(coalesce(save_incident_draft.alleged_by, '')), ''),
       child_experience = nullif(btrim(coalesce(experience_text, '')), ''),
       updated_at = now()
     where id = target_report_id;
