@@ -475,3 +475,27 @@ html[data-busy]::after { position: fixed; inset: 0; z-index: 100; display: grid;
 .scan-launcher .secondary { width: auto; min-width: 11.5rem; }
 .scan-panel, .checkout-panel, .pickup-pass { min-width: 0; }
 .scan-panel video { width: 100%; max-height: 280px; background: #1d2428; border-radius: 16px; object-fit: cover; }
+.share-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.share-actions .secondary { width: auto; min-width: 7.5rem; min-height: 42px; padding: 0 14px; }
+.post-share-figure { display: grid; gap: 8px; margin: 0; min-width: 0; }
+.post-share-figure .share-actions { margin-top: 0; }
+#printRoot { display: none; }
+.print-sheet { color: #1d2428; }
+.print-sheet h1 { margin: 0 0 4mm; font-size: 18pt; line-height: 1.15; }
+.print-sheet h2 { margin: 6mm 0 2mm; font-size: 13pt; }
+.print-kicker, .print-place { margin: 0 0 2mm; font-size: 11pt; font-weight: 800; }
+.print-body { white-space: pre-wrap; }
+.print-closures { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 8mm; }
+.print-closures li { break-inside: avoid; margin: 0 0 1.5mm; }
+.file-print img, .text-print img { display: block; max-width: 100%; max-height: 240mm; object-fit: contain; }
+.print-pdf { width: 100%; height: 240mm; border: 0; }
+
+@media print {
+  @page { size: A4; margin: 12mm; }
+  body[data-printing] { background: #fff !important; }
+  body[data-printing] .app-frame,
+  body[data-printing] .assistant-root,
+  body[data-printing] .skip-link { display: none !important; }
+  body[data-printing] #printRoot { display: block !important; }
+  .term-print { font-size: 11pt; }
+}
