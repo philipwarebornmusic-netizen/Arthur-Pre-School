@@ -39,6 +39,13 @@ const state = {
   pickupContacts: [],
   pickupPasses: [],
   pickupNotices: [],
+  incidentReady: true,
+  notices: [],
+  incidents: [],
+  incidentCopies: [],
+  incidentScreen: "list",
+  incidentId: null,
+  incidentDetail: null,
   createdPass: null,
   checkout: null,
   scan: null,
@@ -296,6 +303,9 @@ function parentReminders(child) {
   childInfoChecklist(child)
     .filter((item) => !item.complete)
     .forEach((item) => reminders.push({ text: item.reminder, view: "child", target: item.id }));
+  if ((state.incidentCopies || []).some((copy) => copy.child_name === child.name && !copy.acknowledged_at)) {
+    reminders.unshift({ text: "Bekräfta att du har läst informationen från förskolan.", view: "home", target: "incident-copies" });
+  }
   return reminders.slice(0, 3);
 }
 
@@ -322,8 +332,8 @@ function registerHubCard(hub, card) {
 
 function allowedViewsForRole(role) {
   return {
-    admin: ["overview", "attendance", "schools", "messages", "people", "account"],
-    staff: ["attendance", "messages", "people", "account"],
+    admin: ["overview", "attendance", "schools", "messages", "people", "incidents", "account"],
+    staff: ["attendance", "messages", "people", "incidents", "account"],
     parent: ["home", "child", "classlist", "messages", "account"],
   }[role] || ["home", "child", "classlist", "messages", "account"];
 }
@@ -872,14 +882,27 @@ async function loadData() {
   state.joinRequests = joinRequests || [];
   state.staffMembers = staffMembers || [];
   state.pickupReady = true;
-  const [pickupContacts, pickupPasses, pickupNotices] = await Promise.all([
+  state.incidentReady = true;
+  await incidentRpc("remind_incident_copies");
+  const notices = state.incidentReady ? await incidentRpc("list_notices") : null;
+  const [pickupContacts, pickupPasses] = await Promise.all([
     pickupRpc("list_pickup_contacts"),
     state.profile.role === "staff" ? Promise.resolve([]) : pickupRpc("list_pickup_passes"),
-    state.profile.role === "parent" ? pickupRpc("list_pickup_notices") : Promise.resolve([]),
   ]);
   state.pickupContacts = pickupContacts || [];
   state.pickupPasses = pickupPasses || [];
-  state.pickupNotices = pickupNotices || [];
+  state.notices = state.incidentReady && notices ? notices : ((await pickupRpc("list_pickup_notices")) || []);
+  state.pickupNotices = state.notices.filter((notice) => !notice.kind || notice.kind === "pickup");
+  if (state.incidentReady && state.profile.role === "parent") {
+    state.incidentCopies = (await incidentRpc("list_my_incident_copies")) || [];
+    state.incidents = [];
+  } else if (state.incidentReady) {
+    state.incidents = (await incidentRpc("list_incidents")) || [];
+    state.incidentCopies = [];
+  } else {
+    state.incidents = [];
+    state.incidentCopies = [];
+  }
   if (state.pickupReady) {
     try { await rpc("purge_expired_pickup_details"); } catch { /* Cleanup can wait for the next signed-in visit. */ }
   }
@@ -940,6 +963,12 @@ function clearLoadedData() {
     pickupContacts: [],
     pickupPasses: [],
     pickupNotices: [],
+    notices: [],
+    incidents: [],
+    incidentCopies: [],
+    incidentScreen: "list",
+    incidentId: null,
+    incidentDetail: null,
     checkout: null,
     scan: null,
     calendarFeed: null,
@@ -1032,6 +1061,18 @@ async function pickupRpc(name, args) {
     if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
       state.pickupReady = false;
       return [];
+    }
+    throw error;
+  }
+}
+
+async function incidentRpc(name, args) {
+  try {
+    return await rpc(name, args);
+  } catch (error) {
+    if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
+      state.incidentReady = false;
+      return null;
     }
     throw error;
   }
@@ -1749,9 +1790,19 @@ function renderPickupSection(child) {
     <form class="card form-stack" data-form="pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa hämtpass</h3>${field("Datum", "pickup_date", todayIso(), { type: "date", required: true, min: todayIso(), max: maxDate })}<div class="form-grid">${field("Från", "window_start", "14:00", { type: "time", required: true })}${field("Till", "window_end", "17:00", { type: "time", required: true })}</div><div class="form-grid">${field("Hämtas av", "person_name", "", { required: true, maxlength: "80" })}${field("Relation", "person_relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "person_phone", "", { type: "tel", maxlength: "40" })}<p class="form-hint">Inget foto används. Länken visas en gång så att du kan skicka den själv.</p><button class="primary" type="submit">Skapa hämtpass</button></form>`;
 }
 
+function renderNoticeList(kicker, title, notices) {
+  if (!notices?.length) return "";
+  return `<section class="card"><p class="kicker">${esc(kicker)}</p><h2>${esc(title)}</h2><ul class="bot-reminders">${notices.map((notice) => `<li>${notice.title ? `<strong>${esc(notice.title)}. </strong>` : ""}${esc(notice.body)}</li>`).join("")}</ul></section>`;
+}
+
 function renderPickupNotices() {
-  if (!state.pickupReady || !state.pickupNotices.length) return "";
-  return `<section class="card"><p class="kicker">Hämtning</p><h2>Senaste hämtningar</h2><ul class="bot-reminders">${state.pickupNotices.map((notice) => `<li>${esc(notice.body)}</li>`).join("")}</ul></section>`;
+  return renderNoticeList("Hämtning", "Senaste hämtningar", state.pickupNotices);
+}
+
+function renderIncidentCopies() {
+  const copies = state.incidentCopies || [];
+  if (!copies.length) return "";
+  return `<section class="card" id="incident-copies"><p class="kicker">Från förskolan</p><h2>Information att läsa</h2><p class="form-hint">Texten gäller ditt barn. Andra barn nämns som ett annat barn. Bekräftelsen är att du har läst, inte en signatur.</p>${copies.map((copy) => `<article class="incident-copy"><h3>${esc(copy.child_name)}</h3><p class="pre-line">${esc(copy.body)}</p>${copy.acknowledged_at ? `<p class="form-hint">Du bekräftade ${esc(formatTimestamp(copy.acknowledged_at))}.</p>` : `<button class="primary" type="button" data-action="acknowledge-incident" data-id="${esc(copy.copy_id)}">Jag har läst</button>`}</article>`).join("")}</section>`;
 }
 
 function renderPickupBlocks() {
@@ -1884,6 +1935,8 @@ function renderParentHome() {
   const nextReminder = reminders[0];
   return `${noticeHtml()}${childTabs()}<section class="hero-card home-hero"><div><p class="kicker">${esc(new Intl.DateTimeFormat("sv-SE", { dateStyle: "full" }).format(new Date()))}</p><h1 class="h1">${esc(child.name)}</h1><p class="big-status">${esc(attendanceLabel(attendanceState(attendance)))}</p><p class="sub">${esc(departmentName(child.department_id))}${attendance?.pickup_at ? ` · planerad hämtning ${esc(attendance.pickup_at.slice(0, 5))}` : ""}</p></div>${botMascot()}</section>
     ${renderPickupNotices()}
+    ${renderIncidentCopies()}
+    ${renderNoticeList("Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}
     <section class="card bot-card"><div class="bot-card-mascot">${botMascot()}</div><div><p class="kicker">Ärtan-botten</p><h2>${reminders.length ? "Jag hjälper dig komma ihåg" : "Allt är uppdaterat"}</h2>${reminders.length ? `<ul class="bot-reminders">${reminders.map((reminder) => `<li>${esc(reminder.text)}</li>`).join("")}</ul>` : `<p class="bot-done">Dagens plan och barnets uppgifter ser kompletta ut.</p>`}${nextReminder ? `<button class="primary bot-next" type="button" data-action="bot-reminder" data-view="${esc(nextReminder.view)}" data-target="${esc(nextReminder.target)}">Ta hand om nästa sak</button>` : ""}</div></section>
     ${renderParentTermSchedules(child)}
     <form id="daily-plan" class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><p class="kicker">Idag</p><h2>Dagens plan</h2>
@@ -2838,12 +2891,207 @@ function renderAccount() {
     <button class="secondary" data-action="logout">Logga ut</button>`;
 }
 
+const INCIDENT_TYPES = [
+  ["accident", "Olycksfall/skada"],
+  ["near_miss", "Tillbud"],
+  ["mistreatment", "Kränkande behandling"],
+  ["other", "Övrig avvikelse"],
+];
+const INCIDENT_ROLES = [["affected", "Drabbad"], ["involved", "Inblandad"], ["causing", "Orsakande"]];
+const INJURY_TYPES = ["Sår eller skrubbsår", "Blåmärke", "Stukning eller vrickning", "Fraktur", "Tandskada", "Huvudskada", "Bett", "Brännskada", "Annat"];
+const BODY_LOCATIONS = ["Huvud", "Ansikte", "Tänder", "Hals", "Arm", "Hand", "Bröst eller mage", "Rygg", "Ben", "Fot", "Annat"];
+const CARE_OPTIONS = [["none", "Ingen ytterligare vård"], ["primary_care", "Vårdcentral"], ["dentist", "Tandläkare"], ["emergency", "Akuten"]];
+const ALLEGED_BY = [["child", "Barn"], ["staff", "Personal"], ["unknown", "Okänt"]];
+const INCIDENT_STATUS = { draft: "Utkast", submitted: "Inskickad", investigating: "Under utredning", closed: "Avslutad" };
+const INCIDENT_EVENTS = {
+  created: "Skapad",
+  submitted: "Inskickad",
+  investigating: "Utredning",
+  closed: "Avslutad",
+  addendum: "Tillägg",
+  investigation: "Utredningsanteckning",
+  principal: "Huvudman",
+  action: "Åtgärd",
+  action_done: "Åtgärd klar",
+  copy_sent: "Kopia skickad",
+  acknowledged: "Läst",
+};
+
+function incidentTypeLabel(type) {
+  return INCIDENT_TYPES.find(([value]) => value === type)?.[1] || type || "";
+}
+
+function incidentRoleLabel(role) {
+  return INCIDENT_ROLES.find(([value]) => value === role)?.[1] || role || "";
+}
+
+function dateTimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (number) => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function incidentChildrenPayload(form) {
+  return [...form.querySelectorAll('input[name="involved"]:checked')].map((input) => ({
+    child_id: input.value,
+    role: form.querySelector(`[name="role_${input.value}"]`)?.value || "affected",
+  }));
+}
+
+function incidentDraftArgs(form, values) {
+  return {
+    target_report_id: form.dataset.reportId || null,
+    incident_kind: values.incident_kind,
+    target_department_id: values.department_id,
+    occurred_at: new Date(values.occurred_at).toISOString(),
+    place_text: values.place_text.trim(),
+    happened_text: values.happened_text.trim(),
+    actions_text: values.actions_text.trim(),
+    present_text: values.present_text.trim(),
+    contacted_text: values.contacted_text.trim(),
+    injury_type: values.injury_type || null,
+    body_location: values.body_location || null,
+    first_aid_text: values.first_aid_text?.trim() || null,
+    care_kind: values.care_kind || null,
+    subjected_text: values.subjected_text?.trim() || null,
+    alleged_by: values.alleged_by || null,
+    experience_text: values.experience_text?.trim() || null,
+    involved_children: incidentChildrenPayload(form),
+  };
+}
+
+async function refreshOpenIncident() {
+  await loadData();
+  if (!state.incidentId) return;
+  state.incidentDetail = await rpc("get_incident", { target_report_id: state.incidentId });
+  if (state.incidentScreen === "form" && state.incidentDetail?.status !== "draft") state.incidentScreen = "detail";
+}
+
+async function openIncident(id) {
+  const detail = await rpc("get_incident", { target_report_id: id });
+  state.incidentId = id;
+  state.incidentDetail = detail;
+  state.incidentScreen = detail?.status === "draft" && detail?.mine ? "form" : "detail";
+}
+
+function renderIncidentChildPicker(selected) {
+  if (!state.children.length) return `<p class="notice error">Inga barn är synliga att koppla till rapporten.</p>`;
+  return `<fieldset class="incident-children"><legend>Barn och roll</legend>${state.children.map((child) => {
+    const role = selected.get(child.id) || "affected";
+    const checked = selected.has(child.id);
+    return `<div class="incident-child"><label class="check"><input type="checkbox" name="involved" value="${esc(child.id)}" ${checked ? "checked" : ""}> ${esc(child.name)}</label><span>${esc(departmentName(child.department_id))}</span>${selectField("Roll", `role_${child.id}`, INCIDENT_ROLES, role, true)}</div>`;
+  }).join("")}</fieldset>`;
+}
+
+function renderIncidentForm() {
+  const report = state.incidentDetail || {};
+  const selected = new Map((report.children || []).map((child) => [child.child_id, child.role]));
+  const type = report.incident_type || "accident";
+  const departments = departmentOptions();
+  const departmentId = report.department_id || (departments.length === 1 ? departments[0][0] : "");
+  return `<form class="card form-stack" data-form="incident-draft" data-incident-type="${esc(type)}" data-report-id="${esc(report.report_id || "")}"><p class="kicker">${report.report_id ? "Utkast" : "Ny rapport"}</p><h2>${report.report_id ? "Fortsätt utkastet" : "Ny avvikelserapport"}</h2><p class="form-hint">Utkastet syns bara för dig. När du skickar in låses texten. Senare tillägg skrivs under rapporten.</p>
+    ${selectField("Typ", "incident_kind", INCIDENT_TYPES, type, true)}
+    ${departments.length ? selectField("Avdelning", "department_id", departments, departmentId, true) : `<p class="notice error">Ingen avdelning är tillgänglig.</p>`}
+    ${field("Datum och tid", "occurred_at", dateTimeLocalValue(report.occurred_at || new Date().toISOString()), { type: "datetime-local", required: true })}
+    ${field("Plats", "place_text", report.place || "", { required: true, maxlength: "160" })}
+    ${textareaField("Vad hände, sakligt", "happened_text", report.what_happened || "", "Bara det som gick att iaktta", true)}
+    ${textareaField("Omedelbara åtgärder", "actions_text", report.immediate_actions || "", "", true)}
+    ${textareaField("Personal närvarande och vittnen", "present_text", report.staff_present || "", "", true)}
+    ${textareaField("När och hur vårdnadshavare kontaktades", "contacted_text", report.guardians_contacted || "", "Skriv också om de ännu inte är kontaktade", true)}
+    <div class="incident-extra" data-incident-extra="accident"><h3>Olycksfall</h3>
+      ${selectField("Typ av skada", "injury_type", [["", "Välj"], ...INJURY_TYPES.map((item) => [item, item])], report.injury_type || "")}
+      ${selectField("Var på kroppen", "body_location", [["", "Välj"], ...BODY_LOCATIONS.map((item) => [item, item])], report.body_location || "")}
+      ${textareaField("Första hjälpen", "first_aid_text", report.first_aid || "")}
+      ${selectField("Vård efteråt", "care_kind", [["", "Välj"], ...CARE_OPTIONS], report.care || "")}
+    </div>
+    <div class="incident-extra" data-incident-extra="mistreatment"><h3>Kränkande behandling</h3>
+      ${field("Vem utsattes", "subjected_text", report.subjected_name || "", { maxlength: "160" })}
+      ${selectField("Uppges av", "alleged_by", [["", "Välj"], ...ALLEGED_BY], report.alleged_by || "")}
+      ${textareaField("Barnets egen upplevelse", "experience_text", report.child_experience || "", "Lämna tomt om barnet inte berättade")}
+      <p class="form-hint">När rapporten skickas in räknas tidpunkten som anmälan till rektor.</p>
+    </div>
+    ${renderIncidentChildPicker(selected)}
+    <div class="stack-actions"><button class="secondary" type="submit" data-intent="draft">Spara utkast</button><button class="primary" type="submit" data-intent="submit">Skicka in</button></div>
+  </form>`;
+}
+
+function renderIncidentFacts(detail) {
+  const care = CARE_OPTIONS.find(([value]) => value === detail.care)?.[1] || "";
+  const alleged = ALLEGED_BY.find(([value]) => value === detail.alleged_by)?.[1] || "";
+  return `<dl class="fact-list">
+    <div><dt>Typ</dt><dd>${esc(incidentTypeLabel(detail.incident_type))}</dd></div>
+    <div><dt>Status</dt><dd>${esc(INCIDENT_STATUS[detail.status] || detail.status)}</dd></div>
+    <div><dt>När</dt><dd>${esc(formatTimestamp(detail.occurred_at))}</dd></div>
+    <div><dt>Plats</dt><dd>${esc(detail.place)}</dd></div>
+    <div><dt>Avdelning</dt><dd>${esc(detail.department_name || "")}</dd></div>
+    <div><dt>Författare</dt><dd>${esc(detail.author_name || "")}</dd></div>
+    <div><dt>Vad hände</dt><dd class="pre-line">${esc(detail.what_happened)}</dd></div>
+    <div><dt>Omedelbara åtgärder</dt><dd class="pre-line">${esc(detail.immediate_actions)}</dd></div>
+    <div><dt>Personal och vittnen</dt><dd class="pre-line">${esc(detail.staff_present)}</dd></div>
+    <div><dt>Vårdnadshavare kontaktades</dt><dd class="pre-line">${esc(detail.guardians_contacted)}</dd></div>
+    ${detail.incident_type === "accident" ? `<div><dt>Skada</dt><dd>${esc(detail.injury_type || "")}, ${esc(detail.body_location || "")}</dd></div><div><dt>Första hjälpen</dt><dd class="pre-line">${esc(detail.first_aid || "")}</dd></div><div><dt>Vård</dt><dd>${esc(care)}</dd></div>` : ""}
+    ${detail.incident_type === "mistreatment" ? `<div><dt>Vem utsattes</dt><dd>${esc(detail.subjected_name || "")}</dd></div><div><dt>Uppges av</dt><dd>${esc(alleged)}</dd></div><div><dt>Barnets upplevelse</dt><dd class="pre-line">${esc(detail.child_experience || "Inte angiven")}</dd></div>` : ""}
+  </dl>
+  <h3>Barn</h3><ul class="contact-list">${(detail.children || []).map((child) => `<li><div><strong>${esc(child.name)}</strong><span>${esc(incidentRoleLabel(child.role))}</span></div></li>`).join("")}</ul>`;
+}
+
+function renderIncidentDetail() {
+  const detail = state.incidentDetail;
+  if (!detail) return "";
+  const locked = detail.status !== "draft";
+  const copies = (detail.copies || []).map((copy) => {
+    if (copy.sent_at) {
+      return `<article class="incident-copy"><h3>${esc(copy.name)}</h3><p class="form-hint">Skickad ${esc(formatTimestamp(copy.sent_at))}. ${copy.acknowledged_count || 0} av ${copy.recipient_count || 0} har läst.</p>${copy.body ? `<p class="pre-line">${esc(copy.body)}</p>` : `<p class="form-hint">Texten till vårdnadshavarna visas för författaren och administratören.</p>`}</article>`;
+    }
+    if (!copy.can_send) {
+      return `<article class="incident-copy"><h3>${esc(copy.name)}</h3><p class="form-hint">${detail.incident_type === "mistreatment" ? "Bara en administratör skickar vårdnadshavarkopian vid kränkning." : "Författaren eller en administratör skickar vårdnadshavarkopian."}</p></article>`;
+    }
+    return `<form class="form-stack incident-copy" data-form="incident-copy" data-report-id="${esc(detail.report_id)}" data-child-id="${esc(copy.child_id)}"><h3>Kopia om ${esc(copy.name)}</h3><p class="form-hint">Bara det här barnets namn ska stå med. Andra barn skrivs som ett annat barn. Texten låses när den skickas.</p><label>Text till vårdnadshavarna<textarea name="copy_body" required>${esc(copy.body || "")}</textarea></label><div class="stack-actions"><button class="secondary" type="submit" data-intent="save">Spara utkast</button><button class="primary" type="submit" data-intent="send">Skicka</button></div></form>`;
+  }).join("");
+  const admin = detail.admin ? `<section class="card incident-admin"><h2>För huvudmannen</h2>
+    ${detail.status === "submitted" ? `<button class="primary no-print" type="button" data-action="start-incident-investigation" data-id="${esc(detail.report_id)}">Ta upp till utredning</button>` : ""}
+    ${detail.reported_to_principal_at ? `<p>Anmält till huvudman ${esc(formatTimestamp(detail.reported_to_principal_at))}.</p>` : `<button class="secondary no-print" type="button" data-action="incident-principal" data-id="${esc(detail.report_id)}">Markera anmäld till huvudman</button>`}
+    ${detail.investigation_notes ? `<h3>Senaste utredningsanteckning</h3><p class="pre-line">${esc(detail.investigation_notes)}</p>` : ""}
+    ${detail.status === "investigating" ? `<form class="form-stack" data-form="incident-note" data-report-id="${esc(detail.report_id)}">${textareaField("Ny utredningsanteckning", "note_text", "", "", true)}<button class="secondary" type="submit">Lägg till anteckning</button></form>
+      <form class="form-stack" data-form="incident-action" data-report-id="${esc(detail.report_id)}"><h3>Åtgärd</h3>${textareaField("Vad ska göras", "action_text", "", "", true)}${selectField("Ansvarig", "responsible_profile_id", [["", "Välj"], ...(detail.staff || []).map((person) => [person.profile_id, person.name])], "", true)}${field("Senast", "due_on", "", { type: "date", required: true })}<button class="secondary" type="submit">Lägg till åtgärd</button></form>
+      <form class="form-stack" data-form="incident-close" data-report-id="${esc(detail.report_id)}"><h3>Avsluta</h3>${textareaField("Avslutande sammanfattning", "summary_text", "", "", true)}<button class="primary" type="submit">Avsluta rapporten</button></form>` : ""}
+    ${detail.closing_summary ? `<h3>Avslutande sammanfattning</h3><p class="pre-line">${esc(detail.closing_summary)}</p>` : ""}
+    ${(detail.actions || []).length ? `<h3>Åtgärder</h3><ul class="incident-log">${detail.actions.map((action) => `<li><strong>${esc(action.description)}</strong><span>${esc(action.responsible_name)} · senast ${esc(formatDate(action.due_on))}${action.done_at ? ` · klar ${esc(formatTimestamp(action.done_at))}` : ""}</span>${action.done_at || detail.status !== "investigating" ? "" : `<button class="link no-print" type="button" data-action="complete-incident-action" data-id="${esc(action.action_id)}">Markera klar</button>`}</li>`).join("")}</ul>` : ""}
+  </section>` : "";
+  return `<article class="card incident-sheet"><p class="kicker">${esc(incidentTypeLabel(detail.incident_type))}</p><h2>${esc(detail.place)}</h2><p class="incident-status">${esc(INCIDENT_STATUS[detail.status] || "")}</p>
+    ${locked ? `<p class="form-hint">Rapporten är låst. Nya uppgifter läggs till som tillägg.</p>` : ""}
+    ${renderIncidentFacts(detail)}
+    ${(detail.addenda || []).length ? `<h3>Tillägg</h3><ul class="incident-log">${detail.addenda.map((item) => `<li><strong>${esc(item.author_name)}</strong><span>${esc(formatTimestamp(item.created_at))}</span><p class="pre-line">${esc(item.body)}</p></li>`).join("")}</ul>` : ""}
+    ${locked ? `<form class="form-stack no-print" data-form="incident-addendum" data-report-id="${esc(detail.report_id)}">${textareaField("Tillägg", "addendum_text", "", "Något som tillkommit efter inskickningen", true)}<button class="secondary" type="submit">Lägg till</button></form>` : ""}
+  </article>
+  ${copies ? `<section class="card"><h2>Vårdnadshavarkopior</h2>${copies}</section>` : ""}
+  ${admin}
+  <section class="card"><h2>Händelselogg</h2><ul class="incident-log">${(detail.events || []).map((event) => `<li><strong>${esc(INCIDENT_EVENTS[event.event_kind] || event.event_kind)}</strong><span>${esc(formatTimestamp(event.created_at))}</span><p class="pre-line">${esc(event.detail)}</p></li>`).join("") || `<li>Ingen händelse ännu.</li>`}</ul></section>`;
+}
+
+function renderIncidents() {
+  const ready = state.incidentReady ? "" : `<p class="notice error">Avvikelserapporterna är inte aktiverade i databasen ännu.</p>`;
+  if (state.incidentScreen === "form") {
+    return `${noticeHtml()}<section class="hero-card"><p class="kicker">Avvikelser</p><h1 class="h1">${state.incidentId ? "Utkast" : "Ny rapport"}</h1></section>${ready}<button class="secondary no-print" type="button" data-action="incident-list">Tillbaka till listan</button>${state.incidentReady ? renderIncidentForm() : ""}`;
+  }
+  if (state.incidentScreen === "detail") {
+    return `${noticeHtml()}<section class="hero-card"><div class="incident-head"><div><p class="kicker">Avvikelser</p><h1 class="h1">Rapport</h1></div><button class="secondary no-print" type="button" data-action="print-incident">Skriv ut</button></div></section>${ready}<button class="secondary no-print" type="button" data-action="incident-list">Tillbaka till listan</button>${renderIncidentDetail()}`;
+  }
+  const notices = (state.notices || []).filter((notice) => notice.kind === "incident_submitted");
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Avvikelser</p><h1 class="h1">Rapporter</h1><p class="sub">Olycksfall, tillbud, kränkande behandling och övriga avvikelser. Vårdnadshavare ser inte själva rapporten.</p></section>${ready}
+    ${renderNoticeList("Till dig", "Nya inskick", notices)}
+    ${state.incidentReady ? `<button class="primary no-print" type="button" data-action="incident-new">Ny rapport</button>` : ""}
+    <div class="incident-list">${(state.incidents || []).map((report) => `<button class="card incident-row" type="button" data-action="open-incident" data-id="${esc(report.report_id)}"><span class="incident-status">${esc(INCIDENT_STATUS[report.status] || "")}</span><strong>${esc(incidentTypeLabel(report.incident_type))}</strong><span>${esc(report.place)} · ${esc(report.department_name || "")}</span><small>${esc(formatTimestamp(report.occurred_at))} · ${report.child_count || 0} barn${report.mine ? " · min" : ""}</small></button>`).join("") || `<p class="form-hint">Inga rapporter är synliga för dig.</p>`}</div>`;
+}
+
 function renderNav() {
   const role = state.profile?.role;
   const items = role === "admin"
-    ? [["overview", "▦", "Översikt"], ["attendance", "✓", "Närvaro"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["account", "⚙", "Konto"]]
+    ? [["overview", "▦", "Översikt"], ["attendance", "✓", "Närvaro"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["incidents", "⚑", "Avvikelse"], ["account", "⚙", "Konto"]]
     : role === "staff"
-      ? [["attendance", "✓", "Närvaro"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Barn"], ["account", "⚙", "Konto"]]
+      ? [["attendance", "✓", "Närvaro"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Barn"], ["incidents", "⚑", "Avvikelse"], ["account", "⚙", "Konto"]]
       : [["home", "●", "Min dag"], ["child", "🌱", "Barnet"], ["classlist", "☰", "Klasslista"], ["messages", "✉", "Gemenskap"], ["account", "⚙", "Konto"]];
   nav.innerHTML = items.map(([view, icon, label]) => `<button data-action="navigate" data-view="${view}" aria-current="${state.view === view ? "page" : "false"}"><span class="ico">${icon}</span>${label}</button>`).join("");
 }
@@ -2884,6 +3132,7 @@ function render() {
     overview: renderOverview,
     schools: renderSchools,
     people: renderPeople,
+    incidents: renderIncidents,
     account: renderAccount,
   };
   const fallback = state.profile.role === "admin" ? renderOverview : state.profile.role === "staff" ? renderAttendance : renderParentHome;
@@ -2932,6 +3181,78 @@ document.body.addEventListener("submit", (event) => {
     state.assistantResponse = assistantAnswer(assistantIntentForQuestion(question));
     renderAssistant();
     requestAnimationFrame(() => document.getElementById("assistantAnswer")?.focus());
+    return;
+  }
+  if (type === "incident-draft") {
+    const intent = event.submitter?.dataset.intent || "draft";
+    if (intent === "submit") {
+      const message = values.incident_kind === "mistreatment"
+        ? "Skicka in rapporten? Den låses, och tidpunkten räknas som anmälan till rektor."
+        : "Skicka in rapporten? Därefter kan texten inte ändras. Tillägg skrivs under rapporten.";
+      if (!window.confirm(message)) return;
+    }
+    runMutation(async () => {
+      const saved = await rpc("save_incident_draft", incidentDraftArgs(form, values));
+      const id = typeof saved === "string" ? saved : form.dataset.reportId;
+      state.view = "incidents";
+      state.incidentId = id;
+      if (intent === "submit") await rpc("submit_incident", { target_report_id: id });
+      state.incidentScreen = intent === "submit" ? "detail" : "form";
+      await refreshOpenIncident();
+    }, intent === "submit" ? "Rapporten är inskickad." : "Utkastet är sparat.");
+    return;
+  }
+  if (type === "incident-copy") {
+    const intent = event.submitter?.dataset.intent || "save";
+    const args = {
+      target_report_id: form.dataset.reportId,
+      target_child_id: form.dataset.childId,
+      copy_body: values.copy_body.trim(),
+    };
+    runMutation(async () => {
+      if (intent === "send") await rpc("send_incident_copy", args);
+      else await rpc("save_incident_copy", args);
+      state.incidentId = form.dataset.reportId;
+      state.incidentScreen = "detail";
+      await refreshOpenIncident();
+    }, intent === "send" ? "Kopian är skickad till vårdnadshavarna." : "Utkastet till kopian är sparat.");
+    return;
+  }
+  if (type === "incident-addendum") {
+    runMutation(async () => {
+      await rpc("add_incident_addendum", { target_report_id: form.dataset.reportId, addendum_text: values.addendum_text.trim() });
+      state.incidentId = form.dataset.reportId;
+      await refreshOpenIncident();
+    }, "Tillägget är sparat.");
+    return;
+  }
+  if (type === "incident-note") {
+    runMutation(async () => {
+      await rpc("add_incident_investigation_note", { target_report_id: form.dataset.reportId, note_text: values.note_text.trim() });
+      state.incidentId = form.dataset.reportId;
+      await refreshOpenIncident();
+    }, "Utredningsanteckningen är sparad.");
+    return;
+  }
+  if (type === "incident-action") {
+    runMutation(async () => {
+      await rpc("add_incident_action", {
+        target_report_id: form.dataset.reportId,
+        action_text: values.action_text.trim(),
+        responsible_profile_id: values.responsible_profile_id,
+        due_on: values.due_on,
+      });
+      state.incidentId = form.dataset.reportId;
+      await refreshOpenIncident();
+    }, "Åtgärden är tillagd.");
+    return;
+  }
+  if (type === "incident-close") {
+    runMutation(async () => {
+      await rpc("close_incident", { target_report_id: form.dataset.reportId, summary_text: values.summary_text.trim() });
+      state.incidentId = form.dataset.reportId;
+      await refreshOpenIncident();
+    }, "Rapporten är avslutad.");
     return;
   }
   if (type === "pickup-code") {
@@ -3315,6 +3636,9 @@ document.body.addEventListener("change", (event) => {
     const none = input.closest("fieldset")?.querySelector('input[name="no_children_visible"]');
     if (none) none.checked = false;
   }
+  if (input.name === "incident_kind" && input.form?.dataset.form === "incident-draft") {
+    input.form.dataset.incidentType = input.value;
+  }
   if (input.matches("[data-schedule-attending]")) {
     const row = input.closest("[data-weekday]");
     row.querySelectorAll('input[type="time"]').forEach((timeInput) => {
@@ -3362,7 +3686,13 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "navigate" || action === "account") {
-    showView(action === "account" ? "account" : target.dataset.view);
+    const view = action === "account" ? "account" : target.dataset.view;
+    if (view === "incidents") {
+      state.incidentScreen = "list";
+      state.incidentId = null;
+      state.incidentDetail = null;
+    }
+    showView(view);
     return;
   }
   if (action === "hub-open") {
@@ -3448,6 +3778,67 @@ document.body.addEventListener("click", (event) => {
       await rpc("publish_school_term", { target_term_id: target.dataset.id });
       await loadData();
     }, "Terminen är publicerad.");
+    return;
+  }
+  if (action === "incident-new") {
+    state.view = "incidents";
+    state.incidentScreen = "form";
+    state.incidentId = null;
+    state.incidentDetail = null;
+    state.notice = null;
+    render();
+    scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  if (action === "incident-list") {
+    state.view = "incidents";
+    state.incidentScreen = "list";
+    state.incidentId = null;
+    state.incidentDetail = null;
+    state.notice = null;
+    render();
+    return;
+  }
+  if (action === "open-incident") {
+    runMutation(async () => {
+      state.view = "incidents";
+      await openIncident(target.dataset.id);
+    }, "");
+    return;
+  }
+  if (action === "print-incident") {
+    window.print();
+    return;
+  }
+  if (action === "acknowledge-incident") {
+    runMutation(async () => {
+      await rpc("acknowledge_incident_copy", { target_copy_id: target.dataset.id });
+      await loadData();
+    }, "Det är noterat att du har läst.");
+    return;
+  }
+  if (action === "start-incident-investigation") {
+    runMutation(async () => {
+      await rpc("start_incident_investigation", { target_report_id: target.dataset.id });
+      state.incidentId = target.dataset.id;
+      state.incidentScreen = "detail";
+      await refreshOpenIncident();
+    }, "Rapporten är under utredning.");
+    return;
+  }
+  if (action === "incident-principal") {
+    runMutation(async () => {
+      await rpc("mark_incident_reported_to_principal", { target_report_id: target.dataset.id });
+      state.incidentId = target.dataset.id;
+      await refreshOpenIncident();
+    }, "Anmälan till huvudman är registrerad.");
+    return;
+  }
+  if (action === "complete-incident-action") {
+    runMutation(async () => {
+      await rpc("complete_incident_action", { target_action_id: target.dataset.id });
+      await refreshOpenIncident();
+    }, "Åtgärden är markerad klar.");
     return;
   }
   if (action === "open-scan") {

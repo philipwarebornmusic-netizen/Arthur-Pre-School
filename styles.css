@@ -142,7 +142,7 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .fact-list { display: grid; gap: 10px; margin: 14px 0 0; }
 .fact-list div { min-width: 0; }
 .fact-list dt { color: var(--muted); font-size: 11px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
-.fact-list dd { margin: 2px 0 0; font-weight: 800; overflow-wrap: anywhere; }
+.fact-list dd { max-width: 70ch; margin: 2px 0 0; font-weight: 800; overflow-wrap: anywhere; }
 .muted-value { color: var(--muted); font-weight: 800; }
 .consent-readout { margin: 0; padding: 0; list-style: none; }
 .consent-readout li { display: flex; justify-content: space-between; gap: 12px; min-width: 0; padding: 10px 0; border-top: 1px solid var(--line); }
@@ -475,3 +475,43 @@ html[data-busy]::after { position: fixed; inset: 0; z-index: 100; display: grid;
 .scan-launcher .secondary { width: auto; min-width: 11.5rem; }
 .scan-panel, .checkout-panel, .pickup-pass { min-width: 0; }
 .scan-panel video { width: 100%; max-height: 280px; background: #1d2428; border-radius: 16px; object-fit: cover; }
+
+.incident-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.incident-head .secondary { width: auto; min-width: 9rem; }
+.incident-list { display: grid; gap: 12px; margin-top: 14px; }
+.incident-row { display: grid; gap: 4px; width: 100%; text-align: left; }
+.incident-status { margin: 0; color: var(--muted); font-size: 12px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+.incident-log { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.incident-log li { display: grid; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.incident-log span, .incident-log small { color: var(--muted); font-size: 13px; font-weight: 800; }
+.incident-children { display: grid; gap: 10px; margin: 0; padding: 0; border: 0; }
+.incident-child { display: grid; gap: 8px; min-width: 0; padding: 12px; background: var(--sand); border-radius: 16px; }
+.incident-child .check { display: flex; align-items: center; gap: 8px; font-weight: 900; }
+.incident-copy { display: grid; gap: 8px; min-width: 0; }
+.incident-extra { display: none; }
+form[data-incident-type="accident"] .incident-extra[data-incident-extra="accident"],
+form[data-incident-type="mistreatment"] .incident-extra[data-incident-extra="mistreatment"] { display: grid; gap: 14px; }
+.incident-admin { display: grid; gap: 14px; }
+.incident-admin > h2 { margin-bottom: 0; }
+
+@media (max-width: 520px) {
+  .bottom-nav:has(button:nth-child(7)) { grid-auto-flow: row; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .app-frame:has(.bottom-nav button:nth-child(7)) .screen { padding-bottom: calc(168px + env(safe-area-inset-bottom)); }
+}
+
+@media (min-width: 900px) {
+  .incident-list, .incident-children { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 1200px) {
+  .screen > button.primary { width: auto; min-width: 11.5rem; }
+}
+
+@media print {
+  .topbar, .bottom-nav, .assistant-root, .assistant-launcher, .assistant-panel, .skip-link, .no-print, form { display: none !important; }
+  body { background: #fff; }
+  .app-frame, .app-frame:has(#bottomNav button) .screen, .app-frame:has(#bottomNav button) .topbar { width: auto !important; margin: 0 !important; }
+  .screen { padding: 0 !important; }
+  .hero-card, .card { border-color: #ccc; box-shadow: none; }
+  .incident-sheet, .incident-log li { break-inside: avoid; }
+}

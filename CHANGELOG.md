@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 2026-10-22 — Avvikelserapporter
+
+- Personal skriver utkast för olycksfall/skada, tillbud, kränkande behandling och övrig avvikelse. Utkastet syns bara för författaren. Inskickad text låses, och senare uppgifter läggs till som tillägg.
+- Flera barn kan ingå, med rollen drabbad, inblandad eller orsakande. Olycksfall har skadetyp, kroppsdel, första hjälpen och vård. Kränkning har vem som utsattes, vem som uppger det och barnets egen upplevelse. Inskickning av en kränkning räknas som anmälan till rektor.
+- Personal ser sina egna rapporter och, efter inskickning, olycksfall och tillbud på avdelningar de tillhör. Kränkning och övrig avvikelse syns bara för författaren och administratören. Administratören ser alla inskickade rapporter i organisationen, utreder, lägger åtgärder och avslutar. Vårdnadshavare ser aldrig själva rapporten.
+- En vårdnadshavarkopia skickas per barn och visar bara det barnets namn. Andra barn står som ett annat barn. Olycksfall nämner kommunens olycksfallsförsäkring. Vårdnadshavaren bekräftar med Jag har läst. Påminnelser stannar i appen.
+- Meddelanden i appen återanvänder hämtpassens meddelandetabell. Administratören aviseras vid inskickning, vårdnadshavaren när kopian skickas och igen om den inte är läst. En händelselogg följer rapporten, och administratören kan skriva ut underlaget för huvudmannen.
+- Migreringen `supabase/012_incident_reports.sql` ska köras för hand. Den är inte körd mot produktion. Den är oberoende av `011_guardian_owned_child_info.sql`.
+
 ## 2026-10-22 — Kortöversikt i stället för långa menysidor
 
 - Barnet, Skolor och Personer/Barn öppnas som ett rutnät av kort. Ett tryck visar den delen för sig, med ‹ Tillbaka och rubrik.

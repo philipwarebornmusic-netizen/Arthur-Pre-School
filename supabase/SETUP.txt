@@ -54,6 +54,7 @@ Guardian-owned child information
 
 Pickup passes
 - supabase/010_pickup_passes.sql is already applied in production. Do not run it again.
+- Deploy previews use the production database, so pickup is available there. New incident-report buttons stay inactive until 012 is applied.
 - Guardians keep a pickup list per child. An administrator can block a person. Both guardians can create and revoke a one-day, single-use pass.
 - The pass link is copied by the guardian. The app does not send it. The public page shows the child's first name, the date, a QR code, a 6-digit fallback code, and a short privacy notice.
 - Only sha256 hashes of the token and the fallback code are stored. The code is derived from the token so it can be shown to the link holder without a plaintext column. Anonymous callers cannot look up a pass with the 6-digit code.
@@ -80,6 +81,14 @@ Class list and profile photos
 - Guardians upload, replace and delete <child_id>/profile.jpg. Replacement upserts that same path, so the previous file is overwritten. The app deletes the object through the Storage API. clear_child_photo only checks that the object is gone and then clears photo_path. The SQL does not DELETE from storage.objects, because protect_objects_delete rejects every such statement. Staff and administrators of the child's department can read the photo. Other guardians can read it only when every linked guardian has opted in and the child is still named in the class list.
 - Answers are per guardian. A null answer is unanswered, not a no. Any explicit no hides the name immediately. The photo requires yes from every linked guardian. Changes are appended to class_list_consent_events.
 - This opt-in is separate from app_images, group_images and social_media. Do not reuse those rows.
+
+Incident reports
+- supabase/012_incident_reports.sql is not applied in production. Do not run it until incident reports should go live.
+- 011_guardian_owned_child_info.sql is independent. 012 does not change child profile, health, contact, or consent rights, and it does not need 011 first.
+- The file adds incident reports, children, actions, addenda, guardian copies, and an append-only event log. It does not delete rows or drop columns. A draft's child list can be replaced only while the author is still editing that draft.
+- It reuses pickup_notices. Existing rows stay kind pickup. New kinds are incident_submitted, incident_copy, and incident_reminder. list_pickup_notices keeps its old columns and returns only pickup rows. list_notices returns every kind for the signed-in person.
+- All writes go through security-definer functions that check the caller. Row level security is enabled and direct table writes are revoked for public, anon, and authenticated.
+- Notices stay in the app. There is no email, push, or paid delivery. remind_incident_copies() reminds a guardian at most once a day after a copy has been unread for a day. The signed-in app calls it.
 
 Fake Test organization and PreSchool Test preschool
 1. Keep this tenant free from real child, health, contact and consent data.
