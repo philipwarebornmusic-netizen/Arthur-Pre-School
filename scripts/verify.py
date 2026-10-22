@@ -227,6 +227,14 @@ def check_pickup_hub(errors):
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "pickup hub test failed").strip()
         errors.append(detail)
+    sql_script = ROOT / "scripts" / "pickup_hub_sql_test.py"
+    if not sql_script.exists():
+        errors.append("scripts/pickup_hub_sql_test.py is missing")
+        return
+    result = subprocess.run(["python3", str(sql_script)], cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "pickup hub sql test failed").strip()
+        errors.append(detail)
 
 
 def main():

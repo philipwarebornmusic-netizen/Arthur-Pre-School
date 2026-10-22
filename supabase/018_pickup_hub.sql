@@ -10,6 +10,8 @@
 --
 -- Day plans and the standard picker sit beside child_weekly_schedules. The
 -- weekly schedule remains the source of default drop-off and pickup times.
+-- purge_expired_pickup_details still clears a name after seven days, and also
+-- deletes a stored token once that pass can no longer be opened.
 -- A day is filled when it has times and a picker. Times fall back to the
 -- previous week's saved day, then the standard week. A one-day pass is never
 -- copied onto another date. Both guardians may edit. Every change is logged.
@@ -157,7 +159,7 @@ begin
 
   insert into public.pickup_pass_secrets (pass_kind, pass_id, token)
   values (pass_kind, target_pass_id, cleaned)
-  on conflict (pass_kind, pass_id) do update
+  on conflict on constraint pickup_pass_secrets_pkey do update
     set token = excluded.token, stored_at = now();
 end;
 $$;
@@ -204,8 +206,8 @@ begin
 
   select token into secret
   from public.pickup_pass_secrets
-  where pass_kind = reveal_pickup_pass.pass_kind
-    and pass_id = target_pass_id;
+  where pickup_pass_secrets.pass_kind = reveal_pickup_pass.pass_kind
+    and pickup_pass_secrets.pass_id = target_pass_id;
   if secret is null then
     raise exception '%', case when pass_kind = 'permanent'
       then 'Länken kan inte visas igen. Välj Ny kod.'
@@ -586,7 +588,7 @@ begin
   ) values (
     target_child_id, plan_date, dropoff_at, pickup_at, picker_kind, picker_id, pass_kind, public.current_profile_id()
   )
-  on conflict (child_id, plan_date) do update set
+  on conflict on constraint pickup_day_plans_child_id_plan_date_key do update set
     dropoff_at = excluded.dropoff_at,
     pickup_at = excluded.pickup_at,
     picker_kind = excluded.picker_kind,
@@ -671,13 +673,13 @@ begin
   insert into public.pickup_standard_pickers (child_id, weekday, picker_kind, picker_id, pass_kind, updated_by)
   select
     target_child_id,
-    (item ->> 'weekday')::smallint,
-    item ->> 'picker_kind',
-    (item ->> 'picker_id')::uuid,
-    nullif(item ->> 'pass_kind', ''),
+    (day_item ->> 'weekday')::smallint,
+    day_item ->> 'picker_kind',
+    (day_item ->> 'picker_id')::uuid,
+    nullif(day_item ->> 'pass_kind', ''),
     public.current_profile_id()
-  from jsonb_array_elements(weekly_schedule) item
-  where coalesce((item ->> 'attending')::boolean, false);
+  from jsonb_array_elements(weekly_schedule) day_item
+  where coalesce((day_item ->> 'attending')::boolean, false);
 
   insert into public.pickup_day_plan_log (child_id, action, detail, actor_id)
   values (target_child_id, 'standard', 'Standardveckan uppdaterades', public.current_profile_id());
@@ -755,7 +757,7 @@ begin
     ) values (
       target_child_id, target_date, effective.dropoff_at, effective.pickup_at, kind, chosen, chosen_pass, public.current_profile_id()
     )
-    on conflict (child_id, plan_date) do update set
+    on conflict on constraint pickup_day_plans_child_id_plan_date_key do update set
       dropoff_at = excluded.dropoff_at,
       pickup_at = excluded.pickup_at,
       picker_kind = excluded.picker_kind,
@@ -825,6 +827,47 @@ begin
 end;
 $$;
 
+-- Keeps the seven-day name cleanup and removes tokens that can no longer be
+-- shown. Expiry does not update a row, so the forget trigger never sees it.
+create or replace function public.purge_expired_pickup_details()
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  update public.pickup_passes
+  set person_name = null, person_phone = null
+  where expires_at < now() - interval '7 days'
+    and (person_name is not null or person_phone is not null);
+
+  delete from public.pickup_pass_secrets as secret
+  where secret.pass_kind = 'day'
+    and not exists (
+      select 1
+      from public.pickup_passes as pass
+      where pass.id = secret.pass_id
+        and pass.revoked_at is null
+        and pass.used_at is null
+        and pass.expires_at > now()
+        and pass.token_hash = public.pickup_secret_hash(secret.token)
+    );
+
+  delete from public.pickup_pass_secrets as secret
+  where secret.pass_kind = 'permanent'
+    and not exists (
+      select 1
+      from public.permanent_pickup_passes as pass
+      join public.permanent_pickup_pass_children as link on link.pass_id = pass.id
+      where pass.id = secret.pass_id
+        and pass.revoked_at is null
+        and (pass.ends_on is null or pass.ends_on >= public.pickup_stockholm_today())
+        and public.permanent_contact_allowed(link.contact_id)
+        and pass.token_hash = public.pickup_secret_hash(secret.token)
+    );
+end;
+$$;
+
 revoke all on function public.forget_pickup_pass_secret() from public, anon, authenticated;
 revoke all on function public.remember_pickup_pass_token(uuid, text, text) from public, anon, authenticated;
 revoke all on function public.reveal_pickup_pass(uuid, text) from public, anon, authenticated;
@@ -836,6 +879,7 @@ revoke all on function public.save_pickup_day(uuid, date, time, time, text, uuid
 revoke all on function public.save_pickup_standard_week(uuid, jsonb) from public, anon, authenticated;
 revoke all on function public.copy_pickup_week(uuid, date) from public, anon, authenticated;
 revoke all on function public.list_department_pickup_plans() from public, anon, authenticated;
+revoke all on function public.purge_expired_pickup_details() from public, anon, authenticated;
 
 grant execute on function public.remember_pickup_pass_token(uuid, text, text) to authenticated;
 grant execute on function public.reveal_pickup_pass(uuid, text) to authenticated;
@@ -844,3 +888,4 @@ grant execute on function public.save_pickup_day(uuid, date, time, time, text, u
 grant execute on function public.save_pickup_standard_week(uuid, jsonb) to authenticated;
 grant execute on function public.copy_pickup_week(uuid, date) to authenticated;
 grant execute on function public.list_department_pickup_plans() to authenticated;
+grant execute on function public.purge_expired_pickup_details() to authenticated;

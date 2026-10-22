@@ -169,8 +169,9 @@ const revealSql = sliceFunction(sql, "reveal_pickup_pass");
 const rememberSql = sliceFunction(sql, "remember_pickup_pass_token");
 const copySql = sliceFunction(sql, "copy_pickup_week");
 assert(!calendarSql.includes("pickup_pass_secrets"), "kalendern läser inte den råa koden");
-assert(!departmentSql.includes("pickup_pass_secrets") && !departmentSql.includes("token"), "personalens lista saknar koder");
-assert(revealSql.includes("pickup_pass_secrets") && revealSql.includes("is_guardian") && revealSql.includes("expires_at > now()") && revealSql.includes("permanent_contact_allowed"), "öppna pass kräver vårdnadshavare och ett pass som gäller");
+assert(!departmentSql.includes("pickup_pass_secrets") && !/\btoken\b/.test(departmentSql), "personalens lista saknar koder");
+assert(revealSql.includes("pickup_pass_secrets.pass_kind") && revealSql.includes("pickup_pass_secrets.pass_id"), "öppna pass kvalificerar kolumnerna");
+assert(revealSql.includes("is_guardian") && revealSql.includes("expires_at > now()") && revealSql.includes("permanent_contact_allowed"), "öppna pass kräver vårdnadshavare och ett pass som gäller");
 assert(revealSql.includes("Välj Ny kod") && revealSql.includes("Skapa passet på nytt"), "gamla pass säger hur de skapas om");
 assert(rememberSql.includes("set search_path = public, extensions") && revealSql.includes("set search_path = public, extensions"), "tokenfunktionerna låser search_path");
 assert(copySql.includes("is distinct from 'permanent'"), "kopiering släpper engångspass");
@@ -186,6 +187,12 @@ assert(!sql.includes("create or replace function public.create_permanent_pickup_
 assert(!/grant execute on function[\s\S]*?\bto anon\b/.test(sql), "anonyma får inte de nya funktionerna");
 assert(!/grant execute on function public\.(pickup_picker_problem|pickup_picker_label|pickup_effective_plan|forget_pickup_pass_secret)/.test(sql), "hjälpfunktionerna är inte anropbara");
 assert(sql.includes("grant execute on function public.reveal_pickup_pass(uuid, text) to authenticated"), "inloggade vårdnadshavare kan öppna passet");
+assert(sql.includes("on conflict on constraint pickup_pass_secrets_pkey"), "sparad länk använder primärnyckeln");
+assert((sql.match(/on conflict on constraint pickup_day_plans_child_id_plan_date_key/g) || []).length === 2, "dagsplanerna använder unik-nyckeln");
+assert(!/on conflict \(/i.test(sql), "on conflict ska inte namnge kolumner som krockar med parametrar");
+assert(sliceFunction(sql, "save_pickup_standard_week").includes("jsonb_array_elements(weekly_schedule) day_item"), "standardveckan använder aliaset day_item");
+const purgeSql = sliceFunction(sql, "purge_expired_pickup_details");
+assert(purgeSql.includes("interval '7 days'") && purgeSql.includes("delete from public.pickup_pass_secrets"), "utgångna länkar rensas tillsammans med namnen");
 assert(sql.includes("pass_kind = 'permanent'"), "standardhämtare kan bara vara ett permanent pass");
 
 assert(html.includes('<script src="pickup-hub.js"></script>'), "kalendern laddas");

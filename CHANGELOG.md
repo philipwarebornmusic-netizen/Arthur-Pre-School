@@ -8,6 +8,7 @@
 - Schemat är en kalender för hela den publicerade terminen. Varje rad är en vecka, måndag till fredag, med datum och veckonummer. Rutan visar lämning och hämtning. Dagen är markerad, stängda dagar är rosa med en stängd-symbol, och dagar utanför terminen är grå. En personikon betyder att någon annan än en vårdnadshavare hämtar. Ett tryck ändrar den dagen. Plusknappen sätter en standardvecka eller kopierar veckan framåt.
 - Tider hämtas från dagen, annars från samma dag förra veckan, annars från standardveckan. Ett engångspass följer inte med till en annan dag. Veckor de närmaste sju dagarna som saknar tid eller hämtare markeras, och Min dag påminner. Samma kalender visas skrivskyddad på Min dag. Personal ser dagens och veckans planerade tider per barn i närvaron.
 - Båda vårdnadshavarna kan ändra. Ändringarna loggas. Migrationen `supabase/018_pickup_hub.sql` är inte körd. Innan den är applicerad ligger det gamla veckoschemat kvar på Min dag, och påminnelsen visas inte.
+- `purge_expired_pickup_details` tar också bort sparade länkar när passet inte längre kan öppnas. Namn och telefon rensas som tidigare, sju dagar efter att engångspasset gått ut.
 
 ## 2026-10-22 — Engångspass hittar pgcrypto
 
