@@ -64,6 +64,10 @@ if (card.includes("Checka ut Signe")) throw new Error("a child who is not checke
 if (!card.includes("data-action=\"confirm-permanent-pickup\"")) throw new Error("confirmation stays off the one-day action");
 
 if (sql.includes("create or replace function public.create_pickup_pass")) throw new Error("one-day create must stay untouched");
+if (sql.includes("encode(gen_random_bytes(")) throw new Error("token bytes must be schema-qualified");
+if ((sql.match(/encode\(extensions\.gen_random_bytes\(32\), 'hex'\)/g) || []).length !== 2) {
+  throw new Error("both permanent pass tokens must use extensions.gen_random_bytes");
+}
 if (sql.includes("create or replace function public.confirm_pickup(")) throw new Error("one-day confirm must stay untouched");
 if (!sql.includes("hämtades av")) throw new Error("notice text is missing");
 if (!sql.includes("HH24.MI")) throw new Error("notice clock should match 15.42");

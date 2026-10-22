@@ -279,7 +279,7 @@ begin
   end if;
 
   for attempt in 1..8 loop
-    token := encode(gen_random_bytes(32), 'hex');
+    token := encode(extensions.gen_random_bytes(32), 'hex');
     code := public.pickup_short_code(token);
     token_digest := public.pickup_secret_hash(token);
     code_digest := public.pickup_secret_hash(code);
@@ -380,7 +380,7 @@ begin
   end if;
 
   for attempt in 1..8 loop
-    token := encode(gen_random_bytes(32), 'hex');
+    token := encode(extensions.gen_random_bytes(32), 'hex');
     code := public.pickup_short_code(token);
     token_digest := public.pickup_secret_hash(token);
     code_digest := public.pickup_secret_hash(code);
