@@ -1,11 +1,59 @@
 # Ändringslogg
 
+## 2026-10-22 — Kortöversikt i stället för långa menysidor
+
+- Barnet, Skolor och Personer/Barn öppnas som ett rutnät av kort. Ett tryck visar den delen för sig, med ‹ Tillbaka och rubrik.
+- På Barnet finns också Hämtlista, Profilbild, Klasslista-samtycke och Synka terminsschemat. Terminer på Skolor innehåller behörigheten Får hantera terminsschema. Klasslistan är kvar som egen vy. Närvaro skannar hämtpass som tidigare. Administratören spärrar personer under Personer.
+- Webbläsarens bakåtknapp och en direktlänk, till exempel `#barnet/uppgifter`, öppnar samma vy.
+- Barnväljaren ligger kvar överst när en vårdnadshavare har flera barn.
+- Min dag, Närvaro, Gemenskap, Konto och Översikt är oförändrade listor.
+- En ny del läggs till med ett anrop till `registerHubCard`. Inga nya databasmigrationer.
+
+## 2026-10-22 — Signerade bildadresser
+
+- Profilbilder och bilder i inlägg får `/storage/v1` i den signerade adressen, så att de inte blir 404.
+- Efter en sparad profilbild signeras filen om, så att den gamla bilden inte ligger kvar.
+- Om bilden inte kan laddas visas barnets initialer.
+
+## 2026-10-22 — Klasslista och profilbilder
+
+- Vårdnadshavare kan ladda upp, byta och ta bort en kvadratisk profilbild på Barnet. Bilden beskärs i webbläsaren, förminskas till cirka 512 pixlar och sparas som JPEG utan kamerans dolda uppgifter.
+- Personal och administratörer på barnets avdelning ser namn och bild, till exempel i närvaron och under Personer. De kan inte ändra bilden eller klasslistan.
+- Andra vårdnadshavare ser en klasslista för samma avdelning. Förnamnet visas om minst en vårdnadshavare sagt ja och ingen sagt nej. Bilden visas bara om varje kopplad vårdnadshavare sagt ja. Ett nej gäller direkt.
+- Svaren loggas med vem, barn, vad och när. Den privata bucketen `child-photos` skapas av migrationen. Appen tar bort bildfilen via Storage. Databasen rensar bara sökvägen och raderar inte i `storage.objects`, eftersom det blockeras där. En ny bild ersätter samma fil.
+- Migration `supabase/migrations/015_class_list_photos.sql` är redan körd mot produktion. Kör den inte igen.
+
+## 2026-10-22 — Vårdnadshavare kan synka terminsschemat
+
+- En vårdnadshavare kan skapa en personlig kalenderlänk under Barnet och lägga till den i Apple, Outlook eller Google.
+- Länken innehåller publicerade terminer och stängda dagar för de förskolor där vårdnadshavaren har ett barn. Inga uppgifter om barnet följer med.
+- Den råa länken visas bara direkt efter att den skapas. Databasen lagrar bara en kontrollsumma. En ny länk stänger den tidigare, och länken kan stängas av.
+- Apple uppdaterar inom ungefär en timme. Google kan ta 12–24 timmar.
+- Migration `supabase/migrations/013_calendar_subscriptions.sql` är redan körd och funktionen `term-feed` är publicerad. Kör inte migrationen igen.
+
+## 2026-10-22 — Administratören kan låta personal hantera terminen
+
+- En administratör kan ge en lärare behörigheten **Får hantera terminsschema**. Läraren kan då skapa utkast, publicera och ändra publicerade terminer och stängningsdagar för de skolor där läraren arbetar.
+- Övrig personal ser fortfarande bara den publicerade terminen, utan knappar för att skapa eller ändra.
+- Behörigheten kan tas bort när som helst. Varje tilldelning och borttagning sparas med vem, vem det gällde och när.
+- Migration `supabase/migrations/014_term_managers.sql` är redan körd mot produktion. Kör den inte igen. Den ändrar inte befintliga terminsfunktioners argument.
+
 ## 2026-10-22 — Vårdnadshavare äger barnets uppgifter
 
 - Vårdnadshavare kan ändra och ta bort sina kontaktpersoner, tömma enskilda hälsofält och anteckningen, och svara nej för att ta tillbaka ett samtycke. Borttagning frågar en gång till.
 - Personal och administratörer kan läsa barnets uppgifter, inklusive allergier, men ser inga fält för att ändra dem.
 - En administratör kan fortfarande flytta ett barn mellan avdelningar. Personal och administratörer kan fortfarande lägga till ett barn och sätta namn och avdelning när barnet skapas. En administratör kan fortfarande ta bort ett barn.
-- Kräver migration `supabase/011_guardian_owned_child_info.sql` innan den nya behörigheten gäller. Migrationen har inte körts mot produktion, raderar inga rader och tar inte bort kolumner. Den rör inte hämtpassens tabeller och kan köras före eller efter `010`.
+- Migration `supabase/011_guardian_owned_child_info.sql` är redan körd mot produktion. Den raderar inga rader och tar inte bort kolumner. Den rör inte hämtpassens tabeller.
+
+## 2026-10-21 — Hämtpass och utcheckning
+
+- Vårdnadshavare håller en hämtlista per barn och kan skapa ett hämtpass för en dag. Länken visas för den som hämtar utan att den personen behöver ett konto.
+- Personal skannar QR-koden eller skriver en sexsiffrig kod under Närvaro och bekräftar utcheckningen. Inget checkas ut automatiskt.
+- Manuell utcheckning frågar vem som hämtar: vårdnadshavare, någon på hämtlistan eller annan med en kort kommentar.
+- En administratör kan spärra en person med får ej hämta. Spärren gäller före pass och manuell utcheckning.
+- Båda vårdnadshavarna får ett meddelande i appen, och händelsen sparas i en logg. Namn och telefon på passet rensas sju dagar efter att det gått ut.
+- Hämtpasset, skanningen, bekräftelsen, Hämtad av och spärren följer skrivbordets vänsterspalt från 1200 px och bottenmenyn på smalare skärmar. Själva hämtpasset har ingen meny.
+- Migration `supabase/010_pickup_passes.sql` är redan körd mot produktion.
 
 ## 2026-10-21 — Inbjudningar styr vem som kommer in
 

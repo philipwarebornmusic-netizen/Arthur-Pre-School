@@ -48,11 +48,38 @@ First real account
 7. Guardians request an additional child from the app. Staff approve the request before the child is linked.
 
 Guardian-owned child information
-- Run supabase/011_guardian_owned_child_info.sql once in the SQL editor after the earlier migrations.
-- Do not run it against production until guardians should be the only people who can change child information. Deploy previews use the production database, so saving from this version fails there until 011 has been applied on a non-production database.
-- The file does not delete rows or drop columns. It does not touch pickup_contacts, pickup_passes, or pickup_events, so it is safe before or after 010.
-- 010 does not grant staff or admin any write on the child profile, health, emergency contacts, or consents.
-- After 011, guardians edit and remove that information. Staff and administrators keep read access. Creating a child, including name and department, stays with staff and administrators. An administrator can move a child between departments and can still delete a child.
+- supabase/011_guardian_owned_child_info.sql is already applied in production. Do not run it again.
+- Guardians edit and remove child information. Staff and administrators keep read access. Creating a child, including name and department, stays with staff and administrators. An administrator can move a child between departments and can still delete a child.
+- The file does not delete rows or drop columns. It does not touch pickup tables. 010 does not grant staff or admin any write on the child profile, health, emergency contacts, or consents.
+
+Pickup passes
+- supabase/010_pickup_passes.sql is already applied in production. Do not run it again.
+- Guardians keep a pickup list per child. An administrator can block a person. Both guardians can create and revoke a one-day, single-use pass.
+- The pass link is copied by the guardian. The app does not send it. The public page shows the child's first name, the date, a QR code, a 6-digit fallback code, and a short privacy notice.
+- Only sha256 hashes of the token and the fallback code are stored. The code is derived from the token so it can be shown to the link holder without a plaintext column. Anonymous callers cannot look up a pass with the 6-digit code.
+- Staff of the child's department scan the QR code or enter the code, then press Bekräfta utcheckning. The camera reader is the local barcode-detector 3.2.3 ponyfill with zxing-wasm 3.1.6, loaded from vendor/. QR images are drawn with the local qrcode-generator 2.0.4 script. No scanner service is called.
+- Every check-out writes an append-only pickup event and an in-app notice to each guardian.
+- purge_expired_pickup_details() clears the pickup person's name and phone seven days after the pass expires and keeps the event. The signed-in app calls it. An operator who already has a database scheduler can run the same function there. No paid scheduler is added.
+
+Term calendar subscriptions
+- supabase/migrations/013_calendar_subscriptions.sql is already applied, and the term-feed function is already deployed. Do not run the migration again and do not redeploy the function from this release.
+- The function reads SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY from the Supabase environment. Do not copy that key into the repository, the app, or a task note.
+- Guardians create a personal link on the Barnet tab. The database stores only a SHA-256 hash. The raw token is shown once.
+- The feed lists published terms and closures for schools where that guardian has a child. It does not include child names or weekly schedules.
+- Legacy calendar_feeds and calendar_events keep their rows. 013 revokes anon and authenticated privileges on them when those tables exist. It does not drop them.
+
+Term managers
+- supabase/migrations/014_term_managers.sql is already applied in production. Do not run it again.
+- An administrator can grant term management to a staff member from Skolor. The grant covers every school where that person is assigned, and only that person. Other teachers stay read-only.
+- Grants and revocations are appended to term_manager_events. The tables have row-level security and no direct anon or authenticated writes.
+- Existing term function arguments are unchanged.
+
+Class list and profile photos
+- supabase/migrations/015_class_list_photos.sql is already applied in production. Do not run it again.
+- The file creates the private Storage bucket child-photos (not public, 2 MB, JPEG only) and the consent tables. No separate bucket step is required when that insert succeeds. If the storage schema rejects the insert, create a private bucket with that id, the same size limit and image/jpeg, then run the file again.
+- Guardians upload, replace and delete <child_id>/profile.jpg. Replacement upserts that same path, so the previous file is overwritten. The app deletes the object through the Storage API. clear_child_photo only checks that the object is gone and then clears photo_path. The SQL does not DELETE from storage.objects, because protect_objects_delete rejects every such statement. Staff and administrators of the child's department can read the photo. Other guardians can read it only when every linked guardian has opted in and the child is still named in the class list.
+- Answers are per guardian. A null answer is unanswered, not a no. Any explicit no hides the name immediately. The photo requires yes from every linked guardian. Changes are appended to class_list_consent_events.
+- This opt-in is separate from app_images, group_images and social_media. Do not reuse those rows.
 
 Fake Test organization and PreSchool Test preschool
 1. Keep this tenant free from real child, health, contact and consent data.
