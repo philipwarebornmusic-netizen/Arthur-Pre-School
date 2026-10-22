@@ -4,6 +4,7 @@
 import ast
 from html.parser import HTMLParser
 from pathlib import Path
+import subprocess
 from urllib.parse import unquote, urlsplit
 import re
 import sys
@@ -188,6 +189,35 @@ def check_tasks(errors):
     return task_count
 
 
+def check_term_parser(errors):
+    result = subprocess.run(["node", "scripts/term_parser_test.mjs"], cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stdout + result.stderr).strip() or "term parser checks failed"
+        errors.append(detail)
+
+
+def check_people_directory(errors):
+    script = ROOT / "scripts" / "people_directory_test.mjs"
+    if not script.exists():
+        errors.append("scripts/people_directory_test.mjs is missing")
+        return
+    result = subprocess.run(["node", str(script)], cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "people directory test failed").strip()
+        errors.append(detail)
+
+
+def check_permanent_passes(errors):
+    script = ROOT / "scripts" / "permanent_pass_test.mjs"
+    if not script.exists():
+        errors.append("scripts/permanent_pass_test.mjs is missing")
+        return
+    result = subprocess.run(["node", str(script)], cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "permanent pass test failed").strip()
+        errors.append(detail)
+
+
 def main():
     errors = []
     check_required_files(errors)
@@ -196,6 +226,9 @@ def main():
     check_browser_config(errors)
     python_sources = check_python_sources(errors)
     tasks = check_tasks(errors)
+    check_term_parser(errors)
+    check_people_directory(errors)
+    check_permanent_passes(errors)
 
     if errors:
         print("Arthur verification FAILED", file=sys.stderr)

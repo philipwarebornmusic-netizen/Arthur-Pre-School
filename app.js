@@ -32,13 +32,23 @@ const state = {
   siblingRequests: [],
   joinRequests: [],
   staffMembers: [],
+  organizationPeople: [],
   onboarding: null,
   schoolCodeResult: null,
   migrationReady: true,
   pickupReady: true,
   pickupContacts: [],
   pickupPasses: [],
+  permanentPasses: [],
+  permanentPassesReady: true,
   pickupNotices: [],
+  incidentReady: true,
+  notices: [],
+  incidents: [],
+  incidentCopies: [],
+  incidentScreen: "list",
+  incidentId: null,
+  incidentDetail: null,
   createdPass: null,
   checkout: null,
   scan: null,
@@ -105,9 +115,18 @@ function formatTimestamp(value) {
   return new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 const SWEDISH_MONTHS = {
-  januari: 1, februari: 2, mars: 3, april: 4, maj: 5, juni: 6,
-  juli: 7, augusti: 8, september: 9, oktober: 10, november: 11, december: 12,
+  januari: 1, jan: 1, februari: 2, feb: 2, mars: 3, mar: 3, april: 4, apr: 4, maj: 5,
+  juni: 6, jun: 6, juli: 7, jul: 7, augusti: 8, aug: 8, september: 9, sept: 9, sep: 9,
+  oktober: 10, okt: 10, november: 11, nov: 11, december: 12, dec: 12,
 };
+const MONTH_PATTERN = Object.keys(SWEDISH_MONTHS).sort((left, right) => right.length - left.length).join("|");
+const TERM_DATE_PATTERN = new RegExp([
+  "\\b(\\d{4})-(\\d{2})-(\\d{2})\\b",
+  `\\b(\\d{1,2})\\s*[-–—]\\s*(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?\\b`,
+  `\\b(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?\\s*(?:[-–—]|till)\\s*(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?\\b`,
+  `\\b(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?\\b`,
+].join("|"), "gi");
+const TERM_START_LOOKBACK_DAYS = 150;
 const WEEKDAYS = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"];
 const WEEKDAY_PATTERNS = [
   /måndag(?:ar)?/i, /tisdag(?:ar)?/i, /onsdag(?:ar)?/i, /torsdag(?:ar)?/i, /fredag(?:ar)?/i,
@@ -119,50 +138,236 @@ function isoDate(year, month, day) {
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function parseSwedishDates(text) {
-  const pattern = /\b(\d{4})-(\d{2})-(\d{2})\b|\b(\d{1,2})\s+(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)(?:\s+(\d{4}))?\b/gi;
-  const matches = Array.from(text.matchAll(pattern));
-  const currentYear = Number(todayIso().slice(0, 4));
-  let firstDate = "";
-  return matches.map((match, index) => {
-    let year = match[1] ? Number(match[1]) : Number(match[6] || currentYear);
-    const month = match[1] ? Number(match[2]) : SWEDISH_MONTHS[match[5].toLowerCase()];
-    const day = match[1] ? Number(match[3]) : Number(match[4]);
-    let parsed = isoDate(year, month, day);
-    if (index === 1 && !match[1] && !match[6] && parsed < firstDate) {
-      year += 1;
-      parsed = isoDate(year, month, day);
+function shiftIsoDate(value, days) {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function monthNumber(name) {
+  const month = SWEDISH_MONTHS[String(name || "").toLowerCase()];
+  if (!month) throw new Error("Ärtan kunde inte tolka ett av datumen.");
+  return month;
+}
+
+function datePoint(day, month, year) {
+  return { day: Number(day), month: Number(month), year: year ? Number(year) : null };
+}
+
+function termDateMentions(text) {
+  return Array.from(text.matchAll(TERM_DATE_PATTERN), (match) => {
+    const before = text.slice(Math.max(0, match.index - 32), match.index).toLowerCase();
+    const cue = /(?:startar|börjar|startdatum)\s*(?:den\s*)?$/.test(before)
+      ? "start"
+      : /(?:slutar|avslutas|slutdatum)\s*(?:den\s*)?$/.test(before) ? "end" : "";
+    if (match[1]) {
+      return { index: match.index, end: match.index + match[0].length, cue, start: datePoint(match[3], match[2], match[1]), finish: null };
     }
-    if (index === 0) firstDate = parsed;
-    return { value: parsed, index: match.index, end: match.index + match[0].length };
+    if (match[4]) {
+      return { index: match.index, end: match.index + match[0].length, cue, start: datePoint(match[4], monthNumber(match[6]), match[7]), finish: datePoint(match[5], monthNumber(match[6]), match[7]) };
+    }
+    if (match[8]) {
+      return {
+        index: match.index,
+        end: match.index + match[0].length,
+        cue,
+        start: datePoint(match[8], monthNumber(match[9]), match[10]),
+        finish: datePoint(match[11], monthNumber(match[12]), match[13]),
+      };
+    }
+    return { index: match.index, end: match.index + match[0].length, cue, start: datePoint(match[14], monthNumber(match[15]), match[16]), finish: null };
   });
 }
 
+function yearForUndatedStart(month, day, today) {
+  const currentYear = Number(today.slice(0, 4));
+  if (isoDate(currentYear, month, day) >= shiftIsoDate(today, -TERM_START_LOOKBACK_DAYS)) return currentYear;
+  return currentYear + 1;
+}
+
+function yearOnOrAfter(month, day, startIso, endIso = "") {
+  const startYear = Number(startIso.slice(0, 4));
+  let year = isoDate(startYear, month, day) >= startIso ? startYear : startYear + 1;
+  if (endIso) {
+    const candidate = isoDate(year, month, day);
+    const otherYear = year === startYear ? startYear + 1 : startYear;
+    const other = isoDate(otherYear, month, day);
+    if ((candidate < startIso || candidate > endIso) && other >= startIso && other <= endIso) year = otherYear;
+  }
+  return year;
+}
+
+function resolveDatePoint(point, today, startIso = "", endIso = "") {
+  const year = point.year || (startIso ? yearOnOrAfter(point.month, point.day, startIso, endIso) : yearForUndatedStart(point.month, point.day, today));
+  return isoDate(year, point.month, point.day);
+}
+
+function closureContext(text, index) {
+  return /stäng/i.test(text.slice(0, index)) && !/(startar|börjar|slutar)/i.test(text.slice(0, index));
+}
+
+function selectTermMentions(mentions, text) {
+  const used = new Set();
+  const startCue = mentions.find((mention) => mention.cue === "start");
+  const endCue = mentions.find((mention) => mention.cue === "end" && mention !== startCue);
+  let startMention = startCue || null;
+  let endMention = endCue || null;
+  if (!startMention && !endMention) {
+    const span = mentions.find((mention) => mention.finish && !closureContext(text, mention.index));
+    if (span) {
+      startMention = span;
+      endMention = span;
+    } else {
+      const open = mentions.filter((mention) => !closureContext(text, mention.index));
+      if (open[0]) startMention = open[0];
+      if (open[1]) endMention = open[1];
+    }
+  } else if (startMention?.finish && !endMention) {
+    endMention = startMention;
+  } else if (!startMention && endMention?.finish) {
+    startMention = endMention;
+  }
+  if (startMention) used.add(startMention);
+  if (endMention) used.add(endMention);
+  return {
+    startMention,
+    endMention,
+    closures: mentions.filter((mention) => !used.has(mention)),
+  };
+}
+
+function cleanClosureReason(value) {
+  const cleaned = String(value || "")
+    .replace(/^(?:\s*(?:för|kring|under|på|vid|den|de|och|vi|har|är)\b\s*)+/gi, "")
+    .replace(/[\s,:;&-]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (cleaned.length < 2) return "";
+  return cleaned.charAt(0).toLocaleUpperCase("sv-SE") + cleaned.slice(1);
+}
+
+function closureIntroductions(text) {
+  const pattern = new RegExp(`\\bstäng\\w*\\b(?:\\s+(?:för|kring|under|på|vid))?\\s*([^\\d.]{0,80})`, "gi");
+  return Array.from(text.matchAll(pattern), (match) => ({ index: match.index, reason: cleanClosureReason(match[1]) }));
+}
+
+function introductionKey(introductions, index) {
+  let key = -1;
+  introductions.forEach((introduction) => {
+    if (introduction.index < index) key = introduction.index;
+  });
+  return key;
+}
+
+function reasonBefore(introductions, index) {
+  let reason = "";
+  introductions.forEach((introduction) => {
+    if (introduction.index < index && introduction.reason) reason = introduction.reason;
+  });
+  return reason;
+}
+
+function reasonAfter(text, end, limit) {
+  const segment = text.slice(end, limit);
+  const match = segment.match(/^\s*(?:,|&|\boch\b|\s)*för\s+(.+?)(?=\s+och\b|\s*[,.]|$)/i);
+  return match ? cleanClosureReason(match[1]) : "";
+}
+
+function expandMention(mention, today, startIso, endIso) {
+  const first = resolveDatePoint(mention.start, today, startIso, endIso);
+  if (!mention.finish) return [first];
+  const last = resolveDatePoint(mention.finish, today, first);
+  if (last < first) throw new Error("Ärtan kunde inte tolka ett av datumen.");
+  const days = [];
+  let cursor = first;
+  while (cursor <= last && days.length < 45) {
+    days.push(cursor);
+    cursor = shiftIsoDate(cursor, 1);
+  }
+  return days;
+}
+
+function termTitle(prefix, startsOn) {
+  const stripped = prefix
+    .replace(/[-–—,:.\s]+$/g, "")
+    .replace(/\b(?:startar|börjar|slutar|den)\b\s*$/gi, "")
+    .replace(/^(?:vi\s+har\s+|vi\s+)?(?:startar|börjar|slutar)\b\s*/i, "")
+    .replace(/[-–—,:.\s]+$/g, "")
+    .trim();
+  if (stripped.length >= 2 && !/^(?:vi|och)$/i.test(stripped)) return stripped;
+  if (!startsOn) return "";
+  const month = Number(startsOn.slice(5, 7));
+  return `${month >= 8 ? "Hösttermin" : "Vårtermin"} ${startsOn.slice(0, 4)}`;
+}
+
+function missingTermMessage(missing) {
+  const phrases = missing.map((item) => (item === "hours" ? "inga öppettider" : item === "start" ? "inget startdatum" : "inget slutdatum"));
+  if (!phrases.length) return "";
+  if (phrases.length === 1) return `Ärtan hittade ${phrases[0]}.`;
+  return `Ärtan hittade ${phrases.slice(0, -1).join(", ")} och ${phrases.at(-1)}.`;
+}
+
 function clockRanges(text) {
-  return Array.from(text.matchAll(/\b([01]?\d|2[0-3])[.:]([0-5]\d)\s*[-–]\s*([01]?\d|2[0-3])[.:]([0-5]\d)\b/g), (match) => ({
+  return Array.from(text.matchAll(/\b(?:kl\.?\s*)?([01]?\d|2[0-3])[.:]([0-5]\d)\s*(?:[-–—]|till)\s*(?:kl\.?\s*)?([01]?\d|2[0-3])[.:]([0-5]\d)\b/gi), (match) => ({
     start: `${match[1].padStart(2, "0")}:${match[2]}`,
     end: `${match[3].padStart(2, "0")}:${match[4]}`,
     index: match.index,
   }));
 }
 
-function parseTermText(value) {
-  const text = String(value || "").trim();
-  const dates = parseSwedishDates(text);
+function parseTermText(value, today = todayIso()) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const mentions = termDateMentions(text);
+  const selected = selectTermMentions(mentions, text);
+  const startsOn = selected.startMention ? resolveDatePoint(selected.startMention.start, today) : "";
+  const endPoint = selected.endMention ? (selected.endMention.finish && selected.endMention === selected.startMention ? selected.endMention.finish : selected.endMention.finish || selected.endMention.start) : null;
+  const endsOn = endPoint ? resolveDatePoint(endPoint, today, startsOn) : "";
   const times = clockRanges(text);
-  if (dates.length < 2 || !times.length) throw new Error("Skriv terminens start, slut och öppettider, till exempel 3 augusti–18 december, 06.30–17.30.");
-  const name = text.slice(0, dates[0].index).replace(/[-–,:]+$/g, "").trim() || "Termin";
-  const closures = dates.slice(2).map((date, index) => {
-    const next = dates[index + 3]?.index ?? text.length;
-    const segment = text.slice(date.end, next).replace(/^[\s,.:;-]*(?:för\s+)?/i, "").replace(/\s+och\s*$/i, "").replace(/[.,;]+$/g, "").trim();
-    let closureDate = date.value;
-    if (closureDate < dates[0].value || closureDate > dates[1].value) {
-      const endYearCandidate = `${dates[1].value.slice(0, 4)}${closureDate.slice(4)}`;
-      if (endYearCandidate >= dates[0].value && endYearCandidate <= dates[1].value) closureDate = endYearCandidate;
-    }
-    return { date: closureDate, reason: segment || "Stängt" };
+  const introductions = closureIntroductions(text);
+  const seen = new Set();
+  const closures = [];
+  const pending = selected.closures.map((mention, index) => {
+    const next = selected.closures[index + 1]?.index ?? text.length;
+    return { mention, after: reasonAfter(text, mention.end, next) };
   });
-  return { name, startsOn: dates[0].value, endsOn: dates[1].value, opensAt: times[0].start, closesAt: times[0].end, closures };
+  let carriedReason = "";
+  let carriedKey = null;
+  for (let index = pending.length - 1; index >= 0; index -= 1) {
+    const key = introductionKey(introductions, pending[index].mention.index);
+    if (key !== carriedKey) {
+      carriedReason = "";
+      carriedKey = key;
+    }
+    if (pending[index].after) carriedReason = pending[index].after;
+    else if (carriedReason && !reasonBefore(introductions, pending[index].mention.index)) pending[index].after = carriedReason;
+    else carriedReason = "";
+  }
+  pending.forEach((item) => {
+    const reason = item.after || reasonBefore(introductions, item.mention.index) || "Stängt";
+    expandMention(item.mention, today, startsOn, endsOn).forEach((date) => {
+      if (seen.has(date)) return;
+      seen.add(date);
+      closures.push({ date, reason });
+    });
+  });
+  closures.sort((left, right) => left.date.localeCompare(right.date));
+  const missing = [];
+  if (!startsOn) missing.push("start");
+  if (!endsOn) missing.push("end");
+  if (!times.length) missing.push("hours");
+  const nameIndex = selected.startMention?.index ?? selected.endMention?.index ?? text.length;
+  const sentences = [missingTermMessage(missing)];
+  if (startsOn && endsOn && endsOn < startsOn) sentences.push("Slutdatumet ligger före startdatumet.");
+  return {
+    name: termTitle(text.slice(0, nameIndex), startsOn),
+    startsOn,
+    endsOn,
+    opensAt: times[0]?.start || "",
+    closesAt: times[0]?.end || "",
+    closures,
+    error: sentences.filter(Boolean).join(" "),
+  };
 }
 
 function weekdaysIn(value) {
@@ -296,12 +501,17 @@ function parentReminders(child) {
   childInfoChecklist(child)
     .filter((item) => !item.complete)
     .forEach((item) => reminders.push({ text: item.reminder, view: "child", target: item.id }));
+  if ((state.incidentCopies || []).some((copy) => copy.child_name === child.name && !copy.acknowledged_at)) {
+    reminders.unshift({ text: "Bekräfta att du har läst informationen från förskolan.", view: "child", target: "incident-copies" });
+  }
   return reminders.slice(0, 3);
 }
 
 // Card hubs. One registerHubCard call is one section.
 // Barnet: Grunduppgifter, Hälsa, Kontaktpersoner, Samtycken, Syskon, Hämtlista,
-// Profilbild, Klasslista (samtycke) and Kalender. Klasslista stays its own nav view.
+// Profilbild, Klasslista (samtycke), Kalender, and Information att läsa when a
+// guardian copy is waiting. Klasslista stays its own nav view.
+// Personer/Barn includes Incidentrapporter for staff and administrators.
 // The Terminer card wraps renderTermManager, including the term-manager toggle.
 // Närvaro keeps the pickup scan. No extra card for that toggle or the scan.
 const hubCards = { child: [], schools: [], people: [] };
@@ -312,6 +522,7 @@ const HUB_SECTION_BY_TARGET = {
   "child-health": "halsa",
   "child-contacts": "kontakter",
   "child-consents": "samtycken",
+  "incident-copies": "information",
 };
 
 function registerHubCard(hub, card) {
@@ -322,28 +533,20 @@ function registerHubCard(hub, card) {
 
 function allowedViewsForRole(role) {
   return {
-    admin: ["overview", "attendance", "schools", "messages", "people", "account"],
-    staff: ["attendance", "messages", "people", "account"],
+    admin: ["overview", "attendance", "schools", "messages", "people", "incidents", "account"],
+    staff: ["attendance", "messages", "people", "incidents", "account"],
     parent: ["home", "child", "classlist", "messages", "account"],
   }[role] || ["home", "child", "classlist", "messages", "account"];
-}
-
-function peopleChildStatus(child) {
-  const birth = child.birth_date ? formatDate(child.birth_date) : "Saknar födelsedatum";
-  return `${departmentName(child.department_id)} · ${birth}`;
 }
 
 function cardsForHub(hub) {
   const registered = (hubCards[hub] || []).filter((card) => !card.visible || card.visible());
   if (hub !== "people") return registered;
-  const childCards = state.children.map((child) => ({
-    id: `barn-${child.id}`,
-    icon: "🌱",
-    title: child.name,
-    status: () => peopleChildStatus(child),
-    render: () => `<article class="card" id="child-info-read">${renderChildFacts(child)}</article>`,
-  }));
-  return registered.concat(childCards);
+  return registered.concat(peopleDetailCards());
+}
+
+function hubGridCards(hub) {
+  return cardsForHub(hub).filter((card) => !card.detail);
 }
 
 function readHubHash() {
@@ -396,7 +599,7 @@ function renderHubView({ hub, before = "", heroHtml = "" }) {
   if (open) {
     return `${noticeHtml()}${before}<section class="hub-panel"><button class="hub-back" type="button" data-action="hub-back">‹ Tillbaka</button><h1 class="h1">${esc(open.title)}</h1>${open.render()}</section>`;
   }
-  return `${noticeHtml()}${before}${heroHtml}${hubClosedBanner(hub)}${renderHubGrid(cardsForHub(hub))}`;
+  return `${noticeHtml()}${before}${heroHtml}${hubClosedBanner(hub)}${renderHubGrid(hubGridCards(hub))}`;
 }
 
 function showView(view, { section = "", scrollTarget = "", push = true } = {}) {
@@ -537,6 +740,144 @@ function storageSignedUrl(signedPath) {
   const rel = signedPath.startsWith("/") ? signedPath : `/${signedPath}`;
   return rel.startsWith("/storage/v1/") ? `${base}${rel}` : `${base}/storage/v1${rel}`;
 }
+
+const sharedFiles = new Map();
+const sharedFileTasks = new Map();
+let sharedFileGeneration = 0;
+
+function clearSharedFiles() {
+  sharedFileGeneration += 1;
+  sharedFiles.forEach((entry) => URL.revokeObjectURL(entry.objectUrl));
+  sharedFiles.clear();
+  sharedFileTasks.clear();
+}
+
+function shareSupport() {
+  return {
+    hasShare: typeof navigator.share === "function",
+    canShare(data) {
+      try {
+        return typeof navigator.canShare === "function" && navigator.canShare(data);
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+/* navigator.share has to run in the tap itself on iOS Safari. Callers prefetch
+   files first and this function never waits before invoking share. */
+function sharePrepared(payload) {
+  const plan = ArtanShare.chooseSharePlan(payload, shareSupport());
+  if (plan.mode === "share") {
+    const pending = navigator.share(plan.data);
+    plan.downloads.forEach(downloadSharedFile);
+    Promise.resolve(pending).catch((error) => {
+      if (error?.name === "AbortError") return;
+      if (plan.downloads.length) return;
+      deliverShareFallback({ title: payload.title, text: payload.text, downloads: payload.files || [] });
+    });
+    return;
+  }
+  deliverShareFallback(plan);
+}
+
+function deliverShareFallback(plan) {
+  (plan.downloads || []).forEach(downloadSharedFile);
+  const text = plan.text || "";
+  const finish = (message) => {
+    state.notice = { type: "success", text: message };
+    render();
+  };
+  if (!text && !(plan.downloads || []).length) {
+    finish("Det finns inget att dela.");
+    return;
+  }
+  if (text && navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      finish(plan.downloads?.length ? "Filen är nedladdad och texten är kopierad." : "Texten är kopierad.");
+    }).catch(() => {
+      downloadSharedFile(new File([text], ArtanShare.safeFileName(plan.title || "text", "txt"), { type: "text/plain" }));
+      finish("Filen är nedladdad.");
+    });
+    return;
+  }
+  if (text) downloadSharedFile(new File([text], ArtanShare.safeFileName(plan.title || "text", "txt"), { type: "text/plain" }));
+  finish("Filen är nedladdad.");
+}
+
+function downloadSharedFile(file) {
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = file.name || "fil";
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function sharePending(kind) {
+  state.notice = {
+    type: "success",
+    text: kind === "print" ? "Filen förbereds. Tryck på Skriv ut igen." : "Filen förbereds. Tryck på Dela igen.",
+  };
+  render();
+}
+
+function prefetchShareFile(key, url, filename) {
+  if (!key || !url || sharedFiles.has(key) || sharedFileTasks.has(key)) return;
+  const generation = sharedFileGeneration;
+  const task = fetch(url, { credentials: "omit", cache: "force-cache", referrerPolicy: "no-referrer" })
+    .then((response) => {
+      if (!response.ok) throw new Error("Filen kunde inte hämtas.");
+      return response.blob();
+    })
+    .then((blob) => {
+      if (generation !== sharedFileGeneration) return;
+      const type = blob.type || "application/octet-stream";
+      const named = ArtanShare.fileNameForType(filename, type);
+      const file = new File([blob], named, { type });
+      sharedFiles.set(key, { file, objectUrl: URL.createObjectURL(file), type });
+    })
+    .catch(() => { /* A later tap starts a new attempt. */ })
+    .finally(() => sharedFileTasks.delete(key));
+  sharedFileTasks.set(key, task);
+}
+
+function prefetchGuardianAttachments() {
+  if (state.profile?.role !== "parent") return;
+  const live = new Set(state.postImages.map((image) => image.image_id));
+  sharedFiles.forEach((entry, key) => {
+    if (live.has(key)) return;
+    URL.revokeObjectURL(entry.objectUrl);
+    sharedFiles.delete(key);
+  });
+  state.postImages.forEach((image) => {
+    if (!image.image_id || !image.signed_url) return;
+    prefetchShareFile(image.image_id, image.signed_url, ArtanShare.safeFileName(image.alt_text || "bild", "jpg"));
+  });
+}
+
+function cachedShareFile(key) {
+  return sharedFiles.get(key) || null;
+}
+
+function openPrint(html) {
+  const root = document.getElementById("printRoot");
+  if (!root) return;
+  root.innerHTML = html;
+  document.body.dataset.printing = "1";
+  window.print();
+}
+
+window.addEventListener("afterprint", () => {
+  delete document.body.dataset.printing;
+  const root = document.getElementById("printRoot");
+  if (root) root.innerHTML = "";
+});
 
 async function signPostImages(images) {
   if (!images.length) return [];
@@ -704,6 +1045,7 @@ async function logout() {
     if (state.session) await request("/auth/v1/logout", { method: "POST" });
   } finally {
     saveSession(null);
+    clearSharedFiles();
     Object.assign(state, {
       profile: null,
       organization: null,
@@ -731,6 +1073,7 @@ async function logout() {
       siblingRequests: [],
       joinRequests: [],
       staffMembers: [],
+      organizationPeople: [],
       onboarding: null,
       schoolCodeResult: null,
       inviteResult: null,
@@ -750,6 +1093,8 @@ async function logout() {
       pickupReady: true,
       pickupContacts: [],
       pickupPasses: [],
+      permanentPasses: [],
+      permanentPassesReady: true,
       pickupNotices: [],
       createdPass: null,
       checkout: null,
@@ -806,7 +1151,7 @@ async function loadData() {
   const organizationId = encodeURIComponent(state.profile.organization_id);
   const date = todayIso();
   state.termManagersReady = true;
-  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, schoolTerms, termClosures, weeklySchedules, posts, postImages, invitations, postComments, communityMembers, guardianMessageTargets, privateMessages, playdateRequests, birthdayCandidates, birthdayInvitations, siblingRequests, joinRequests, staffMembers, termPermissions, termManagers] = await Promise.all([
+  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, schoolTerms, termClosures, weeklySchedules, posts, postImages, invitations, postComments, communityMembers, guardianMessageTargets, privateMessages, playdateRequests, birthdayCandidates, birthdayInvitations, siblingRequests, joinRequests, staffMembers, termPermissions, termManagers, organizationPeople] = await Promise.all([
     request(`/rest/v1/organizations?select=id,name,type,created_at&id=eq.${organizationId}&limit=1`),
     request(`/rest/v1/preschools?select=id,organization_id,name,phone,address,postal_code,city,opening_hours,created_at&organization_id=eq.${organizationId}&order=name.asc`),
     request("/rest/v1/departments?select=id,preschool_id,name,created_at&order=name.asc"),
@@ -834,6 +1179,7 @@ async function loadData() {
     state.profile.role === "admin" ? optionalRpc("list_staff_members") : Promise.resolve([]),
     state.profile.role === "admin" || state.profile.role === "staff" ? optionalTermRpc("my_term_permissions") : Promise.resolve([]),
     state.profile.role === "admin" ? optionalTermRpc("list_term_managers") : Promise.resolve([]),
+    state.profile.role === "admin" ? loadOrganizationPeople(organizationId) : Promise.resolve([]),
   ]);
 
   state.organization = organizations[0] || null;
@@ -871,15 +1217,44 @@ async function loadData() {
   state.siblingRequests = siblingRequests || [];
   state.joinRequests = joinRequests || [];
   state.staffMembers = staffMembers || [];
+  state.organizationPeople = organizationPeople || [];
   state.pickupReady = true;
-  const [pickupContacts, pickupPasses, pickupNotices] = await Promise.all([
+  state.incidentReady = true;
+  await incidentRpc("remind_incident_copies");
+  const notices = state.incidentReady ? await incidentRpc("list_notices") : null;
+  const [pickupContacts, pickupPasses] = await Promise.all([
     pickupRpc("list_pickup_contacts"),
     state.profile.role === "staff" ? Promise.resolve([]) : pickupRpc("list_pickup_passes"),
-    state.profile.role === "parent" ? pickupRpc("list_pickup_notices") : Promise.resolve([]),
   ]);
   state.pickupContacts = pickupContacts || [];
   state.pickupPasses = pickupPasses || [];
-  state.pickupNotices = pickupNotices || [];
+  state.notices = state.incidentReady && notices ? notices : ((await pickupRpc("list_pickup_notices")) || []);
+  state.pickupNotices = state.notices.filter((notice) => !notice.kind || notice.kind === "pickup");
+  if (state.incidentReady && state.profile.role === "parent") {
+    state.incidentCopies = (await incidentRpc("list_my_incident_copies")) || [];
+    state.incidents = [];
+  } else if (state.incidentReady) {
+    state.incidents = (await incidentRpc("list_incidents")) || [];
+    state.incidentCopies = [];
+  } else {
+    state.incidents = [];
+    state.incidentCopies = [];
+  }
+  state.permanentPassesReady = true;
+  if (state.pickupReady && state.profile.role !== "staff") {
+    try {
+      state.permanentPasses = (await rpc("list_permanent_pickup_passes") || []).map((pass) => ({
+        ...pass,
+        children: Array.isArray(pass.children) ? pass.children : [],
+      }));
+    } catch (error) {
+      state.permanentPasses = [];
+      if (/schema cache|could not find the function|pgrst202/i.test(error.message)) state.permanentPassesReady = false;
+      else throw error;
+    }
+  } else {
+    state.permanentPasses = [];
+  }
   if (state.pickupReady) {
     try { await rpc("purge_expired_pickup_details"); } catch { /* Cleanup can wait for the next signed-in visit. */ }
   }
@@ -911,6 +1286,7 @@ async function loadData() {
 }
 
 function clearLoadedData() {
+  clearSharedFiles();
   Object.assign(state, {
     organization: null,
     schools: [],
@@ -937,9 +1313,18 @@ function clearLoadedData() {
     siblingRequests: [],
     joinRequests: [],
     staffMembers: [],
+    organizationPeople: [],
     pickupContacts: [],
     pickupPasses: [],
+    permanentPasses: [],
+    permanentPassesReady: true,
     pickupNotices: [],
+    notices: [],
+    incidents: [],
+    incidentCopies: [],
+    incidentScreen: "list",
+    incidentId: null,
+    incidentDetail: null,
     checkout: null,
     scan: null,
     calendarFeed: null,
@@ -1037,6 +1422,18 @@ async function pickupRpc(name, args) {
   }
 }
 
+async function incidentRpc(name, args) {
+  try {
+    return await rpc(name, args);
+  } catch (error) {
+    if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
+      state.incidentReady = false;
+      return null;
+    }
+    throw error;
+  }
+}
+
 function optionalRpc(name, args) {
   return rpc(name, args).catch((error) => {
     if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
@@ -1055,6 +1452,16 @@ function optionalClassListRpc(name, args) {
     }
     throw error;
   });
+}
+
+async function loadOrganizationPeople(organizationId) {
+  const filtered = `/rest/v1/profiles?organization_id=eq.${organizationId}&order=name.asc`;
+  try {
+    return await request(`${filtered}&select=id,name,email,role,removed_at`);
+  } catch (error) {
+    if (!/removed_at|schema cache|column/i.test(error.message)) throw error;
+    return request(`${filtered}&select=id,name,email,role`);
+  }
 }
 
 async function loadChildren() {
@@ -1613,11 +2020,39 @@ function renderWeeklyScheduleForm(term, child) {
   </form>`;
 }
 
+function renderShareActions(kind, id, label) {
+  if (state.profile?.role !== "parent") return "";
+  const name = esc(label || "innehållet");
+  return `<div class="share-actions"><button class="secondary" type="button" data-action="share-${kind}" data-id="${esc(id)}" aria-label="Dela ${name}">Dela</button><button class="secondary" type="button" data-action="print-${kind}" data-id="${esc(id)}" aria-label="Skriv ut ${name}">Skriv ut</button></div>`;
+}
+
+function termShareModel(termId) {
+  const term = state.schoolTerms.find((item) => item.term_id === termId && item.term_status === "published");
+  if (!term || state.profile?.role !== "parent") return null;
+  const child = selectedChild();
+  const department = child && childSchoolId(child) === term.preschool_id
+    ? state.departments.find((item) => item.id === child.department_id)
+    : null;
+  const school = state.schools.find((item) => item.id === term.preschool_id);
+  return {
+    organizationName: state.organization?.name || "",
+    schoolName: school?.name || "",
+    departmentName: department?.name || "",
+    termId: term.term_id,
+    termName: term.term_name,
+    startsOn: term.starts_on,
+    endsOn: term.ends_on,
+    opensAt: String(term.opens_at || "").slice(0, 5),
+    closesAt: String(term.closes_at || "").slice(0, 5),
+    closures: closuresForTerm(term.term_id).map((closure) => ({ date: closure.closure_date, reason: closure.reason })),
+  };
+}
+
 function renderParentTermSchedules(child) {
   const preschoolId = childSchoolId(child);
   const terms = state.schoolTerms.filter((term) => term.preschool_id === preschoolId && term.term_status === "published");
   if (!terms.length) return `<section><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${emptyState("Ingen publicerad termin", "När förskolan publicerar terminen visas öppettider, stängningsdagar och veckoschema här.")}</section>`;
-  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${terms.map((term) => `<article class="card term-card"><p class="kicker">Publicerad</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p><h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}</article>${renderWeeklyScheduleForm(term, child)}`).join("")}</section>`;
+  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${terms.map((term) => `<article class="card term-card" data-term-id="${esc(term.term_id)}"><p class="kicker">Publicerad</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p><h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}${renderShareActions("term", term.term_id, term.term_name)}<p class="form-hint">Dela skickar terminen och stängningsdagarna. Barnets schema och kalenderlänken följer inte med.</p></article>${renderWeeklyScheduleForm(term, child)}`).join("")}</section>`;
 }
 
 function parseClosureLines(value) {
@@ -1646,6 +2081,7 @@ const PICKUP_STOPS = {
   expired: "Hämtpasset har gått ut.",
   not_checked_in: "Barnet är inte incheckat.",
   ambiguous: "Koden är inte entydig. Skanna QR-koden i stället.",
+  removed: "Personen finns inte längre på hämtlistan.",
 };
 
 let scanGeneration = 0;
@@ -1690,6 +2126,41 @@ function passStatusLabel(status) {
   return { active: "Gäller", scheduled: "Inte börjat", used: "Använt", revoked: "Återkallat", expired: "Utgånget" }[status] || status;
 }
 
+function permanentPassStatusLabel(status) {
+  return { active: "Gäller", revoked: "Återkallat", expired: "Utgånget", blocked: "Får ej hämta", removed: "Borttagen från hämtlistan" }[status] || status;
+}
+
+function permanentContactKey(name, relation) {
+  const normalize = (value) => String(value || "").trim().replace(/\s+/g, " ").toLocaleLowerCase("sv-SE");
+  return `${normalize(name)}|${normalize(relation)}`;
+}
+
+function permanentLinkedContacts(contacts, childNameById, contactId) {
+  const source = (contacts || []).find((contact) => contact.contact_id === contactId && !contact.blocked);
+  if (!source) return [];
+  const key = permanentContactKey(source.name, source.relation);
+  return (contacts || [])
+    .filter((contact) => contact.contact_id !== source.contact_id && !contact.blocked && childNameById.has(contact.child_id) && permanentContactKey(contact.name, contact.relation) === key)
+    .map((contact) => ({ contactId: contact.contact_id, childId: contact.child_id, childName: childNameById.get(contact.child_id) }))
+    .sort((left, right) => String(left.childName).localeCompare(String(right.childName), "sv"));
+}
+
+function permanentValidityLabel(endsOn) {
+  if (!endsOn) return "Gäller tills vidare";
+  return `Gäller till och med ${formatDate(endsOn)}`;
+}
+
+function permanentPassesForChild(childId) {
+  return state.permanentPasses.filter((pass) => (pass.children || []).some((item) => item.child_id === childId));
+}
+
+function renderPermanentLinkedField(contactId) {
+  const names = new Map(state.children.map((child) => [child.id, child.name]));
+  const linked = permanentLinkedContacts(state.pickupContacts, names, contactId);
+  if (!linked.length) return "";
+  return `<label class="check" data-permanent-linked><input type="checkbox" name="include_linked"> Gäller också ${esc(linked.map((item) => item.childName).join(", "))}</label>`;
+}
+
 function stopPickupScanner() {
   scanGeneration += 1;
   if (scanStream) {
@@ -1728,13 +2199,46 @@ function renderPublicPass() {
   if (!pass.ok) {
     return `<section class="pass-sheet"><article class="card stop-card"><h2>Stopp</h2><p>${esc(pass.error || "Hämtpasset kan inte användas.")}</p></article></section>`;
   }
+  if (pass.permanent) {
+    const several = / och |,/.test(String(pass.first_name || ""));
+    const privacy = several
+      ? "Passet visar bara barnens förnamn. Visa det för personalen och dela inte länken."
+      : "Passet visar bara barnets förnamn. Visa det för personalen och dela inte länken.";
+    return `<section class="pass-sheet"><p class="kicker">Permanent hämtpass</p><h1>Visa för personalen</h1><p class="pass-child">${esc(pass.first_name || "")}</p><p>${esc(permanentValidityLabel(pass.ends_on))}</p><div id="pass-qr" class="pass-qr" role="img" aria-label="QR-kod för hämtpasset"></div><p class="pass-code">${esc(pickupShortCode(pass.qr_payload))}</p><p class="pass-privacy">${privacy}</p></section>`;
+  }
   return `<section class="pass-sheet"><p class="kicker">Hämtpass</p><h1>Visa för personalen</h1><p class="pass-child">${esc(pass.first_name || "")}</p><p>${esc(formatDate(pass.pickup_date))}</p><div id="pass-qr" class="pass-qr" role="img" aria-label="QR-kod för hämtpasset"></div><p class="pass-code">${esc(pickupShortCode(pass.qr_payload))}</p><p class="pass-privacy">Passet visar bara barnets förnamn. Visa det för personalen och dela inte länken.</p></section>`;
 }
 
 function renderCreatedPass(childId) {
   if (!state.createdPass?.token || state.createdPass.child_id !== childId) return "";
   const code = state.createdPass.short_code || pickupShortCode(state.createdPass.token);
+  if (state.createdPass.permanent) {
+    return `<article class="card success-card"><p class="kicker">Kopiera länken nu</p><h3>Permanent hämtpass ${esc(code)}</h3><p class="form-hint">Den som hämtar behöver inget konto. Länken visar förnamn, QR-kod och samma sexsiffriga kod. ${esc(permanentValidityLabel(state.createdPass.ends_on))}. En ny kod gör den här länken ogiltig.</p><code class="secret-value">${esc(passLink(state.createdPass.token))}</code><button class="primary" type="button" data-action="copy-pass" data-token="${esc(state.createdPass.token)}">Kopiera länk</button></article>`;
+  }
   return `<article class="card success-card"><p class="kicker">Kopiera länken nu</p><h3>Hämtpass till ${esc(code)}</h3><p class="form-hint">Den som hämtar behöver inget konto. Länken visar förnamn, datum, QR-kod och samma sexsiffriga kod.</p><code class="secret-value">${esc(passLink(state.createdPass.token))}</code><button class="primary" type="button" data-action="copy-pass" data-token="${esc(state.createdPass.token)}">Kopiera länk</button></article>`;
+}
+
+function renderPermanentPassSection(child) {
+  if (!state.permanentPassesReady) {
+    return `<section class="card" id="permanent-passes"><h2>Permanent hämtpass</h2><p class="form-hint">Permanenta hämtpass är inte aktiverade i databasen ännu.</p></section>`;
+  }
+  const passes = permanentPassesForChild(child.id);
+  const allowed = state.pickupContacts.filter((contact) => contact.child_id === child.id && !contact.blocked);
+  const rows = passes.map((pass) => {
+    const live = pass.pass_status === "active";
+    const extra = live ? "" : ` · ${permanentPassStatusLabel(pass.pass_status)}`;
+    const actions = live
+      ? `<button class="link" type="button" data-action="regenerate-permanent-pass" data-id="${esc(pass.pass_id)}" data-child-id="${esc(child.id)}">Ny kod</button><button class="link danger-link" type="button" data-action="revoke-permanent-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>`
+      : pass.pass_status === "blocked" || pass.pass_status === "removed"
+        ? `<button class="link danger-link" type="button" data-action="revoke-permanent-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>`
+        : "";
+    return `<li><div><strong>${esc(pass.contact_relation || "")} ${esc(pass.contact_name || "Personuppgiften är borta")}</strong><span>${esc(pass.child_names || "")} · ${esc(permanentValidityLabel(pass.ends_on))}${esc(extra)}</span></div><div class="invite-actions">${actions}</div></li>`;
+  }).join("");
+  const firstContact = allowed[0]?.contact_id || "";
+  const form = allowed.length
+    ? `<form class="form-stack" data-form="permanent-pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa permanent hämtpass</h3>${selectField("Person som får hämta", "contact_id", allowed.map((contact) => [contact.contact_id, `${contact.relation} ${contact.name}`]), firstContact, true)}${field("Slutdatum, valfritt", "ends_on", "", { type: "date", min: todayIso(), max: addDaysIso(todayIso(), 1825) })}<div data-permanent-linked-slot>${renderPermanentLinkedField(firstContact)}</div><p class="form-hint">Passet kan användas flera gånger. Utan slutdatum gäller det tills det återkallas. Länken visas en gång.</p><button class="primary" type="submit">Skapa permanent hämtpass</button></form>`
+    : `<p class="form-hint">Lägg först till personen på hämtlistan. Ett permanent pass kan bara kopplas till någon som får hämta.</p>`;
+  return `<section class="card" id="permanent-passes"><h2>Permanent hämtpass</h2><p class="form-hint">För någon som redan får hämta, till exempel en mor- eller farförälder. Båda vårdnadshavarna kan se och återkalla passet. Det slutar fungera om personen spärras, tas bort eller inte längre får hämta.</p>${rows ? `<ul class="invite-list">${rows}</ul>` : `<p class="form-hint">Inget permanent hämtpass är skapat.</p>`}${form}</section>`;
 }
 
 function renderPickupSection(child) {
@@ -1746,12 +2250,44 @@ function renderPickupSection(child) {
     <form class="card form-stack" data-form="pickup-contact" data-child-id="${esc(child.id)}"><h3>Lägg till på hämtlistan</h3><div class="form-grid">${field("Namn", "name", "", { required: true, maxlength: "80" })}${field("Relation", "relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "phone", "", { type: "tel", maxlength: "40", autocomplete: "tel" })}<button class="primary" type="submit">Spara på hämtlistan</button></form>
     ${renderCreatedPass(child.id)}
     <section class="card" id="pickup-passes"><h2>Hämtpass</h2><p class="form-hint">Ett pass gäller ett barn och en dag, kan användas en gång och kan återkallas av båda vårdnadshavarna.</p>${passes.length ? `<ul class="invite-list">${passes.map((pass) => `<li><div><strong>${esc(pass.person_relation || "")} ${esc(pass.person_name || "Personuppgiften är rensad")}</strong><span>${esc(formatDate(pass.pickup_date))} · ${esc(pass.window_start)}–${esc(pass.window_end)} · ${esc(passStatusLabel(pass.pass_status))}</span></div>${pass.pass_status === "active" || pass.pass_status === "scheduled" ? `<button class="link danger-link" type="button" data-action="revoke-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>` : ""}</li>`).join("")}</ul>` : `<p class="form-hint">Inget hämtpass är skapat.</p>`}</section>
-    <form class="card form-stack" data-form="pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa hämtpass</h3>${field("Datum", "pickup_date", todayIso(), { type: "date", required: true, min: todayIso(), max: maxDate })}<div class="form-grid">${field("Från", "window_start", "14:00", { type: "time", required: true })}${field("Till", "window_end", "17:00", { type: "time", required: true })}</div><div class="form-grid">${field("Hämtas av", "person_name", "", { required: true, maxlength: "80" })}${field("Relation", "person_relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "person_phone", "", { type: "tel", maxlength: "40" })}<p class="form-hint">Inget foto används. Länken visas en gång så att du kan skicka den själv.</p><button class="primary" type="submit">Skapa hämtpass</button></form>`;
+    <form class="card form-stack" data-form="pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa hämtpass</h3>${field("Datum", "pickup_date", todayIso(), { type: "date", required: true, min: todayIso(), max: maxDate })}<div class="form-grid">${field("Från", "window_start", "14:00", { type: "time", required: true })}${field("Till", "window_end", "17:00", { type: "time", required: true })}</div><div class="form-grid">${field("Hämtas av", "person_name", "", { required: true, maxlength: "80" })}${field("Relation", "person_relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "person_phone", "", { type: "tel", maxlength: "40" })}<p class="form-hint">Inget foto används. Länken visas en gång så att du kan skicka den själv.</p><button class="primary" type="submit">Skapa hämtpass</button></form>
+    ${renderPermanentPassSection(child)}`;
+}
+
+function renderNoticeList(kicker, title, notices) {
+  if (!notices?.length) return "";
+  return `<section class="card"><p class="kicker">${esc(kicker)}</p><h2>${esc(title)}</h2><ul class="bot-reminders">${notices.map((notice) => `<li>${notice.title ? `<strong>${esc(notice.title)}. </strong>` : ""}${esc(notice.body)}</li>`).join("")}</ul></section>`;
 }
 
 function renderPickupNotices() {
-  if (!state.pickupReady || !state.pickupNotices.length) return "";
-  return `<section class="card"><p class="kicker">Hämtning</p><h2>Senaste hämtningar</h2><ul class="bot-reminders">${state.pickupNotices.map((notice) => `<li>${esc(notice.body)}</li>`).join("")}</ul></section>`;
+  return renderNoticeList("Hämtning", "Senaste hämtningar", state.pickupNotices);
+}
+
+function copiesForChild(child) {
+  const copies = state.incidentCopies || [];
+  if (!child) return copies;
+  return copies.filter((copy) => copy.child_name === child.name);
+}
+
+function renderIncidentCopies(copies = state.incidentCopies || []) {
+  if (!copies.length) return "";
+  return `<section class="card" id="incident-copies"><p class="kicker">Från förskolan</p><h2>Information att läsa</h2><p class="form-hint">Texten gäller ditt barn. Andra barn nämns som ett annat barn. Bekräftelsen är att du har läst, inte en signatur.</p>${copies.map((copy) => `<article class="incident-copy"><h3>${esc(copy.child_name)}</h3><p class="pre-line">${esc(copy.body)}</p>${copy.acknowledged_at ? `<p class="form-hint">Du bekräftade ${esc(formatTimestamp(copy.acknowledged_at))}.</p>` : `<button class="primary" type="button" data-action="acknowledge-incident" data-id="${esc(copy.copy_id)}">Jag har läst</button>`}</article>`).join("")}</section>`;
+}
+
+function incidentCopyStatus() {
+  if (!state.incidentReady) return "Inte aktiverad";
+  const copies = copiesForChild(selectedChild());
+  const unread = copies.filter((copy) => !copy.acknowledged_at).length;
+  if (!copies.length) return "Inget att läsa";
+  if (!unread) return "Läst";
+  return unread === 1 ? "1 att läsa" : `${unread} att läsa`;
+}
+
+function renderChildIncidentCopies() {
+  if (!state.incidentReady) {
+    return `<section class="card" id="incident-copies"><h2>Information att läsa</h2><p class="form-hint">Avvikelserapporterna är inte aktiverade i databasen ännu.</p></section>`;
+  }
+  return renderIncidentCopies(copiesForChild(selectedChild())) || `<section class="card" id="incident-copies"><h2>Information att läsa</h2><p class="form-hint">Ingen information från förskolan väntar på det här barnet.</p></section>`;
 }
 
 function renderPickupBlocks() {
@@ -1764,11 +2300,24 @@ function renderPickupBlocks() {
     <form class="form-stack" data-form="pickup-block-create"><h3>Spärra en person</h3>${selectField("Barn", "child_id", [["", "Välj barn"], ...state.children.map((child) => [child.id, `${child.name} · ${departmentName(child.department_id)}`])], "", true)}<div class="form-grid">${field("Namn", "name", "", { required: true, maxlength: "80" })}${field("Relation", "relation", "", { required: true, maxlength: "80" })}</div>${field("Telefon, valfritt", "phone", "", { type: "tel", maxlength: "40" })}<button class="primary" type="submit" ${state.children.length ? "" : "disabled"}>Spara spärr</button></form></section>`;
 }
 
+function renderPermanentScanCard(result) {
+  const children = Array.isArray(result.children) ? result.children : [];
+  const ready = children.filter((child) => child.checked_in);
+  const waiting = children.filter((child) => !child.checked_in);
+  const buttons = ready.map((child) => `<button class="primary" type="button" data-action="confirm-permanent-pickup" data-child-id="${esc(child.child_id)}" data-child-name="${esc(child.child_name)}">Checka ut ${esc(child.child_name)}</button>`).join("");
+  const waitingText = waiting.length
+    ? `<p class="form-hint">${esc(waiting.map((child) => child.child_name).join(", "))} ${waiting.length === 1 ? "är inte incheckad" : "är inte incheckade"}.</p>`
+    : "";
+  return `<article class="card confirm-card"><p class="kicker">Permanent hämtpass</p><h2>${esc(result.pickup_relation)} ${esc(result.pickup_name)}</h2><p class="id-ask">Be om legitimation</p><p class="form-hint">${esc(permanentValidityLabel(result.ends_on))}. Utfärdat av ${esc(result.issued_by || "")}.</p>${waitingText}<div class="stack-actions">${buttons}<button class="secondary" type="button" data-action="close-scan">Avbryt</button></div></article>`;
+}
+
 function renderScanCard(scan) {
   const result = scan.result || {};
   if (!result.ok) {
-    return `<article class="card stop-card"><h2>Stopp</h2><p>${esc(PICKUP_STOPS[result.stop] || PICKUP_STOPS.unavailable)}</p><button class="secondary" type="button" data-action="close-scan">Stäng</button></article>`;
+    const kicker = result.permanent ? `<p class="kicker">Permanent hämtpass</p>` : "";
+    return `<article class="card stop-card">${kicker}<h2>Stopp</h2><p>${esc(PICKUP_STOPS[result.stop] || PICKUP_STOPS.unavailable)}</p><button class="secondary" type="button" data-action="close-scan">Stäng</button></article>`;
   }
+  if (result.permanent) return renderPermanentScanCard(result);
   return `<article class="card confirm-card"><p class="kicker">Bekräfta</p><h2>${esc(result.child_name)}</h2><p>${esc(result.pickup_relation)} ${esc(result.pickup_name)}</p><p class="form-hint">Utfärdat av ${esc(result.issued_by)} · ${esc(formatTimestamp(result.issued_at))}</p>${result.ask_for_id ? `<p class="id-ask">Be om legitimation</p>` : ""}<div class="stack-actions"><button class="primary" type="button" data-action="confirm-pickup">Bekräfta utcheckning</button><button class="secondary" type="button" data-action="close-scan">Avbryt</button></div></article>`;
 }
 
@@ -1884,6 +2433,8 @@ function renderParentHome() {
   const nextReminder = reminders[0];
   return `${noticeHtml()}${childTabs()}<section class="hero-card home-hero"><div><p class="kicker">${esc(new Intl.DateTimeFormat("sv-SE", { dateStyle: "full" }).format(new Date()))}</p><h1 class="h1">${esc(child.name)}</h1><p class="big-status">${esc(attendanceLabel(attendanceState(attendance)))}</p><p class="sub">${esc(departmentName(child.department_id))}${attendance?.pickup_at ? ` · planerad hämtning ${esc(attendance.pickup_at.slice(0, 5))}` : ""}</p></div>${botMascot()}</section>
     ${renderPickupNotices()}
+    ${renderIncidentCopies()}
+    ${renderNoticeList("Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}
     <section class="card bot-card"><div class="bot-card-mascot">${botMascot()}</div><div><p class="kicker">Ärtan-botten</p><h2>${reminders.length ? "Jag hjälper dig komma ihåg" : "Allt är uppdaterat"}</h2>${reminders.length ? `<ul class="bot-reminders">${reminders.map((reminder) => `<li>${esc(reminder.text)}</li>`).join("")}</ul>` : `<p class="bot-done">Dagens plan och barnets uppgifter ser kompletta ut.</p>`}${nextReminder ? `<button class="primary bot-next" type="button" data-action="bot-reminder" data-view="${esc(nextReminder.view)}" data-target="${esc(nextReminder.target)}">Ta hand om nästa sak</button>` : ""}</div></section>
     ${renderParentTermSchedules(child)}
     <form id="daily-plan" class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><p class="kicker">Idag</p><h2>Dagens plan</h2>
@@ -1915,8 +2466,15 @@ function renderPost(post) {
   const comments = commentsFor(post.id);
   const images = postImagesFor(post.id);
   const canDelete = post.author_id === state.profile.id || state.profile.role === "admin";
+  const gallery = images.length ? `<div class="post-image-gallery count-${Math.min(images.length, 4)}">${images.map((image) => {
+    const picture = image.signed_url
+      ? `<img src="${esc(image.signed_url)}" alt="${esc(image.alt_text)}" width="${image.width}" height="${image.height}" loading="lazy">`
+      : `<div class="post-image-missing" role="img" aria-label="${esc(image.alt_text)}">Bilden kunde inte laddas</div>`;
+    return `<figure class="post-share-figure">${picture}${renderShareActions("attachment", image.image_id, image.alt_text || post.title)}</figure>`;
+  }).join("")}</div>` : "";
   return `<article class="card school-post"><p class="kicker">Från skolan · ${esc(scope || "Skolan")} · ${esc(formatTimestamp(post.created_at))}</p><h3>${esc(post.title)}</h3><p class="pre-line">${esc(post.body)}</p>
-    ${images.length ? `<div class="post-image-gallery count-${Math.min(images.length, 4)}">${images.map((image) => image.signed_url ? `<img src="${esc(image.signed_url)}" alt="${esc(image.alt_text)}" width="${image.width}" height="${image.height}" loading="lazy">` : `<div class="post-image-missing" role="img" aria-label="${esc(image.alt_text)}">Bilden kunde inte laddas</div>`).join("")}</div>` : ""}
+    ${renderShareActions("post", post.id, post.title)}
+    ${gallery}
     ${canDelete ? `<button class="link danger-link post-delete" type="button" data-action="delete-post" data-id="${esc(post.id)}">Ta bort inlägget</button>` : ""}
     <section class="post-comments"><h4>Kommentarer</h4>${comments.length ? `<ul>${comments.map(renderPostComment).join("")}</ul>` : `<p class="form-hint">Inga kommentarer ännu.</p>`}
       <form class="comment-form" data-form="post-comment" data-post-id="${esc(post.id)}">${field("Skriv en kommentar", "body", "", { required: true, maxlength: "2000" })}<button class="secondary" type="submit">Kommentera</button></form>
@@ -2221,10 +2779,12 @@ function childPickupStatus() {
   if (!child) return "Ingen på listan";
   const contacts = state.pickupContacts.filter((contact) => contact.child_id === child.id).length;
   const passes = state.pickupPasses.filter((pass) => pass.child_id === child.id && (pass.pass_status === "active" || pass.pass_status === "scheduled")).length;
-  if (!contacts && !passes) return "Ingen på listan";
+  const permanent = permanentPassesForChild(child.id).filter((pass) => pass.pass_status === "active").length;
+  if (!contacts && !passes && !permanent) return "Ingen på listan";
   const parts = [];
   if (contacts) parts.push(contacts === 1 ? "1 person" : `${contacts} personer`);
   if (passes) parts.push(passes === 1 ? "1 pass" : `${passes} pass`);
+  if (permanent) parts.push(permanent === 1 ? "1 permanent" : `${permanent} permanenta`);
   return parts.join(" · ");
 }
 
@@ -2305,6 +2865,7 @@ registerHubCard("child", { id: "hamtlista", icon: "◎", title: "Hämtlista", st
 registerHubCard("child", { id: "profilbild", icon: "☺", title: "Profilbild", status: childPhotoStatus, render: () => renderChildPhoto(selectedChild()) });
 registerHubCard("child", { id: "klasslista", icon: "☰", title: "Klasslista", status: childClassListStatus, render: () => renderClassListConsent(selectedChild()) });
 registerHubCard("child", { id: "kalender", icon: "▦", title: "Kalender", status: calendarHubStatus, render: () => renderTermCalendarCard() });
+registerHubCard("child", { id: "information", icon: "⚑", title: "Information att läsa", status: incidentCopyStatus, visible: () => Boolean(state.incidentReady) && copiesForChild(selectedChild()).length > 0, render: renderChildIncidentCopies });
 
 function groupedPrivateMessages() {
   const cards = [];
@@ -2353,7 +2914,7 @@ function renderPrivateMessaging() {
     </form>
     ${messages.length ? `<div class="private-message-list">${messages.map((message) => {
       const recipientLabel = message.recipientNames?.join(", ") || message.recipient_name;
-      return `<article class="card private-message ${message.sent ? "sent" : "received"}"><p class="kicker">${message.sent ? `Till ${esc(recipientLabel)}` : `Från ${esc(message.sender_name)}`} · ${esc(formatTimestamp(message.created_at))}</p><p>${esc(message.body)}</p></article>`;
+      return `<article class="card private-message ${message.sent ? "sent" : "received"}"><p class="kicker">${message.sent ? `Till ${esc(recipientLabel)}` : `Från ${esc(message.sender_name)}`} · ${esc(formatTimestamp(message.created_at))}</p><p>${esc(message.body)}</p>${message.sent ? "" : renderShareActions("message", message.message_id, message.sender_name)}</article>`;
     }).join("")}</div>` : emptyState("Inga privata meddelanden", "När någon skriver privat visas meddelandet här.")}</section>`;
 }
 
@@ -2805,19 +3366,285 @@ function peopleCountStatus(count, empty, one, many) {
   return count === 1 ? one : `${count} ${many}`;
 }
 
-function renderPeople() {
-  const heading = state.profile.role === "staff" ? "Barn" : "Personer";
-  return renderHubView({
-    hub: "people",
-    heroHtml: `<section class="hero-card"><p class="kicker">Barn och vårdnadshavare</p><h1 class="h1">${heading}</h1><p class="sub">Lägg till barnet på avdelningen. Bjud sedan in varje vårdnadshavare med en egen länk.</p></section>`,
+function peopleDirectoryVisible(name, departmentIds, query, departmentId) {
+  const haystack = String(name || "").toLocaleLowerCase("sv-SE");
+  const needle = String(query || "").trim().toLocaleLowerCase("sv-SE");
+  const nameMatches = !needle || haystack.includes(needle);
+  const departmentMatches = !departmentId || departmentIds.includes(departmentId);
+  return nameMatches && departmentMatches;
+}
+
+function childGroupStatus(childCount, missingBirthCount) {
+  if (!childCount) return "Inga barn";
+  const count = childCount === 1 ? "1 barn" : `${childCount} barn`;
+  if (!missingBirthCount) return count;
+  const missing = missingBirthCount === 1 ? "1 saknar födelsedatum" : `${missingBirthCount} saknar födelsedatum`;
+  return `${count} · ${missing}`;
+}
+
+function guardianGroupStatus(guardianCount, pendingCount) {
+  const linked = !guardianCount ? "Inga kopplade" : guardianCount === 1 ? "1 vårdnadshavare" : `${guardianCount} vårdnadshavare`;
+  if (!pendingCount) return guardianCount ? linked : "Inga vårdnadshavare";
+  const pending = pendingCount === 1 ? "1 väntande inbjudan" : `${pendingCount} väntande inbjudningar`;
+  return `${linked} · ${pending}`;
+}
+
+function staffGroupStatus(adminCount, staffCount, termCount) {
+  if (!adminCount && !staffCount) return "Ingen personal";
+  const parts = [];
+  if (adminCount) parts.push(adminCount === 1 ? "1 administratör" : `${adminCount} administratörer`);
+  if (staffCount) parts.push(staffCount === 1 ? "1 personal" : `${staffCount} personal`);
+  if (termCount) parts.push(termCount === 1 ? "1 terminsschema" : `${termCount} terminsschema`);
+  return parts.join(" · ");
+}
+
+function childRowStatus(guardianCount, missingBirth) {
+  const guardians = guardianCount === 1 ? "1 vårdnadshavare" : guardianCount ? `${guardianCount} vårdnadshavare` : "Ingen vårdnadshavare";
+  return missingBirth ? `Saknar födelsedatum · ${guardians}` : guardians;
+}
+
+function compareSwedishName(left, right) {
+  return String(left || "").localeCompare(String(right || ""), "sv");
+}
+
+function pendingGuardianInviteCount() {
+  return state.invitations.filter((invite) => invite.role === "parent" && invite.status === "pending").length;
+}
+
+function guardiansForChild(childId) {
+  return new Set(state.guardianMessageTargets.filter((target) => target.child_id === childId).map((target) => target.guardian_id)).size;
+}
+
+function childDirectoryRows() {
+  return state.children.map((child) => ({
+    section: `barn-${child.id}`,
+    name: child.name || "Namn saknas",
+    departmentIds: child.department_id ? [child.department_id] : [],
+    departmentNames: child.department_id ? [departmentName(child.department_id)] : [],
+    departmentLabel: departmentName(child.department_id),
+    status: childRowStatus(guardiansForChild(child.id), !child.birth_date),
+    avatar: childAvatarHtml(child.name, childPhotoUrl(child.photo_path), child.avatar_color),
+  })).sort((left, right) => compareSwedishName(left.name, right.name));
+}
+
+function guardianDirectoryRows() {
+  const byId = new Map();
+  state.guardianMessageTargets.forEach((target) => {
+    if (!byId.has(target.guardian_id)) {
+      byId.set(target.guardian_id, {
+        id: target.guardian_id,
+        name: target.guardian_name || "Namn saknas",
+        relation: target.guardian_relation || "Vårdnadshavare",
+        children: [],
+        departmentIds: [],
+        departments: [],
+      });
+    }
+    const person = byId.get(target.guardian_id);
+    if (!person.children.some((child) => child.id === target.child_id)) {
+      const child = state.children.find((item) => item.id === target.child_id);
+      person.children.push({ id: target.child_id, name: target.child_name || child?.name || "Barn" });
+      if (child?.department_id && !person.departmentIds.includes(child.department_id)) {
+        person.departmentIds.push(child.department_id);
+        person.departments.push(departmentName(child.department_id));
+      }
+    }
+  });
+  return [...byId.values()].sort((left, right) => compareSwedishName(left.name, right.name)).map((person) => {
+    const names = [...person.children].sort((left, right) => compareSwedishName(left.name, right.name)).map((child) => child.name);
+    return {
+      section: `vardnad-${person.id}`,
+      name: person.name,
+      departmentIds: person.departmentIds,
+      departmentNames: person.departments,
+      departmentLabel: person.departments.join(", ") || "Ingen avdelning",
+      status: names.length ? names.join(", ") : "Inget barn kopplat",
+      avatar: childAvatarHtml(person.name, ""),
+      person,
+    };
   });
 }
 
+function staffDirectoryRows() {
+  if (state.profile.role !== "admin") return [];
+  const byId = new Map();
+  (state.organizationPeople || []).forEach((person) => {
+    if (person.removed_at) return;
+    if (person.role !== "admin" && person.role !== "staff") return;
+    byId.set(person.id, {
+      id: person.id,
+      name: person.name || "Namn saknas",
+      email: person.email || "",
+      role: person.role,
+      departmentIds: [],
+      departments: [],
+      termManager: person.role === "staff" && staffManagesTerms(person.id),
+    });
+  });
+  if (!byId.size) {
+    staffGroups().forEach((person) => {
+      byId.set(person.id, {
+        id: person.id,
+        name: person.name || "Namn saknas",
+        email: person.email || "",
+        role: "staff",
+        departmentIds: [],
+        departments: [],
+        termManager: staffManagesTerms(person.id),
+      });
+    });
+  }
+  state.staffMembers.forEach((row) => {
+    const person = byId.get(row.staff_id);
+    if (!person || !row.department_id || person.departmentIds.includes(row.department_id)) return;
+    person.departmentIds.push(row.department_id);
+    person.departments.push(row.department_name || departmentName(row.department_id));
+  });
+  return [...byId.values()].sort((left, right) => compareSwedishName(left.name, right.name)).map((person) => {
+    const roleText = person.role === "admin" ? "Administratör" : "Personal";
+    return {
+      section: `personal-${person.id}`,
+      name: person.name,
+      departmentIds: person.departmentIds,
+      departmentNames: person.departments,
+      departmentLabel: person.departments.join(", ") || (person.role === "admin" ? "Hela organisationen" : "Ingen avdelning"),
+      status: person.termManager ? `${roleText} · Terminsschema` : roleText,
+      avatar: childAvatarHtml(person.name, ""),
+      person,
+    };
+  });
+}
+
+function peopleDetailCards() {
+  const cards = state.children.map((child) => ({
+    id: `barn-${child.id}`,
+    detail: true,
+    title: child.name || "Barn",
+    render: () => `<article class="card" id="child-info-read">${renderChildFacts(child)}</article>`,
+  }));
+  guardianDirectoryRows().forEach((row) => {
+    cards.push({
+      id: row.section,
+      detail: true,
+      title: row.name,
+      render: () => renderGuardianDetail(row.person),
+    });
+  });
+  staffDirectoryRows().forEach((row) => {
+    cards.push({
+      id: row.section,
+      detail: true,
+      title: row.name,
+      render: () => renderStaffPersonDetail(row.person),
+    });
+  });
+  return cards;
+}
+
+function directoryDepartments(rows) {
+  const names = new Map();
+  rows.forEach((row) => {
+    row.departmentIds.forEach((id, index) => {
+      if (!names.has(id)) names.set(id, row.departmentNames?.[index] || departmentName(id));
+    });
+  });
+  return [...names.entries()].sort((left, right) => compareSwedishName(left[1], right[1]));
+}
+
+function renderPeopleDirectory(rows, emptyText) {
+  const departments = directoryDepartments(rows);
+  const options = departments.map(([id, name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join("");
+  const departmentFilter = departments.length
+    ? `<label>Avdelning<select data-people-department><option value="">Alla avdelningar</option>${options}</select></label>`
+    : "";
+  const list = rows.map((row) => `<li class="people-row" data-people-row data-people-name="${esc(row.name.toLocaleLowerCase("sv-SE"))}" data-people-departments="${esc(row.departmentIds.join("|"))}"><button type="button" class="people-row-button" data-action="hub-open" data-section="${esc(row.section)}">${row.avatar}<span class="people-row-copy"><strong>${esc(row.name)}</strong><span>${esc(row.departmentLabel)}</span></span><span class="people-row-status">${esc(row.status)}</span></button></li>`).join("");
+  return `<div class="people-directory"><div class="people-filters"><label>Namn<input type="search" data-people-query placeholder="Sök namn" autocomplete="off" enterkeyhint="search"></label>${departmentFilter}</div><p class="form-hint" data-people-count>${rows.length} i listan</p><p class="form-hint" data-people-empty hidden>Ingen träff.</p>${rows.length ? `<ul class="people-rows">${list}</ul>` : `<p class="form-hint">${esc(emptyText)}</p>`}</div>`;
+}
+
+function applyPeopleDirectoryFilter(root) {
+  const query = root.querySelector("[data-people-query]")?.value || "";
+  const departmentId = root.querySelector("[data-people-department]")?.value || "";
+  const rows = [...root.querySelectorAll("[data-people-row]")];
+  let shown = 0;
+  rows.forEach((row) => {
+    const visible = peopleDirectoryVisible(row.dataset.peopleName || "", (row.dataset.peopleDepartments || "").split("|").filter(Boolean), query, departmentId);
+    row.hidden = !visible;
+    if (visible) shown += 1;
+  });
+  const empty = root.querySelector("[data-people-empty]");
+  if (empty) empty.hidden = !rows.length || shown > 0;
+  const count = root.querySelector("[data-people-count]");
+  if (count) count.textContent = shown === rows.length ? `${rows.length} i listan` : `${shown} av ${rows.length}`;
+}
+
+function renderGuardianDetail(person) {
+  const children = [...person.children].sort((left, right) => compareSwedishName(left.name, right.name));
+  const list = children.map((child) => {
+    const record = state.children.find((item) => item.id === child.id);
+    return `<li><button type="button" class="people-row-button" data-action="hub-open" data-section="barn-${esc(child.id)}">${childAvatarHtml(child.name, childPhotoUrl(record?.photo_path), record?.avatar_color)}<span class="people-row-copy"><strong>${esc(child.name)}</strong><span>${esc(record ? departmentName(record.department_id) : "Okänd avdelning")}</span></span></button></li>`;
+  }).join("");
+  return `<article class="card"><p class="kicker">${esc(person.relation || "Vårdnadshavare")}</p><h2>Kopplade barn</h2>${list ? `<ul class="people-rows">${list}</ul>` : `<p class="form-hint">Inget barn är kopplat.</p>`}</article>`;
+}
+
+function renderStaffPersonDetail(person) {
+  const departments = person.departments.length ? person.departments.join(", ") : (person.role === "admin" ? "Hela organisationen" : "Ingen avdelning");
+  const term = person.role === "admin"
+    ? "Administratörer hanterar terminsscheman."
+    : person.termManager ? "Får hantera terminsschema." : "Får inte hantera terminsschema.";
+  const remove = person.role === "staff" && person.id !== state.profile.id
+    ? `<button class="link danger-link" type="button" data-action="remove-staff" data-id="${esc(person.id)}" data-name="${esc(person.name)}">Ta bort åtkomst</button>`
+    : "";
+  return `<article class="card"><p class="kicker">${esc(person.role === "admin" ? "Administratör" : "Personal")}</p>${person.email ? `<p>${esc(person.email)}</p>` : ""}<p class="meta">${esc(departments)}</p><p class="form-hint">${esc(term)} Behörigheten ändras under Skolor och terminer.</p>${remove}</article>`;
+}
+
+function renderPeopleGroup(kind) {
+  if (kind === "children") return renderPeopleDirectory(childDirectoryRows(), "Inga barn är tillagda ännu.");
+  if (kind === "guardians") {
+    const pending = pendingGuardianInviteCount();
+    const note = pending ? `<p class="form-hint">${pending === 1 ? "1 väntande inbjudan" : `${pending} väntande inbjudningar`} finns under Väntande inbjudningar.</p>` : "";
+    return `${note}${renderPeopleDirectory(guardianDirectoryRows(), "Ingen vårdnadshavare är kopplad ännu.")}`;
+  }
+  return renderPeopleDirectory(staffDirectoryRows(), "Ingen personal är kopplad ännu.");
+}
+
+function childPeopleStatus() {
+  return childGroupStatus(state.children.length, state.children.filter((child) => !child.birth_date).length);
+}
+
+function guardianPeopleStatus() {
+  return guardianGroupStatus(guardianDirectoryRows().length, pendingGuardianInviteCount());
+}
+
+function staffPeopleStatus() {
+  const rows = staffDirectoryRows();
+  return staffGroupStatus(
+    rows.filter((row) => row.person.role === "admin").length,
+    rows.filter((row) => row.person.role === "staff").length,
+    rows.filter((row) => row.person.termManager).length,
+  );
+}
+
+function renderPeople() {
+  const staff = state.profile.role === "staff";
+  const heading = staff ? "Barn" : "Personer";
+  const sub = staff
+    ? "Öppna Barn eller Vårdnadshavare för att söka. Lägg sedan till barn eller bjud in vårdnadshavare."
+    : "Grupperna samlar barn, vårdnadshavare och personal. Öppna en grupp för att söka, och lägg sedan till barn eller bjud in vårdnadshavare.";
+  return renderHubView({
+    hub: "people",
+    heroHtml: `<section class="hero-card"><p class="kicker">Barn och vårdnadshavare</p><h1 class="h1">${heading}</h1><p class="sub">${sub}</p></section>`,
+  });
+}
+
+registerHubCard("people", { id: "barn", icon: "🌱", title: "Barn", status: childPeopleStatus, render: () => renderPeopleGroup("children") });
+registerHubCard("people", { id: "vardnadshavare", icon: "☺", title: "Vårdnadshavare", status: guardianPeopleStatus, render: () => renderPeopleGroup("guardians") });
+registerHubCard("people", { id: "personal", icon: "👥", title: "Personal", status: staffPeopleStatus, visible: () => state.profile.role === "admin", render: () => renderPeopleGroup("staff") });
 registerHubCard("people", { id: "lagg-till", icon: "🌱", title: "Lägg till barn", status: () => peopleCountStatus(state.children.length, "Inget barn ännu", "1 barn", "barn"), render: renderChildCreateForm });
 registerHubCard("people", { id: "bjud-in", icon: "✉", title: "Bjud in vårdnadshavare", status: () => "Egen länk per person", render: () => `${renderInviteResult("parent")}${renderGuardianInviteForm()}` });
 registerHubCard("people", { id: "vantande", icon: "…", title: "Väntande inbjudningar", status: () => peopleCountStatus(state.invitations.filter((invite) => invite.role === "parent" && invite.status === "pending").length, "Inga väntande", "1 väntande", "väntande"), render: () => `${renderInviteResult("parent")}${renderPendingGuardianInvites()}` });
 registerHubCard("people", { id: "syskon", icon: "☺", title: "Syskonförfrågningar", status: () => peopleCountStatus(state.siblingRequests.filter((request) => request.status === "pending").length, "Inga förfrågningar", "1 väntande", "väntande"), render: renderSiblingReviews });
 registerHubCard("people", { id: "sparrar", icon: "⛔", title: "Får ej hämta", status: pickupBlockStatus, visible: () => state.profile.role === "admin" && state.pickupReady, render: renderPickupBlocks });
+registerHubCard("people", { id: "incidentrapporter", icon: "⚑", title: "Incidentrapporter", status: incidentHubStatus, visible: () => state.profile.role === "admin" || state.profile.role === "staff", render: renderIncidentBody });
 
 function renderOverview() {
   return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">${esc(state.organization?.name || "")}</h1><p class="sub">${esc(roleLabel(state.profile.role))}</p></section><div class="metric-grid"><article class="metric"><strong>${state.schools.length}</strong><span>Skolor</span></article><article class="metric"><strong>${state.departments.length}</strong><span>Avdelningar</span></article><article class="metric"><strong>${state.children.length}</strong><span>Barn</span></article><article class="metric"><strong>${state.invitations.filter((invite) => invite.status === "pending").length}</strong><span>Väntande inbjudningar</span></article></div>
@@ -2838,12 +3665,228 @@ function renderAccount() {
     <button class="secondary" data-action="logout">Logga ut</button>`;
 }
 
+const INCIDENT_TYPES = [
+  ["accident", "Olycksfall/skada"],
+  ["near_miss", "Tillbud"],
+  ["mistreatment", "Kränkande behandling"],
+  ["other", "Övrig avvikelse"],
+];
+const INCIDENT_ROLES = [["affected", "Drabbad"], ["involved", "Inblandad"], ["causing", "Orsakande"]];
+const INJURY_TYPES = ["Sår eller skrubbsår", "Blåmärke", "Stukning eller vrickning", "Fraktur", "Tandskada", "Huvudskada", "Bett", "Brännskada", "Annat"];
+const BODY_LOCATIONS = ["Huvud", "Ansikte", "Tänder", "Hals", "Arm", "Hand", "Bröst eller mage", "Rygg", "Ben", "Fot", "Annat"];
+const CARE_OPTIONS = [["none", "Ingen ytterligare vård"], ["primary_care", "Vårdcentral"], ["dentist", "Tandläkare"], ["emergency", "Akuten"]];
+const ALLEGED_BY = [["child", "Barn"], ["staff", "Personal"], ["unknown", "Okänt"]];
+const INCIDENT_STATUS = { draft: "Utkast", submitted: "Inskickad", investigating: "Under utredning", closed: "Avslutad" };
+const INCIDENT_EVENTS = {
+  created: "Skapad",
+  submitted: "Inskickad",
+  investigating: "Utredning",
+  closed: "Avslutad",
+  addendum: "Tillägg",
+  investigation: "Utredningsanteckning",
+  principal: "Huvudman",
+  action: "Åtgärd",
+  action_done: "Åtgärd klar",
+  copy_sent: "Kopia skickad",
+  acknowledged: "Läst",
+};
+
+function incidentTypeLabel(type) {
+  return INCIDENT_TYPES.find(([value]) => value === type)?.[1] || type || "";
+}
+
+function incidentRoleLabel(role) {
+  return INCIDENT_ROLES.find(([value]) => value === role)?.[1] || role || "";
+}
+
+function dateTimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (number) => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function incidentChildrenPayload(form) {
+  return [...form.querySelectorAll('input[name="involved"]:checked')].map((input) => ({
+    child_id: input.value,
+    role: form.querySelector(`[name="role_${input.value}"]`)?.value || "affected",
+  }));
+}
+
+function incidentDraftArgs(form, values) {
+  return {
+    target_report_id: form.dataset.reportId || null,
+    incident_kind: values.incident_kind,
+    target_department_id: values.department_id,
+    occurred_at: new Date(values.occurred_at).toISOString(),
+    place_text: values.place_text.trim(),
+    happened_text: values.happened_text.trim(),
+    actions_text: values.actions_text.trim(),
+    present_text: values.present_text.trim(),
+    contacted_text: values.contacted_text.trim(),
+    injury_type: values.injury_type || null,
+    body_location: values.body_location || null,
+    first_aid_text: values.first_aid_text?.trim() || null,
+    care_kind: values.care_kind || null,
+    subjected_text: values.subjected_text?.trim() || null,
+    alleged_by: values.alleged_by || null,
+    experience_text: values.experience_text?.trim() || null,
+    involved_children: incidentChildrenPayload(form),
+  };
+}
+
+async function refreshOpenIncident() {
+  await loadData();
+  if (!state.incidentId) return;
+  state.incidentDetail = await rpc("get_incident", { target_report_id: state.incidentId });
+  if (state.incidentScreen === "form" && state.incidentDetail?.status !== "draft") state.incidentScreen = "detail";
+}
+
+async function openIncident(id) {
+  const detail = await rpc("get_incident", { target_report_id: id });
+  state.incidentId = id;
+  state.incidentDetail = detail;
+  state.incidentScreen = detail?.status === "draft" && detail?.mine ? "form" : "detail";
+}
+
+function renderIncidentChildPicker(selected) {
+  if (!state.children.length) return `<p class="notice error">Inga barn är synliga att koppla till rapporten.</p>`;
+  return `<fieldset class="incident-children"><legend>Barn och roll</legend>${state.children.map((child) => {
+    const role = selected.get(child.id) || "affected";
+    const checked = selected.has(child.id);
+    return `<div class="incident-child"><label class="check"><input type="checkbox" name="involved" value="${esc(child.id)}" ${checked ? "checked" : ""}> ${esc(child.name)}</label><span>${esc(departmentName(child.department_id))}</span>${selectField("Roll", `role_${child.id}`, INCIDENT_ROLES, role, true)}</div>`;
+  }).join("")}</fieldset>`;
+}
+
+function renderIncidentForm() {
+  const report = state.incidentDetail || {};
+  const selected = new Map((report.children || []).map((child) => [child.child_id, child.role]));
+  const type = report.incident_type || "accident";
+  const departments = departmentOptions();
+  const departmentId = report.department_id || (departments.length === 1 ? departments[0][0] : "");
+  return `<form class="card form-stack" data-form="incident-draft" data-incident-type="${esc(type)}" data-report-id="${esc(report.report_id || "")}"><p class="kicker">${report.report_id ? "Utkast" : "Ny rapport"}</p><h2>${report.report_id ? "Fortsätt utkastet" : "Ny avvikelserapport"}</h2><p class="form-hint">Utkastet syns bara för dig. När du skickar in låses texten. Senare tillägg skrivs under rapporten.</p>
+    ${selectField("Typ", "incident_kind", INCIDENT_TYPES, type, true)}
+    ${departments.length ? selectField("Avdelning", "department_id", departments, departmentId, true) : `<p class="notice error">Ingen avdelning är tillgänglig.</p>`}
+    ${field("Datum och tid", "occurred_at", dateTimeLocalValue(report.occurred_at || new Date().toISOString()), { type: "datetime-local", required: true })}
+    ${field("Plats", "place_text", report.place || "", { required: true, maxlength: "160" })}
+    ${textareaField("Vad hände, sakligt", "happened_text", report.what_happened || "", "Bara det som gick att iaktta", true)}
+    ${textareaField("Omedelbara åtgärder", "actions_text", report.immediate_actions || "", "", true)}
+    ${textareaField("Personal närvarande och vittnen", "present_text", report.staff_present || "", "", true)}
+    ${textareaField("När och hur vårdnadshavare kontaktades", "contacted_text", report.guardians_contacted || "", "Skriv också om de ännu inte är kontaktade", true)}
+    <div class="incident-extra" data-incident-extra="accident"><h3>Olycksfall</h3>
+      ${selectField("Typ av skada", "injury_type", [["", "Välj"], ...INJURY_TYPES.map((item) => [item, item])], report.injury_type || "")}
+      ${selectField("Var på kroppen", "body_location", [["", "Välj"], ...BODY_LOCATIONS.map((item) => [item, item])], report.body_location || "")}
+      ${textareaField("Första hjälpen", "first_aid_text", report.first_aid || "")}
+      ${selectField("Vård efteråt", "care_kind", [["", "Välj"], ...CARE_OPTIONS], report.care || "")}
+    </div>
+    <div class="incident-extra" data-incident-extra="mistreatment"><h3>Kränkande behandling</h3>
+      ${field("Vem utsattes", "subjected_text", report.subjected_name || "", { maxlength: "160" })}
+      ${selectField("Uppges av", "alleged_by", [["", "Välj"], ...ALLEGED_BY], report.alleged_by || "")}
+      ${textareaField("Barnets egen upplevelse", "experience_text", report.child_experience || "", "Lämna tomt om barnet inte berättade")}
+      <p class="form-hint">När rapporten skickas in räknas tidpunkten som anmälan till rektor.</p>
+    </div>
+    ${renderIncidentChildPicker(selected)}
+    <div class="stack-actions"><button class="secondary" type="submit" data-intent="draft">Spara utkast</button><button class="primary" type="submit" data-intent="submit">Skicka in</button></div>
+  </form>`;
+}
+
+function renderIncidentFacts(detail) {
+  const care = CARE_OPTIONS.find(([value]) => value === detail.care)?.[1] || "";
+  const alleged = ALLEGED_BY.find(([value]) => value === detail.alleged_by)?.[1] || "";
+  return `<dl class="fact-list">
+    <div><dt>Typ</dt><dd>${esc(incidentTypeLabel(detail.incident_type))}</dd></div>
+    <div><dt>Status</dt><dd>${esc(INCIDENT_STATUS[detail.status] || detail.status)}</dd></div>
+    <div><dt>När</dt><dd>${esc(formatTimestamp(detail.occurred_at))}</dd></div>
+    <div><dt>Plats</dt><dd>${esc(detail.place)}</dd></div>
+    <div><dt>Avdelning</dt><dd>${esc(detail.department_name || "")}</dd></div>
+    <div><dt>Författare</dt><dd>${esc(detail.author_name || "")}</dd></div>
+    <div><dt>Vad hände</dt><dd class="pre-line">${esc(detail.what_happened)}</dd></div>
+    <div><dt>Omedelbara åtgärder</dt><dd class="pre-line">${esc(detail.immediate_actions)}</dd></div>
+    <div><dt>Personal och vittnen</dt><dd class="pre-line">${esc(detail.staff_present)}</dd></div>
+    <div><dt>Vårdnadshavare kontaktades</dt><dd class="pre-line">${esc(detail.guardians_contacted)}</dd></div>
+    ${detail.incident_type === "accident" ? `<div><dt>Skada</dt><dd>${esc(detail.injury_type || "")}, ${esc(detail.body_location || "")}</dd></div><div><dt>Första hjälpen</dt><dd class="pre-line">${esc(detail.first_aid || "")}</dd></div><div><dt>Vård</dt><dd>${esc(care)}</dd></div>` : ""}
+    ${detail.incident_type === "mistreatment" ? `<div><dt>Vem utsattes</dt><dd>${esc(detail.subjected_name || "")}</dd></div><div><dt>Uppges av</dt><dd>${esc(alleged)}</dd></div><div><dt>Barnets upplevelse</dt><dd class="pre-line">${esc(detail.child_experience || "Inte angiven")}</dd></div>` : ""}
+  </dl>
+  <h3>Barn</h3><ul class="contact-list">${(detail.children || []).map((child) => `<li><div><strong>${esc(child.name)}</strong><span>${esc(incidentRoleLabel(child.role))}</span></div></li>`).join("")}</ul>`;
+}
+
+function renderIncidentDetail() {
+  const detail = state.incidentDetail;
+  if (!detail) return "";
+  const locked = detail.status !== "draft";
+  const copies = (detail.copies || []).map((copy) => {
+    if (copy.sent_at) {
+      return `<article class="incident-copy"><h3>${esc(copy.name)}</h3><p class="form-hint">Skickad ${esc(formatTimestamp(copy.sent_at))}. ${copy.acknowledged_count || 0} av ${copy.recipient_count || 0} har läst.</p>${copy.body ? `<p class="pre-line">${esc(copy.body)}</p>` : `<p class="form-hint">Texten till vårdnadshavarna visas för författaren och administratören.</p>`}</article>`;
+    }
+    if (!copy.can_send) {
+      return `<article class="incident-copy"><h3>${esc(copy.name)}</h3><p class="form-hint">${detail.incident_type === "mistreatment" ? "Bara en administratör skickar vårdnadshavarkopian vid kränkning." : "Författaren eller en administratör skickar vårdnadshavarkopian."}</p></article>`;
+    }
+    return `<form class="form-stack incident-copy" data-form="incident-copy" data-report-id="${esc(detail.report_id)}" data-child-id="${esc(copy.child_id)}"><h3>Kopia om ${esc(copy.name)}</h3><p class="form-hint">Bara det här barnets namn ska stå med. Andra barn skrivs som ett annat barn. Texten låses när den skickas.</p><label>Text till vårdnadshavarna<textarea name="copy_body" required>${esc(copy.body || "")}</textarea></label><div class="stack-actions"><button class="secondary" type="submit" data-intent="save">Spara utkast</button><button class="primary" type="submit" data-intent="send">Skicka</button></div></form>`;
+  }).join("");
+  const admin = detail.admin ? `<section class="card incident-admin"><h2>För huvudmannen</h2>
+    ${detail.status === "submitted" ? `<button class="primary no-print" type="button" data-action="start-incident-investigation" data-id="${esc(detail.report_id)}">Ta upp till utredning</button>` : ""}
+    ${detail.reported_to_principal_at ? `<p>Anmält till huvudman ${esc(formatTimestamp(detail.reported_to_principal_at))}.</p>` : `<button class="secondary no-print" type="button" data-action="incident-principal" data-id="${esc(detail.report_id)}">Markera anmäld till huvudman</button>`}
+    ${detail.investigation_notes ? `<h3>Senaste utredningsanteckning</h3><p class="pre-line">${esc(detail.investigation_notes)}</p>` : ""}
+    ${detail.status === "investigating" ? `<form class="form-stack" data-form="incident-note" data-report-id="${esc(detail.report_id)}">${textareaField("Ny utredningsanteckning", "note_text", "", "", true)}<button class="secondary" type="submit">Lägg till anteckning</button></form>
+      <form class="form-stack" data-form="incident-action" data-report-id="${esc(detail.report_id)}"><h3>Åtgärd</h3>${textareaField("Vad ska göras", "action_text", "", "", true)}${selectField("Ansvarig", "responsible_profile_id", [["", "Välj"], ...(detail.staff || []).map((person) => [person.profile_id, person.name])], "", true)}${field("Senast", "due_on", "", { type: "date", required: true })}<button class="secondary" type="submit">Lägg till åtgärd</button></form>
+      <form class="form-stack" data-form="incident-close" data-report-id="${esc(detail.report_id)}"><h3>Avsluta</h3>${textareaField("Avslutande sammanfattning", "summary_text", "", "", true)}<button class="primary" type="submit">Avsluta rapporten</button></form>` : ""}
+    ${detail.closing_summary ? `<h3>Avslutande sammanfattning</h3><p class="pre-line">${esc(detail.closing_summary)}</p>` : ""}
+    ${(detail.actions || []).length ? `<h3>Åtgärder</h3><ul class="incident-log">${detail.actions.map((action) => `<li><strong>${esc(action.description)}</strong><span>${esc(action.responsible_name)} · senast ${esc(formatDate(action.due_on))}${action.done_at ? ` · klar ${esc(formatTimestamp(action.done_at))}` : ""}</span>${action.done_at || detail.status !== "investigating" ? "" : `<button class="link no-print" type="button" data-action="complete-incident-action" data-id="${esc(action.action_id)}">Markera klar</button>`}</li>`).join("")}</ul>` : ""}
+  </section>` : "";
+  return `<article class="card incident-sheet"><p class="kicker">${esc(incidentTypeLabel(detail.incident_type))}</p><h2>${esc(detail.place)}</h2><p class="incident-status">${esc(INCIDENT_STATUS[detail.status] || "")}</p>
+    ${locked ? `<p class="form-hint">Rapporten är låst. Nya uppgifter läggs till som tillägg.</p>` : ""}
+    ${renderIncidentFacts(detail)}
+    ${(detail.addenda || []).length ? `<h3>Tillägg</h3><ul class="incident-log">${detail.addenda.map((item) => `<li><strong>${esc(item.author_name)}</strong><span>${esc(formatTimestamp(item.created_at))}</span><p class="pre-line">${esc(item.body)}</p></li>`).join("")}</ul>` : ""}
+    ${locked ? `<form class="form-stack no-print" data-form="incident-addendum" data-report-id="${esc(detail.report_id)}">${textareaField("Tillägg", "addendum_text", "", "Något som tillkommit efter inskickningen", true)}<button class="secondary" type="submit">Lägg till</button></form>` : ""}
+  </article>
+  ${copies ? `<section class="card"><h2>Vårdnadshavarkopior</h2>${copies}</section>` : ""}
+  ${admin}
+  <section class="card"><h2>Händelselogg</h2><ul class="incident-log">${(detail.events || []).map((event) => `<li><strong>${esc(INCIDENT_EVENTS[event.event_kind] || event.event_kind)}</strong><span>${esc(formatTimestamp(event.created_at))}</span><p class="pre-line">${esc(event.detail)}</p></li>`).join("") || `<li>Ingen händelse ännu.</li>`}</ul></section>`;
+}
+
+function keepIncidentPlace() {
+  if (state.view === "people" && state.hubSection === "incidentrapporter") return;
+  state.view = "incidents";
+  state.hubSection = "";
+}
+
+function incidentHubStatus() {
+  if (!state.incidentReady) return "Inte aktiverad";
+  const open = (state.incidents || []).filter((report) => report.status !== "closed").length;
+  if (!open) return "Inga öppna";
+  return open === 1 ? "1 öppen" : `${open} öppna`;
+}
+
+function renderIncidentBody() {
+  const ready = state.incidentReady ? "" : `<p class="notice error">Avvikelserapporterna är inte aktiverade i databasen ännu.</p>`;
+  if (state.incidentScreen === "form") {
+    return `${ready}<button class="secondary no-print" type="button" data-action="incident-list">Tillbaka till listan</button>${state.incidentReady ? renderIncidentForm() : ""}`;
+  }
+  if (state.incidentScreen === "detail") {
+    return `${ready}<div class="incident-head"><button class="secondary no-print" type="button" data-action="print-incident">Skriv ut</button></div><button class="secondary no-print" type="button" data-action="incident-list">Tillbaka till listan</button>${renderIncidentDetail()}`;
+  }
+  const notices = (state.notices || []).filter((notice) => notice.kind === "incident_submitted");
+  return `${ready}
+    ${renderNoticeList("Till dig", "Nya inskick", notices)}
+    ${state.incidentReady ? `<button class="primary no-print" type="button" data-action="incident-new">Ny rapport</button>` : ""}
+    <div class="incident-list">${(state.incidents || []).map((report) => `<button class="card incident-row" type="button" data-action="open-incident" data-id="${esc(report.report_id)}"><span class="incident-status">${esc(INCIDENT_STATUS[report.status] || "")}</span><strong>${esc(incidentTypeLabel(report.incident_type))}</strong><span>${esc(report.place)} · ${esc(report.department_name || "")}</span><small>${esc(formatTimestamp(report.occurred_at))} · ${report.child_count || 0} barn${report.mine ? " · min" : ""}</small></button>`).join("") || `<p class="form-hint">Inga rapporter är synliga för dig.</p>`}</div>`;
+}
+
+function renderIncidents() {
+  const heading = state.incidentScreen === "form"
+    ? (state.incidentId ? "Utkast" : "Ny rapport")
+    : state.incidentScreen === "detail" ? "Rapport" : "Rapporter";
+  const sub = state.incidentScreen === "list" ? `<p class="sub">Olycksfall, tillbud, kränkande behandling och övriga avvikelser. Vårdnadshavare ser inte själva rapporten.</p>` : "";
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Avvikelser</p><h1 class="h1">${heading}</h1>${sub}</section>${renderIncidentBody()}`;
+}
+
 function renderNav() {
   const role = state.profile?.role;
   const items = role === "admin"
-    ? [["overview", "▦", "Översikt"], ["attendance", "✓", "Närvaro"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["account", "⚙", "Konto"]]
+    ? [["overview", "▦", "Översikt"], ["attendance", "✓", "Närvaro"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["incidents", "⚑", "Avvikelse"], ["account", "⚙", "Konto"]]
     : role === "staff"
-      ? [["attendance", "✓", "Närvaro"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Barn"], ["account", "⚙", "Konto"]]
+      ? [["attendance", "✓", "Närvaro"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Barn"], ["incidents", "⚑", "Avvikelse"], ["account", "⚙", "Konto"]]
       : [["home", "●", "Min dag"], ["child", "🌱", "Barnet"], ["classlist", "☰", "Klasslista"], ["messages", "✉", "Gemenskap"], ["account", "⚙", "Konto"]];
   nav.innerHTML = items.map(([view, icon, label]) => `<button data-action="navigate" data-view="${view}" aria-current="${state.view === view ? "page" : "false"}"><span class="ico">${icon}</span>${label}</button>`).join("");
 }
@@ -2884,12 +3927,14 @@ function render() {
     overview: renderOverview,
     schools: renderSchools,
     people: renderPeople,
+    incidents: renderIncidents,
     account: renderAccount,
   };
   const fallback = state.profile.role === "admin" ? renderOverview : state.profile.role === "staff" ? renderAttendance : renderParentHome;
   screen.innerHTML = (views[state.view] || fallback)();
   renderNav();
   renderAssistant();
+  prefetchGuardianAttachments();
 }
 
 async function runMutation(work, successText = "Sparat.") {
@@ -2934,6 +3979,78 @@ document.body.addEventListener("submit", (event) => {
     requestAnimationFrame(() => document.getElementById("assistantAnswer")?.focus());
     return;
   }
+  if (type === "incident-draft") {
+    const intent = event.submitter?.dataset.intent || "draft";
+    if (intent === "submit") {
+      const message = values.incident_kind === "mistreatment"
+        ? "Skicka in rapporten? Den låses, och tidpunkten räknas som anmälan till rektor."
+        : "Skicka in rapporten? Därefter kan texten inte ändras. Tillägg skrivs under rapporten.";
+      if (!window.confirm(message)) return;
+    }
+    runMutation(async () => {
+      const saved = await rpc("save_incident_draft", incidentDraftArgs(form, values));
+      const id = typeof saved === "string" ? saved : form.dataset.reportId;
+      keepIncidentPlace();
+      state.incidentId = id;
+      if (intent === "submit") await rpc("submit_incident", { target_report_id: id });
+      state.incidentScreen = intent === "submit" ? "detail" : "form";
+      await refreshOpenIncident();
+    }, intent === "submit" ? "Rapporten är inskickad." : "Utkastet är sparat.");
+    return;
+  }
+  if (type === "incident-copy") {
+    const intent = event.submitter?.dataset.intent || "save";
+    const args = {
+      target_report_id: form.dataset.reportId,
+      target_child_id: form.dataset.childId,
+      copy_body: values.copy_body.trim(),
+    };
+    runMutation(async () => {
+      if (intent === "send") await rpc("send_incident_copy", args);
+      else await rpc("save_incident_copy", args);
+      state.incidentId = form.dataset.reportId;
+      state.incidentScreen = "detail";
+      await refreshOpenIncident();
+    }, intent === "send" ? "Kopian är skickad till vårdnadshavarna." : "Utkastet till kopian är sparat.");
+    return;
+  }
+  if (type === "incident-addendum") {
+    runMutation(async () => {
+      await rpc("add_incident_addendum", { target_report_id: form.dataset.reportId, addendum_text: values.addendum_text.trim() });
+      state.incidentId = form.dataset.reportId;
+      await refreshOpenIncident();
+    }, "Tillägget är sparat.");
+    return;
+  }
+  if (type === "incident-note") {
+    runMutation(async () => {
+      await rpc("add_incident_investigation_note", { target_report_id: form.dataset.reportId, note_text: values.note_text.trim() });
+      state.incidentId = form.dataset.reportId;
+      await refreshOpenIncident();
+    }, "Utredningsanteckningen är sparad.");
+    return;
+  }
+  if (type === "incident-action") {
+    runMutation(async () => {
+      await rpc("add_incident_action", {
+        target_report_id: form.dataset.reportId,
+        action_text: values.action_text.trim(),
+        responsible_profile_id: values.responsible_profile_id,
+        due_on: values.due_on,
+      });
+      state.incidentId = form.dataset.reportId;
+      await refreshOpenIncident();
+    }, "Åtgärden är tillagd.");
+    return;
+  }
+  if (type === "incident-close") {
+    runMutation(async () => {
+      await rpc("close_incident", { target_report_id: form.dataset.reportId, summary_text: values.summary_text.trim() });
+      state.incidentId = form.dataset.reportId;
+      await refreshOpenIncident();
+    }, "Rapporten är avslutad.");
+    return;
+  }
   if (type === "pickup-code") {
     stopPickupScanner();
     runMutation(async () => {
@@ -2970,6 +4087,23 @@ document.body.addEventListener("submit", (event) => {
       state.createdPass = { ...(Array.isArray(created) ? created[0] : created), child_id: form.dataset.childId };
       await loadData();
     }, "Hämtpasset är skapat. Kopiera länken nu.");
+    return;
+  }
+  if (type === "permanent-pickup-pass") {
+    if (!values.contact_id) {
+      state.notice = { type: "error", text: "Välj en person som får hämta." };
+      render();
+      return;
+    }
+    runMutation(async () => {
+      const created = await rpc("create_permanent_pickup_pass", {
+        target_contact_id: values.contact_id,
+        ends_on: values.ends_on || null,
+        include_linked: values.include_linked === "on",
+      });
+      state.createdPass = { ...(Array.isArray(created) ? created[0] : created), child_id: form.dataset.childId, permanent: true };
+      await loadData();
+    }, "Det permanenta hämtpasset är skapat. Kopiera länken nu.");
     return;
   }
   if (type === "pickup-block-create") {
@@ -3295,6 +4429,15 @@ document.body.addEventListener("submit", (event) => {
   }, successText);
 });
 
+function onPeopleDirectoryFilter(event) {
+  const root = event.target.closest?.(".people-directory");
+  if (!root || !event.target.matches("[data-people-query], [data-people-department]")) return;
+  applyPeopleDirectoryFilter(root);
+}
+
+document.body.addEventListener("input", onPeopleDirectoryFilter);
+document.body.addEventListener("change", onPeopleDirectoryFilter);
+
 document.body.addEventListener("change", (event) => {
   const input = event.target;
   if (input.matches('[data-action="post-images"]')) renderSelectedPostImages(input);
@@ -3315,6 +4458,9 @@ document.body.addEventListener("change", (event) => {
     const none = input.closest("fieldset")?.querySelector('input[name="no_children_visible"]');
     if (none) none.checked = false;
   }
+  if (input.name === "incident_kind" && input.form?.dataset.form === "incident-draft") {
+    input.form.dataset.incidentType = input.value;
+  }
   if (input.matches("[data-schedule-attending]")) {
     const row = input.closest("[data-weekday]");
     row.querySelectorAll('input[type="time"]').forEach((timeInput) => {
@@ -3324,10 +4470,122 @@ document.body.addEventListener("change", (event) => {
   }
 });
 
+function postShareText(post) {
+  const scope = post.child_id ? state.children.find((child) => child.id === post.child_id)?.name : departmentName(post.department_id);
+  return ArtanShare.buildTextShare({
+    title: post.title,
+    kicker: `Från skolan · ${scope || "Skolan"} · ${formatTimestamp(post.created_at)}`,
+    body: post.body,
+  });
+}
+
+function readyAttachmentFiles(images, kind) {
+  const files = [];
+  for (const image of images) {
+    const cached = image.signed_url ? cachedShareFile(image.image_id) : null;
+    if (!cached) {
+      prefetchGuardianAttachments();
+      sharePending(kind);
+      return null;
+    }
+    files.push(cached);
+  }
+  return files;
+}
+
+function runShareAction(kind, what, id) {
+  if (state.profile?.role !== "parent") return;
+  if (what === "term") {
+    try {
+      const built = ArtanShare.buildTermShare(termShareModel(id));
+      if (kind === "print") {
+        openPrint(built.print);
+        return;
+      }
+      sharePrepared({
+        title: built.title,
+        text: built.text,
+        files: [new File([built.ics], built.filename, { type: "text/calendar" })],
+      });
+    } catch (error) {
+      state.notice = { type: "error", text: error.message };
+      render();
+    }
+    return;
+  }
+  if (what === "post") {
+    const post = state.posts.find((item) => item.id === id);
+    if (!post) return;
+    const textShare = postShareText(post);
+    const images = postImagesFor(post.id).filter((image) => image.signed_url);
+    if (kind === "print") {
+      const cached = images.length ? readyAttachmentFiles(images, "print") : [];
+      if (cached === null) return;
+      openPrint(ArtanShare.printDocument({
+        kind: "post",
+        kicker: `Från skolan · ${post.child_id ? state.children.find((child) => child.id === post.child_id)?.name || "Skolan" : departmentName(post.department_id)} · ${formatTimestamp(post.created_at)}`,
+        title: post.title,
+        body: post.body,
+        images: images.map((image, index) => ({ url: cached[index].objectUrl, alt: image.alt_text || post.title })),
+      }));
+      return;
+    }
+    if (!images.length) {
+      sharePrepared({ title: textShare.title, text: textShare.text, files: [textShare.file] });
+      return;
+    }
+    const cached = readyAttachmentFiles(images, "share");
+    if (!cached) return;
+    sharePrepared({ title: textShare.title, text: textShare.text, files: cached.map((entry) => entry.file) });
+    return;
+  }
+  if (what === "attachment") {
+    const image = state.postImages.find((item) => item.image_id === id);
+    if (!image?.signed_url) {
+      state.notice = { type: "error", text: "Filen kunde inte laddas." };
+      render();
+      return;
+    }
+    const cached = readyAttachmentFiles([image], kind);
+    if (!cached) return;
+    const entry = cached[0];
+    if (kind === "print") {
+      openPrint(ArtanShare.printDocument({
+        kind: entry.type === "application/pdf" ? "pdf" : "image",
+        title: entry.file.name,
+        alt: image.alt_text || entry.file.name,
+        url: entry.objectUrl,
+      }));
+      return;
+    }
+    sharePrepared({ title: entry.file.name, text: "", files: [entry.file] });
+    return;
+  }
+  if (what === "message") {
+    const message = state.privateMessages.find((item) => item.message_id === id && item.sender_id !== state.profile.id);
+    if (!message) return;
+    const textShare = ArtanShare.buildTextShare({
+      title: `Meddelande från ${message.sender_name}`,
+      kicker: `${formatTimestamp(message.created_at)}`,
+      body: message.body,
+    });
+    if (kind === "print") {
+      openPrint(textShare.print);
+      return;
+    }
+    sharePrepared({ title: textShare.title, text: textShare.text, files: [textShare.file] });
+  }
+}
+
 document.body.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
+  if (/^(share|print)-(term|post|attachment|message)$/.test(action)) {
+    const [kind, what] = action.split("-");
+    runShareAction(kind, what, target.dataset.id);
+    return;
+  }
   if (action === "assistant-toggle" || action === "assistant-close") {
     state.assistantOpen = action === "assistant-toggle" ? !state.assistantOpen : false;
     if (!state.assistantOpen) {
@@ -3362,10 +4620,21 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "navigate" || action === "account") {
-    showView(action === "account" ? "account" : target.dataset.view);
+    const view = action === "account" ? "account" : target.dataset.view;
+    if (view === "incidents") {
+      state.incidentScreen = "list";
+      state.incidentId = null;
+      state.incidentDetail = null;
+    }
+    showView(view);
     return;
   }
   if (action === "hub-open") {
+    if (target.dataset.section === "incidentrapporter") {
+      state.incidentScreen = "list";
+      state.incidentId = null;
+      state.incidentDetail = null;
+    }
     showView(state.view, { section: target.dataset.section || "" });
     requestAnimationFrame(() => document.querySelector(".hub-back")?.focus());
     return;
@@ -3404,7 +4673,12 @@ document.body.addEventListener("click", (event) => {
       form.elements.opens_at.value = parsed.opensAt;
       form.elements.closes_at.value = parsed.closesAt;
       form.elements.closures.value = parsed.closures.map((closure) => `${closure.date} | ${closure.reason}`).join("\n");
-      setParseStatus(form, "Ärtan har fyllt i ett utkast. Granska alla datum och tider innan du sparar.");
+      if (parsed.error) {
+        setParseStatus(form, parsed.error, true);
+      } else {
+        const closureNote = parsed.closures.length ? ` ${parsed.closures.length} stängningsdagar står i listan.` : "";
+        setParseStatus(form, `Ärtan har fyllt i ett utkast.${closureNote} Granska alla datum och tider innan du sparar.`);
+      }
     } catch (error) {
       setParseStatus(form, error.message, true);
     }
@@ -3450,6 +4724,67 @@ document.body.addEventListener("click", (event) => {
     }, "Terminen är publicerad.");
     return;
   }
+  if (action === "incident-new") {
+    keepIncidentPlace();
+    state.incidentScreen = "form";
+    state.incidentId = null;
+    state.incidentDetail = null;
+    state.notice = null;
+    render();
+    scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  if (action === "incident-list") {
+    keepIncidentPlace();
+    state.incidentScreen = "list";
+    state.incidentId = null;
+    state.incidentDetail = null;
+    state.notice = null;
+    render();
+    return;
+  }
+  if (action === "open-incident") {
+    runMutation(async () => {
+      keepIncidentPlace();
+      await openIncident(target.dataset.id);
+    }, "");
+    return;
+  }
+  if (action === "print-incident") {
+    window.print();
+    return;
+  }
+  if (action === "acknowledge-incident") {
+    runMutation(async () => {
+      await rpc("acknowledge_incident_copy", { target_copy_id: target.dataset.id });
+      await loadData();
+    }, "Det är noterat att du har läst.");
+    return;
+  }
+  if (action === "start-incident-investigation") {
+    runMutation(async () => {
+      await rpc("start_incident_investigation", { target_report_id: target.dataset.id });
+      state.incidentId = target.dataset.id;
+      state.incidentScreen = "detail";
+      await refreshOpenIncident();
+    }, "Rapporten är under utredning.");
+    return;
+  }
+  if (action === "incident-principal") {
+    runMutation(async () => {
+      await rpc("mark_incident_reported_to_principal", { target_report_id: target.dataset.id });
+      state.incidentId = target.dataset.id;
+      await refreshOpenIncident();
+    }, "Anmälan till huvudman är registrerad.");
+    return;
+  }
+  if (action === "complete-incident-action") {
+    runMutation(async () => {
+      await rpc("complete_incident_action", { target_action_id: target.dataset.id });
+      await refreshOpenIncident();
+    }, "Åtgärden är markerad klar.");
+    return;
+  }
   if (action === "open-scan") {
     stopPickupScanner();
     state.checkout = null;
@@ -3472,7 +4807,7 @@ document.body.addEventListener("click", (event) => {
   }
   if (action === "confirm-pickup") {
     const scan = state.scan;
-    if (!scan?.result?.pass_id) return;
+    if (!scan?.result?.pass_id || scan.result.permanent) return;
     runMutation(async () => {
       await rpc("confirm_pickup", {
         target_pass_id: scan.result.pass_id,
@@ -3481,6 +4816,21 @@ document.body.addEventListener("click", (event) => {
       state.scan = null;
       await loadData();
     }, `${scan.result.child_name} är utcheckad.`);
+    return;
+  }
+  if (action === "confirm-permanent-pickup") {
+    const scan = state.scan;
+    if (!scan?.result?.permanent || !scan.result.pass_id || !target.dataset.childId) return;
+    const childName = target.dataset.childName || "Barnet";
+    runMutation(async () => {
+      await rpc("confirm_permanent_pickup", {
+        target_pass_id: scan.result.pass_id,
+        target_child_id: target.dataset.childId,
+        pickup_method: scan.method === "code" ? "code" : "qr",
+      });
+      state.scan = null;
+      await loadData();
+    }, `${childName} är utcheckad.`);
     return;
   }
   if (action === "copy-pass") {
@@ -3493,6 +4843,22 @@ document.body.addEventListener("click", (event) => {
       if (state.createdPass?.pass_id === target.dataset.id) state.createdPass = null;
       await loadData();
     }, "Hämtpasset är återkallat.");
+    return;
+  }
+  if (action === "revoke-permanent-pass") {
+    runMutation(async () => {
+      await rpc("revoke_permanent_pickup_pass", { target_pass_id: target.dataset.id });
+      if (state.createdPass?.pass_id === target.dataset.id) state.createdPass = null;
+      await loadData();
+    }, "Det permanenta hämtpasset är återkallat.");
+    return;
+  }
+  if (action === "regenerate-permanent-pass") {
+    runMutation(async () => {
+      const created = await rpc("regenerate_permanent_pickup_pass", { target_pass_id: target.dataset.id });
+      state.createdPass = { ...(Array.isArray(created) ? created[0] : created), child_id: target.dataset.childId, permanent: true };
+      await loadData();
+    }, "Ny kod skapad. Den gamla länken fungerar inte längre.");
     return;
   }
   if (action === "delete-pickup-contact") {
@@ -3755,8 +5121,12 @@ document.body.addEventListener("click", (event) => {
 
 document.body.addEventListener("change", (event) => {
   const select = event.target.closest("[data-pickup-choice]");
-  if (!select?.form) return;
-  updatePickupChoice(select.form);
+  if (select?.form) updatePickupChoice(select.form);
+  const contact = event.target;
+  const form = contact.closest?.("[data-form='permanent-pickup-pass']");
+  if (!form || contact.name !== "contact_id") return;
+  const slot = form.querySelector("[data-permanent-linked-slot]");
+  if (slot) slot.innerHTML = renderPermanentLinkedField(contact.value);
 });
 
 window.addEventListener("popstate", syncHubFromHistory);

@@ -1,5 +1,48 @@
 # Ändringslogg
 
+## 2026-10-22 — Engångspass hittar pgcrypto
+
+- `supabase/017_fix_pickup_pass_random_bytes.sql` innehåller bara `alter function public.create_pickup_pass(uuid, date, time, time, text, text, text) set search_path = public, extensions;`. Funktionen skrivs inte om. Samma sats appliceras mot databasen separat. Kör inte filen igen.
+
+## 2026-10-22 — Dela och skriv ut för vårdnadshavare
+
+- På Min dag kan en vårdnadshavare dela och skriva ut en publicerad termin. Delningen är en textsammanfattning och en `.ics`-fil med terminen och stängningsdagarna. Barnets schema och den personliga kalenderlänken följer inte med.
+- Där webbläsaren kan dela filer används det. Annars laddas filen ner och texten kopieras.
+- Inlägg, bifogade bilder och mottagna privata meddelanden får Dela och Skriv ut. En bilaga delas som filen själv, hämtad via den befintliga signerade adressen, inte som en länk.
+- Skriv ut öppnar en utskriftsvy och anropar utskrift direkt från trycket. Ingen ny publik länk skapas och lagringen är oförändrad.
+
+## 2026-10-22 — Permanent hämtpass
+
+- En vårdnadshavare kan skapa ett permanent hämtpass för en person som redan får hämta. Passet kan också gälla samma person för vårdnadshavarens andra barn. Det kan användas igen tills det återkallas, eller till ett valfritt slutdatum.
+- Länken, QR-koden och den sexsiffriga koden fungerar som för ett engångspass. Den som hämtar behöver inget konto. Koden lagras bara som kontrollsumma.
+- Personal ser att passet är permanent och ser namn och relation, så att legitimationen kan kontrolleras. Varje skanning loggas och vårdnadshavarna får ett meddelande, till exempel ”Arthur hämtades av Mormor Karin 15.42”.
+- Båda vårdnadshavarna kan se passet, återkalla det eller skapa en ny kod. Den gamla länken slutar då fungera. Passet fungerar inte om personen spärras, tas bort eller inte längre får hämta.
+- Engångspassen är oförändrade. Båda permanenta passen hämtar slumptal med `extensions.gen_random_bytes`, eftersom pgcrypto ligger i schemat extensions. Migration `supabase/016_permanent_pickup_passes.sql` ska granskas och har inte körts här.
+
+## 2026-10-22 — Personer som grupper, inte ett kort per barn
+
+- Personer visar grupperna Barn, Vårdnadshavare och, för administratören, Personal. Varje grupp öppnas för sig med tillbaka-knapp och egen adress, till exempel `#personer/barn`.
+- Listan är kompakt och går att söka på namn och avdelning. Den är sorterad alfabetiskt och tål många personer. En rad visar bild eller initialer, namn, avdelning och en kort status. Ett tryck öppnar samma detaljvy som tidigare.
+- Barnlistan visar hur många vårdnadshavare som är kopplade. Vårdnadshavarlistan visar de kopplade barnen. Personal visar administratörer och personal, och om någon får hantera terminsschemat.
+- Lägg till barn, Bjud in vårdnadshavare, Väntande inbjudningar, Syskonförfrågningar och Får ej hämta finns kvar. Personal ser fortfarande barnuppgifter utan att kunna ändra dem.
+
+## 2026-10-22 — Termintext som tål vanlig svenska
+
+- Tolka och fyll i läser start och slut även när de står var för sig, till exempel startar 3 aug och slutar 31 dec. Förkortade månader fungerar, och året väljs så att slutdatumet ligger efter starten.
+- Stängningsdagar kan räknas upp med komma, och, & eller bara mellanslag. En fras före datumen, till exempel kompetensutveckling eller jul/nyår, blir anledningen. Ett spann som 24–31 dec fyller i varje dag.
+- Öppettider kan skrivas 06.30-17.30, 6:30–17:30 eller kl 6.30 till 17.30. Saknas bara en del namnger Ärtan den delen och fyller i resten, inklusive stängningsdagarna, så att de kan granskas innan publicering.
+
+## 2026-10-22 — Avvikelserapporter
+
+- Personal skriver utkast för olycksfall/skada, tillbud, kränkande behandling och övrig avvikelse. Utkastet syns bara för författaren. Inskickad text låses, och senare uppgifter läggs till som tillägg.
+- Flera barn kan ingå, med rollen drabbad, inblandad eller orsakande. Olycksfall har skadetyp, kroppsdel, första hjälpen och vård. Kränkning har vem som utsattes, vem som uppger det och barnets egen upplevelse. Inskickning av en kränkning räknas som anmälan till rektor.
+- Personal ser sina egna rapporter och, efter inskickning, olycksfall och tillbud på avdelningar de tillhör. Kränkning och övrig avvikelse syns bara för författaren och administratören. Administratören ser alla inskickade rapporter i organisationen, utreder, lägger åtgärder och avslutar. Vårdnadshavare ser aldrig själva rapporten.
+- En vårdnadshavarkopia skickas per barn och visar bara det barnets namn. Andra barn står som ett annat barn. Olycksfall nämner kommunens olycksfallsförsäkring. Vårdnadshavaren bekräftar med Jag har läst. Påminnelser stannar i appen.
+- Meddelanden i appen återanvänder hämtpassens meddelandetabell. Administratören aviseras vid inskickning, vårdnadshavaren när kopian skickas och igen om den inte är läst. En händelselogg följer rapporten, och administratören kan skriva ut underlaget för huvudmannen.
+- Migreringen `supabase/012_incident_reports.sql` ska köras för hand. Den är inte körd mot produktion. Den är oberoende av `011_guardian_owned_child_info.sql`.
+- Personal och administratörer öppnar **Incidentrapporter** som ett kort under Personer/Barn. Menyn Avvikelse finns kvar.
+- En vårdnadshavare ser kopian och knappen Jag har läst på Min dag, och som kortet Information att läsa under Barnet när en kopia finns för det valda barnet.
+
 ## 2026-10-22 — Kortöversikt i stället för långa menysidor
 
 - Barnet, Skolor och Personer/Barn öppnas som ett rutnät av kort. Ett tryck visar den delen för sig, med ‹ Tillbaka och rubrik.
