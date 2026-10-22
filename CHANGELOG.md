@@ -13,7 +13,7 @@
 - Länken, QR-koden och den sexsiffriga koden fungerar som för ett engångspass. Den som hämtar behöver inget konto. Koden lagras bara som kontrollsumma.
 - Personal ser att passet är permanent och ser namn och relation, så att legitimationen kan kontrolleras. Varje skanning loggas och vårdnadshavarna får ett meddelande, till exempel ”Arthur hämtades av Mormor Karin 15.42”.
 - Båda vårdnadshavarna kan se passet, återkalla det eller skapa en ny kod. Den gamla länken slutar då fungera. Passet fungerar inte om personen spärras, tas bort eller inte längre får hämta.
-- Engångspassen är oförändrade. Migration `supabase/016_permanent_pickup_passes.sql` ska granskas och har inte körts.
+- Engångspassen är oförändrade. Båda permanenta passen hämtar slumptal med `extensions.gen_random_bytes`, eftersom pgcrypto ligger i schemat extensions. Migration `supabase/016_permanent_pickup_passes.sql` ska granskas och har inte körts här.
 
 ## 2026-10-22 — Personer som grupper, inte ett kort per barn
 
