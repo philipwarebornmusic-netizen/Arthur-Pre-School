@@ -1,11 +1,19 @@
 # Ändringslogg
 
+## 2026-10-22 — Klasslista och profilbilder
+
+- Vårdnadshavare kan ladda upp, byta och ta bort en kvadratisk profilbild på Barnet. Bilden beskärs i webbläsaren, förminskas till cirka 512 pixlar och sparas som JPEG utan kamerans dolda uppgifter.
+- Personal och administratörer på barnets avdelning ser namn och bild, till exempel i närvaron och under Personer. De kan inte ändra bilden eller klasslistan.
+- Andra vårdnadshavare ser en klasslista för samma avdelning. Förnamnet visas om minst en vårdnadshavare sagt ja och ingen sagt nej. Bilden visas bara om varje kopplad vårdnadshavare sagt ja. Ett nej gäller direkt.
+- Svaren loggas med vem, barn, vad och när. Den privata bucketen `child-photos` skapas av migrationen. En borttagen bild tas bort från lagringen.
+- Kräver migration `supabase/migrations/015_class_list_photos.sql`. Den har inte körts mot produktion. Tills den är körd visas att klasslistan och profilbilderna inte är aktiverade, och resten av appen fungerar som tidigare.
+
 ## 2026-10-22 — Vårdnadshavare äger barnets uppgifter
 
 - Vårdnadshavare kan ändra och ta bort sina kontaktpersoner, tömma enskilda hälsofält och anteckningen, och svara nej för att ta tillbaka ett samtycke. Borttagning frågar en gång till.
 - Personal och administratörer kan läsa barnets uppgifter, inklusive allergier, men ser inga fält för att ändra dem.
 - En administratör kan fortfarande flytta ett barn mellan avdelningar. Personal och administratörer kan fortfarande lägga till ett barn och sätta namn och avdelning när barnet skapas. En administratör kan fortfarande ta bort ett barn.
-- Kräver migration `supabase/011_guardian_owned_child_info.sql` innan den nya behörigheten gäller. Migrationen har inte körts mot produktion, raderar inga rader och tar inte bort kolumner. Den rör inte hämtpassens tabeller och kan köras före eller efter `010`.
+- Migration `supabase/011_guardian_owned_child_info.sql` är körd mot produktion. Den raderar inga rader och tar inte bort kolumner. Den rör inte hämtpassens tabeller.
 
 ## 2026-10-21 — Inbjudningar styr vem som kommer in
 

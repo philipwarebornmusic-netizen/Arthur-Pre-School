@@ -48,11 +48,17 @@ First real account
 7. Guardians request an additional child from the app. Staff approve the request before the child is linked.
 
 Guardian-owned child information
-- Run supabase/011_guardian_owned_child_info.sql once in the SQL editor after the earlier migrations.
-- Do not run it against production until guardians should be the only people who can change child information. Deploy previews use the production database, so saving from this version fails there until 011 has been applied on a non-production database.
-- The file does not delete rows or drop columns. It does not touch pickup_contacts, pickup_passes, or pickup_events, so it is safe before or after 010.
+- supabase/011_guardian_owned_child_info.sql is already applied in production. Do not run it again.
+- The file does not delete rows or drop columns. It does not touch pickup_contacts, pickup_passes, or pickup_events.
 - 010 does not grant staff or admin any write on the child profile, health, emergency contacts, or consents.
-- After 011, guardians edit and remove that information. Staff and administrators keep read access. Creating a child, including name and department, stays with staff and administrators. An administrator can move a child between departments and can still delete a child.
+- Guardians edit and remove that information. Staff and administrators keep read access. Creating a child, including name and department, stays with staff and administrators. An administrator can move a child between departments and can still delete a child.
+
+Class list and profile photos
+- supabase/migrations/015_class_list_photos.sql has not been applied. Do not run it until the class list and profile photos should be activated. Deploy previews use the production database and show that the feature is not activated until then.
+- The file creates the private Storage bucket child-photos (not public, 2 MB, JPEG only) and the consent tables. No separate bucket step is required when that insert succeeds. If the storage schema rejects the insert, create a private bucket with that id, the same size limit and image/jpeg, then run the file again.
+- Guardians upload, replace and delete <child_id>/profile.jpg. The app removes the Storage object and clear_child_photo clears the metadata. Staff and administrators of the child's department can read the photo. Other guardians can read it only when every linked guardian has opted in and the child is still named in the class list.
+- Answers are per guardian. A null answer is unanswered, not a no. Any explicit no hides the name immediately. The photo requires yes from every linked guardian. Changes are appended to class_list_consent_events.
+- This opt-in is separate from app_images, group_images and social_media. Do not reuse those rows.
 
 Fake Test organization and PreSchool Test preschool
 1. Keep this tenant free from real child, health, contact and consent data.

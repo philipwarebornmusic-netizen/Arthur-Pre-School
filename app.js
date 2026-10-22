@@ -34,6 +34,10 @@ const state = {
   onboarding: null,
   schoolCodeResult: null,
   migrationReady: true,
+  classListReady: true,
+  classListConsents: [],
+  classList: [],
+  childPhotoUrls: {},
   selectedChildId: null,
   view: inviteFromUrl ? "join" : "home",
   authView: inviteFromUrl ? "register" : "login",
@@ -521,6 +525,10 @@ async function logout() {
       inviteResult: null,
       inviteCode: "",
       migrationReady: true,
+      classListReady: true,
+      classListConsents: [],
+      classList: [],
+      childPhotoUrls: {},
       termEditor: null,
       selectedChildId: null,
       view: "home",
@@ -538,6 +546,7 @@ async function loadData() {
   const userId = state.session.user?.id;
   if (!userId) throw new Error("Sessionen saknar användar-id.");
   state.migrationReady = true;
+  state.classListReady = true;
   const profileWithAccess = "id,auth_user_id,organization_id,name,email,phone,role,removed_at,allow_parent_messages,allow_playdate_requests,allow_birthday_invitations";
   const profileWithoutAccess = "id,auth_user_id,organization_id,name,email,phone,role,allow_parent_messages,allow_playdate_requests,allow_birthday_invitations";
   let profiles;
@@ -574,7 +583,7 @@ async function loadData() {
     request(`/rest/v1/preschools?select=id,organization_id,name,phone,address,postal_code,city,opening_hours,created_at&organization_id=eq.${organizationId}&order=name.asc`),
     request("/rest/v1/departments?select=id,preschool_id,name,created_at&order=name.asc"),
     request("/rest/v1/staff_departments?select=staff_id,department_id"),
-    request("/rest/v1/children?select=id,department_id,name,birth_date,notes,avatar_color,created_at&order=name.asc"),
+    loadChildren(),
     request("/rest/v1/child_health?select=child_id,allergies,diet,conditions,medication,emergency,updated_at"),
     request("/rest/v1/child_contacts?select=id,child_id,name,relation,phone,can_pickup,is_primary,created_at&order=name.asc"),
     request("/rest/v1/consents?select=child_id,type,allowed,updated_at"),
@@ -629,12 +638,26 @@ async function loadData() {
   state.siblingRequests = siblingRequests || [];
   state.joinRequests = joinRequests || [];
   state.staffMembers = staffMembers || [];
+  state.classListConsents = [];
+  state.classList = [];
+  if (state.profile.role === "parent" && state.classListReady) {
+    const [classListConsents, classList] = await Promise.all([
+      optionalClassListRpc("my_class_list_consents"),
+      optionalClassListRpc("list_class_list"),
+    ]);
+    state.classListConsents = state.classListReady ? (classListConsents || []) : [];
+    state.classList = state.classListReady ? (classList || []) : [];
+  }
+  state.childPhotoUrls = await signChildPhotos([
+    ...state.children.map((child) => child.photo_path),
+    ...state.classList.map((child) => child.photo_path),
+  ]);
   state.onboarding = { kind: "active" };
   if (!state.children.some((child) => child.id === state.selectedChildId)) state.selectedChildId = state.children[0]?.id || null;
   const allowedViews = {
     admin: ["overview", "attendance", "schools", "messages", "people", "account"],
     staff: ["attendance", "messages", "people", "account"],
-    parent: ["home", "child", "messages", "account"],
+    parent: ["home", "child", "classlist", "messages", "account"],
   };
   const roleViews = allowedViews[state.profile.role] || allowedViews.parent;
   if (!roleViews.includes(state.view)) state.view = roleViews[0];
@@ -667,6 +690,10 @@ function clearLoadedData() {
     siblingRequests: [],
     joinRequests: [],
     staffMembers: [],
+    classListReady: true,
+    classListConsents: [],
+    classList: [],
+    childPhotoUrls: {},
     selectedChildId: null,
   });
 }
@@ -699,6 +726,48 @@ function optionalRpc(name, args) {
   });
 }
 
+function optionalClassListRpc(name, args) {
+  return rpc(name, args).catch((error) => {
+    if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
+      state.classListReady = false;
+      return [];
+    }
+    throw error;
+  });
+}
+
+async function loadChildren() {
+  const withPhoto = "id,department_id,name,birth_date,notes,avatar_color,photo_path,photo_updated_at,created_at";
+  const withoutPhoto = "id,department_id,name,birth_date,notes,avatar_color,created_at";
+  try {
+    return await request(`/rest/v1/children?select=${withPhoto}&order=name.asc`);
+  } catch (error) {
+    if (!/photo_path|photo_updated_at|schema cache/i.test(error.message)) throw error;
+    state.classListReady = false;
+    return request(`/rest/v1/children?select=${withoutPhoto}&order=name.asc`);
+  }
+}
+
+async function signChildPhotos(paths) {
+  const unique = [...new Set(paths.filter(Boolean))];
+  if (!unique.length) return {};
+  try {
+    const signed = await request("/storage/v1/object/sign/child-photos", {
+      method: "POST",
+      body: JSON.stringify({ expiresIn: 3600, paths: unique }),
+    });
+    const urls = {};
+    (signed || []).forEach((item) => {
+      const signedPath = item.signedURL || item.signedUrl;
+      if (!item.path || !signedPath) return;
+      urls[item.path] = signedPath.startsWith("http") ? signedPath : `${config.url}${signedPath}`;
+    });
+    return urls;
+  } catch {
+    return {};
+  }
+}
+
 function botMascot(decorative = false) {
   const accessibility = decorative ? 'aria-hidden="true"' : 'role="img" aria-label="Ärtan, din digitala hjälpreda"';
   return `<span class="bot-mascot" ${accessibility}></span>`;
@@ -708,6 +777,7 @@ function assistantQuickActions() {
   const parentActions = {
     home: [["schedule", "Ändra lämning/hämtning"], ["day", "Vad är dagens plan?"], ["reminders", "Vad behöver jag göra?"], ["messages", "Nytt från skolan?"]],
     child: [["schedule", "Ändra lämning/hämtning"], ["reminders", "Vad saknas?"], ["consents", "Hur ser samtyckena ut?"], ["contact", "Kontakta förskolan"]],
+    classlist: [["reminders", "Vad saknas?"], ["consents", "Hur ser samtyckena ut?"], ["messages", "Nytt från skolan?"], ["schedule", "Ändra lämning/hämtning"]],
     messages: [["birthdays", "Kalasinbjudningar"], ["schedule", "Ändra lämning/hämtning"], ["messages", "Sammanfatta skolans flöde"], ["playdates", "Hur fungerar lekträffar?"]],
     account: [["schedule", "Ändra lämning/hämtning"], ["privacy", "Mina integritetsval"], ["contact", "Vem kan jag kontakta?"], ["reminders", "Vad behöver jag göra?"]],
   };
@@ -1326,13 +1396,156 @@ function renderConsentChoices(child) {
   }).join("")}</div>`;
 }
 
+function childInitials(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  const letters = `${parts[0]?.[0] || ""}${parts.length > 1 ? parts[parts.length - 1][0] : ""}`;
+  return (letters || "?").toLocaleUpperCase("sv-SE");
+}
+
+function childPhotoUrl(path) {
+  return path ? state.childPhotoUrls[path] || "" : "";
+}
+
+function childAvatarHtml(name, url, color = "") {
+  if (url) return `<span class="child-avatar has-photo"><img src="${esc(url)}" alt=""></span>`;
+  const style = color ? ` style="background:${esc(color)}"` : "";
+  return `<span class="child-avatar"${style} aria-hidden="true">${esc(childInitials(name))}</span>`;
+}
+
+function childPhotoPath(childId) {
+  return `${childId}/profile.jpg`;
+}
+
+async function transcodeChildPhoto(file) {
+  if (!file?.type?.startsWith("image/")) throw new Error("Välj en bild.");
+  if (file.size > 20 * 1024 * 1024) throw new Error("Bilden är större än 20 MB.");
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    throw new Error("Bilden kunde inte läsas. Välj en JPEG, PNG eller WEBP.");
+  }
+  const side = Math.min(bitmap.width, bitmap.height);
+  const originX = Math.floor((bitmap.width - side) / 2);
+  const originY = Math.floor((bitmap.height - side) / 2);
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext("2d", { alpha: false });
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, 512, 512);
+  context.drawImage(bitmap, originX, originY, side, side, 0, 0, 512, 512);
+  bitmap.close();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.84));
+  if (!blob) throw new Error("Bilden kunde inte bearbetas.");
+  if (blob.size > 2 * 1024 * 1024) throw new Error("Bilden är större än 2 MB efter bearbetning.");
+  return blob;
+}
+
+async function uploadChildPhotoObject(path, blob) {
+  return request(`/storage/v1/object/child-photos/${encodedStoragePath(path)}`, {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg", "x-upsert": "true" },
+    body: blob,
+  });
+}
+
+async function deleteChildPhotoObject(path) {
+  try {
+    await request("/storage/v1/object/child-photos", {
+      method: "DELETE",
+      body: JSON.stringify({ prefixes: [path] }),
+    });
+  } catch (error) {
+    if (!/not found|404|object not found/i.test(error.message)) throw error;
+  }
+}
+
+async function saveChildPhoto(childId, file) {
+  if (state.profile.role !== "parent") throw new Error("Bara vårdnadshavare kan ladda upp en profilbild.");
+  const path = childPhotoPath(childId);
+  const hadPhoto = Boolean(state.children.find((child) => child.id === childId)?.photo_path);
+  const blob = await transcodeChildPhoto(file);
+  await uploadChildPhotoObject(path, blob);
+  try {
+    await rpc("set_child_photo", { target_child_id: childId, object_path: path });
+  } catch (error) {
+    if (!hadPhoto) {
+      try { await deleteChildPhotoObject(path); } catch { /* keep the original upload error */ }
+    }
+    throw error;
+  }
+}
+
+async function removeChildPhoto(childId) {
+  if (state.profile.role !== "parent") throw new Error("Bara vårdnadshavare kan ta bort profilbilden.");
+  await deleteChildPhotoObject(childPhotoPath(childId));
+  await rpc("clear_child_photo", { target_child_id: childId });
+}
+
+function classListRowsFor(childId) {
+  return state.classListConsents.filter((row) => row.child_id === childId);
+}
+
+function photoAnswerLabel(value) {
+  if (value === true) return "har sagt ja";
+  if (value === false) return "har sagt nej";
+  return "har inte svarat";
+}
+
+function renderChildPhoto(child) {
+  if (!state.classListReady) {
+    return `<section class="card" id="child-photo"><h2>Profilbild</h2><p class="form-hint">Klasslistan och profilbilder är inte aktiverade i databasen ännu.</p></section>`;
+  }
+  const url = childPhotoUrl(child.photo_path);
+  return `<section class="card" id="child-photo"><h2>Profilbild</h2><div class="child-photo-layout">${childAvatarHtml(child.name, url, child.avatar_color)}<div><p class="form-hint">Bilden hjälper personalen att känna igen barnet vid hämtning. Den beskärs till en kvadrat, förminskas till cirka 512 pixlar och sparas utan kamerans dolda uppgifter. Andra vårdnadshavare ser den bara om alla vårdnadshavare har sagt ja under Klasslista.</p><div class="photo-actions"><label class="file-button">${child.photo_path ? "Byt bild" : "Ladda upp"}<input type="file" accept="image/*" data-action="child-photo" data-child-id="${esc(child.id)}"></label>${child.photo_path ? `<button class="danger" type="button" data-action="delete-child-photo" data-child-id="${esc(child.id)}">Ta bort</button>` : ""}</div></div></div></section>`;
+}
+
+function renderClassListChoice(child, field, label, hint) {
+  const mine = classListRowsFor(child.id).find((row) => row.is_self);
+  const value = mine?.[field];
+  return `<div class="consent-question"><div><strong>${esc(label)}</strong><span>${value === true ? "Ja" : value === false ? "Nej" : "Ej besvarat"}</span></div><p class="form-hint">${esc(hint)}</p><div class="consent-choices" role="group" aria-label="${esc(label)}"><button type="button" data-action="set-class-list-consent" data-child-id="${esc(child.id)}" data-field="${esc(field)}" data-value="true" aria-pressed="${value === true}">Ja</button><button type="button" data-action="set-class-list-consent" data-child-id="${esc(child.id)}" data-field="${esc(field)}" data-value="false" aria-pressed="${value === false}">Nej</button></div></div>`;
+}
+
+function renderClassListConsent(child) {
+  if (!state.classListReady) {
+    return `<section class="card" id="class-list-consent"><h2>Klasslista</h2><p class="form-hint">Klasslistan och profilbilder är inte aktiverade i databasen ännu.</p></section>`;
+  }
+  const rows = classListRowsFor(child.id);
+  const others = rows.filter((row) => !row.is_self);
+  const nameVisible = rows.some((row) => row.show_name === true) && !rows.some((row) => row.show_name === false);
+  const photoVisible = rows.length > 0 && rows.every((row) => row.show_photo === true);
+  const otherStatus = others.length
+    ? `<ul class="consent-readout">${others.map((row) => `<li><span>${esc(row.guardian_name)}</span><strong>${esc(photoAnswerLabel(row.show_photo))}</strong></li>`).join("")}</ul>`
+    : `<p class="form-hint">Ingen annan vårdnadshavare är kopplad. Bilden kan visas när du själv har sagt ja.</p>`;
+  return `<section class="card" id="class-list-consent"><h2>Klasslista</h2><p class="form-hint">Andra vårdnadshavare i samma avdelning kan se en klasslista. Den är frivillig och skild från samtyckena för bilder i ärtan, gruppbilder och sociala medier. Personal och administratörer på barnets avdelning ser namn och bild ändå, för hämtning.</p>
+    ${renderClassListChoice(child, "show_name", "Visa förnamnet i klasslistan", "Förnamnet visas om minst en vårdnadshavare sagt ja och ingen sagt nej. Ett nej tar bort barnet från listan direkt.")}
+    ${renderClassListChoice(child, "show_photo", "Visa bilden för andra vårdnadshavare", "Bilden visas bara när varje kopplad vårdnadshavare har sagt ja. Ett nej, eller en vårdnadshavare som inte har svarat, döljer bilden direkt.")}
+    <h3>Andra vårdnadshavare och bilden</h3>${otherStatus}
+    <p class="form-hint">${nameVisible ? "Barnet syns i klasslistan." : "Barnet syns inte i klasslistan."} ${photoVisible ? "Bilden kan visas där." : "Bilden visas inte där just nu."}</p></section>`;
+}
+
+function renderClassList() {
+  if (state.profile.role !== "parent") return "";
+  if (!state.classListReady) {
+    return `${noticeHtml()}<section class="hero-card"><p class="kicker">Avdelningen</p><h1 class="h1">Klasslista</h1><p class="sub">Klasslistan och profilbilder är inte aktiverade i databasen ännu.</p></section>`;
+  }
+  const groups = new Map();
+  state.classList.forEach((child) => {
+    if (!groups.has(child.department_id)) groups.set(child.department_id, { name: child.department_name, children: [] });
+    groups.get(child.department_id).children.push(child);
+  });
+  const sections = Array.from(groups.values()).map((group) => `<section class="class-list-group"><h2>${esc(group.name)}</h2><div class="class-list">${group.children.map((child) => `<article class="card class-list-card">${childAvatarHtml(child.display_name, childPhotoUrl(child.photo_path))}<div><strong>${esc(child.display_name)}</strong>${child.photo_path ? "" : `<span>Ingen bild</span>`}</div></article>`).join("")}</div></section>`).join("");
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Avdelningen</p><h1 class="h1">Klasslista</h1><p class="sub">Barn i samma avdelning som dina barn, när vårdnadshavarna har valt att visa förnamnet. Bilden syns bara om alla vårdnadshavare till det barnet har sagt ja.</p></section>${sections || emptyState("Inga barn visas ännu", "Ett barn syns när en vårdnadshavare sagt ja till namnet och ingen sagt nej.")}`;
+}
+
 function renderChildFacts(child) {
   const health = healthFor(child.id);
   const contacts = contactsFor(child.id);
   const move = state.profile.role === "admin" && departmentOptions().length
     ? `<form class="form-stack child-move" data-form="move-child" data-child-id="${esc(child.id)}"><h4>Avdelning</h4>${selectField("Flytta till avdelning", "department_id", departmentOptions(), child.department_id, true)}<button class="secondary" type="submit">Flytta barnet</button><p class="form-hint">Flytten ändrar bara avdelning. Namn, hälsa, kontakter och samtycken rörs inte.</p></form>`
     : "";
-  return `<article class="child-facts"><header><h3>${esc(child.name)}</h3><p class="meta">${esc(departmentName(child.department_id))}${child.birth_date ? ` · ${esc(formatDate(child.birth_date))}` : ""}</p></header>
+  return `<article class="child-facts"><header class="child-facts-head">${childAvatarHtml(child.name, childPhotoUrl(child.photo_path), child.avatar_color)}<div><h3>${esc(child.name)}</h3><p class="meta">${esc(departmentName(child.department_id))}${child.birth_date ? ` · ${esc(formatDate(child.birth_date))}` : ""}</p></div></header>
     <dl class="fact-list">
       <div><dt>Anteckning</dt><dd>${factValue(child.notes)}</dd></div>
       <div><dt>Allergier</dt><dd>${factValue(health.allergies)}</dd></div>
@@ -1367,6 +1580,7 @@ function renderChildInfo() {
   const completed = checklist.filter((item) => item.complete).length;
   return `${noticeHtml()}${childTabs()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">Fyra tydliga steg. Du kan spara ett steg i taget, tömma ett fält eller ta bort en kontakt.</p></section>
     <section class="card info-progress"><div><p class="kicker">Din översikt</p><h2>${completed} av ${checklist.length} steg klara</h2><progress max="${checklist.length}" value="${completed}" aria-label="${completed} av ${checklist.length} steg klara"></progress></div><ol class="info-steps">${checklist.map((item, index) => `<li class="${item.complete ? "done" : ""}"><button type="button" data-action="scroll-section" data-target="${esc(item.id)}"><span>${item.complete ? "✓" : index + 1}</span>${esc(item.label)}</button></li>`).join("")}</ol></section>
+    ${renderChildPhoto(child)}${renderClassListConsent(child)}
     <form id="child-basics" class="card form-stack child-step" data-form="child-profile" data-child-id="${esc(child.id)}"><p class="kicker">Steg 1 av 4</p><h2>Grunduppgifter</h2>
       ${field("Barnets namn", "name", child.name, { required: true, autocomplete: "name" })}
       ${field("Födelsedatum", "birth_date", child.birth_date || "", { type: "date", required: true })}
@@ -1572,7 +1786,7 @@ function renderAttendance() {
         attendance?.pickup_at ? `hämtning ${attendance.pickup_at.slice(0, 5)}` : "",
         attendance?.pickup_by ? `av ${attendance.pickup_by}` : "",
       ]).join(" · ");
-      return `<article class="card attendance-row"><div class="attendance-child"><div><strong>${esc(child.name)}</strong><span>${esc(departmentName(child.department_id))}${plan ? ` · ${esc(plan)}` : ""}</span></div><span class="attendance-state ${esc(status)}">${esc(actualTime)}</span></div><div class="attendance-actions"><button class="primary attendance-primary" type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="${primaryTransition}">${primaryLabel}</button>${active ? "" : `<div class="attendance-secondary" role="group" aria-label="Markera frånvaro för ${esc(child.name)}"><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_sick" aria-pressed="${status === "absent_sick"}">Sjuk</button><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_leave" aria-pressed="${status === "absent_leave"}">Ledig</button></div>`}</div></article>`;
+      return `<article class="card attendance-row"><div class="attendance-child"><div class="attendance-identity">${childAvatarHtml(child.name, childPhotoUrl(child.photo_path), child.avatar_color)}<div><strong>${esc(child.name)}</strong><span>${esc(departmentName(child.department_id))}${plan ? ` · ${esc(plan)}` : ""}</span></div></div><span class="attendance-state ${esc(status)}">${esc(actualTime)}</span></div><div class="attendance-actions"><button class="primary attendance-primary" type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="${primaryTransition}">${primaryLabel}</button>${active ? "" : `<div class="attendance-secondary" role="group" aria-label="Markera frånvaro för ${esc(child.name)}"><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_sick" aria-pressed="${status === "absent_sick"}">Sjuk</button><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_leave" aria-pressed="${status === "absent_leave"}">Ledig</button></div>`}</div></article>`;
     }).join("")}</div>` : emptyState("Inga barn", "Du behöver kopplas till en avdelning innan närvarolistan visas.")}
     ${state.profile.role === "staff" ? renderPublishedTermReadOnly() : ""}`;
 }
@@ -1811,7 +2025,7 @@ function renderNav() {
     ? [["overview", "▦", "Översikt"], ["attendance", "✓", "Närvaro"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["account", "⚙", "Konto"]]
     : role === "staff"
       ? [["attendance", "✓", "Närvaro"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Barn"], ["account", "⚙", "Konto"]]
-      : [["home", "●", "Min dag"], ["child", "🌱", "Barnet"], ["messages", "✉", "Gemenskap"], ["account", "⚙", "Konto"]];
+      : [["home", "●", "Min dag"], ["child", "🌱", "Barnet"], ["classlist", "☰", "Klasslista"], ["messages", "✉", "Gemenskap"], ["account", "⚙", "Konto"]];
   nav.innerHTML = items.map(([view, icon, label]) => `<button data-action="navigate" data-view="${view}" aria-current="${state.view === view ? "page" : "false"}"><span class="ico">${icon}</span>${label}</button>`).join("");
 }
 
@@ -1835,6 +2049,7 @@ function render() {
   const views = {
     home: renderParentHome,
     child: renderChildInfo,
+    classlist: renderClassList,
     messages: renderMessages,
     attendance: renderAttendance,
     overview: renderOverview,
@@ -2170,6 +2385,16 @@ document.body.addEventListener("submit", (event) => {
 document.body.addEventListener("change", (event) => {
   const input = event.target;
   if (input.matches('[data-action="post-images"]')) renderSelectedPostImages(input);
+  if (input.matches('[data-action="child-photo"]')) {
+    const file = input.files?.[0];
+    const childId = input.dataset.childId;
+    input.value = "";
+    if (!file || state.profile.role !== "parent") return;
+    runMutation(async () => {
+      await saveChildPhoto(childId, file);
+      await loadData();
+    }, "Profilbilden är sparad.");
+  }
   if (input.name === "no_children_visible" && input.checked) {
     input.closest("fieldset")?.querySelectorAll('input[name="visible_child_ids"]').forEach((checkbox) => { checkbox.checked = false; });
   }
@@ -2321,6 +2546,36 @@ document.body.addEventListener("click", (event) => {
     const success = transition === "check_out" ? `${child?.name || "Barnet"} är utcheckad.` : transition === "check_in" ? `${child?.name || "Barnet"} är incheckad.` : `${child?.name || "Barnet"} är markerad som ${transition === "absent_sick" ? "sjuk" : "ledig"}.`;
     runMutation(async () => {
       await rpc("set_child_attendance", { target_child_id: target.dataset.childId, transition });
+      await loadData();
+    }, success);
+    return;
+  }
+  if (action === "delete-child-photo") {
+    if (state.profile.role !== "parent") return;
+    if (!window.confirm("Ta bort profilbilden? Den försvinner för personal och i klasslistan.")) return;
+    runMutation(async () => {
+      await removeChildPhoto(target.dataset.childId);
+      await loadData();
+    }, "Profilbilden är borttagen.");
+    return;
+  }
+  if (action === "set-class-list-consent") {
+    if (state.profile.role !== "parent" || !state.classListReady) return;
+    const field = target.dataset.field;
+    const allowed = target.dataset.value === "true";
+    const mine = classListRowsFor(target.dataset.childId).find((row) => row.is_self);
+    if (mine?.[field] === allowed) return;
+    const showName = field === "show_name" ? allowed : mine?.show_name ?? null;
+    const showPhoto = field === "show_photo" ? allowed : mine?.show_photo ?? null;
+    const success = field === "show_name"
+      ? (allowed ? "Förnamnet får visas i klasslistan." : "Barnet är dolt i klasslistan.")
+      : (allowed ? "Du har sagt ja till att bilden får visas." : "Bilden visas inte för andra vårdnadshavare.");
+    runMutation(async () => {
+      await rpc("set_class_list_consent", {
+        target_child_id: target.dataset.childId,
+        show_name: showName,
+        show_photo: showPhoto,
+      });
       await loadData();
     }, success);
     return;
