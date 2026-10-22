@@ -207,6 +207,17 @@ def check_people_directory(errors):
         errors.append(detail)
 
 
+def check_permanent_passes(errors):
+    script = ROOT / "scripts" / "permanent_pass_test.mjs"
+    if not script.exists():
+        errors.append("scripts/permanent_pass_test.mjs is missing")
+        return
+    result = subprocess.run(["node", str(script)], cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "permanent pass test failed").strip()
+        errors.append(detail)
+
+
 def main():
     errors = []
     check_required_files(errors)
@@ -217,6 +228,7 @@ def main():
     tasks = check_tasks(errors)
     check_term_parser(errors)
     check_people_directory(errors)
+    check_permanent_passes(errors)
 
     if errors:
         print("Arthur verification FAILED", file=sys.stderr)

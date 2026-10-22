@@ -39,6 +39,8 @@ const state = {
   pickupReady: true,
   pickupContacts: [],
   pickupPasses: [],
+  permanentPasses: [],
+  permanentPassesReady: true,
   pickupNotices: [],
   incidentReady: true,
   notices: [],
@@ -952,6 +954,8 @@ async function logout() {
       pickupReady: true,
       pickupContacts: [],
       pickupPasses: [],
+      permanentPasses: [],
+      permanentPassesReady: true,
       pickupNotices: [],
       createdPass: null,
       checkout: null,
@@ -1097,6 +1101,21 @@ async function loadData() {
     state.incidents = [];
     state.incidentCopies = [];
   }
+  state.permanentPassesReady = true;
+  if (state.pickupReady && state.profile.role !== "staff") {
+    try {
+      state.permanentPasses = (await rpc("list_permanent_pickup_passes") || []).map((pass) => ({
+        ...pass,
+        children: Array.isArray(pass.children) ? pass.children : [],
+      }));
+    } catch (error) {
+      state.permanentPasses = [];
+      if (/schema cache|could not find the function|pgrst202/i.test(error.message)) state.permanentPassesReady = false;
+      else throw error;
+    }
+  } else {
+    state.permanentPasses = [];
+  }
   if (state.pickupReady) {
     try { await rpc("purge_expired_pickup_details"); } catch { /* Cleanup can wait for the next signed-in visit. */ }
   }
@@ -1157,6 +1176,8 @@ function clearLoadedData() {
     organizationPeople: [],
     pickupContacts: [],
     pickupPasses: [],
+    permanentPasses: [],
+    permanentPassesReady: true,
     pickupNotices: [],
     notices: [],
     incidents: [],
@@ -1892,6 +1913,7 @@ const PICKUP_STOPS = {
   expired: "Hämtpasset har gått ut.",
   not_checked_in: "Barnet är inte incheckat.",
   ambiguous: "Koden är inte entydig. Skanna QR-koden i stället.",
+  removed: "Personen finns inte längre på hämtlistan.",
 };
 
 let scanGeneration = 0;
@@ -1936,6 +1958,41 @@ function passStatusLabel(status) {
   return { active: "Gäller", scheduled: "Inte börjat", used: "Använt", revoked: "Återkallat", expired: "Utgånget" }[status] || status;
 }
 
+function permanentPassStatusLabel(status) {
+  return { active: "Gäller", revoked: "Återkallat", expired: "Utgånget", blocked: "Får ej hämta", removed: "Borttagen från hämtlistan" }[status] || status;
+}
+
+function permanentContactKey(name, relation) {
+  const normalize = (value) => String(value || "").trim().replace(/\s+/g, " ").toLocaleLowerCase("sv-SE");
+  return `${normalize(name)}|${normalize(relation)}`;
+}
+
+function permanentLinkedContacts(contacts, childNameById, contactId) {
+  const source = (contacts || []).find((contact) => contact.contact_id === contactId && !contact.blocked);
+  if (!source) return [];
+  const key = permanentContactKey(source.name, source.relation);
+  return (contacts || [])
+    .filter((contact) => contact.contact_id !== source.contact_id && !contact.blocked && childNameById.has(contact.child_id) && permanentContactKey(contact.name, contact.relation) === key)
+    .map((contact) => ({ contactId: contact.contact_id, childId: contact.child_id, childName: childNameById.get(contact.child_id) }))
+    .sort((left, right) => String(left.childName).localeCompare(String(right.childName), "sv"));
+}
+
+function permanentValidityLabel(endsOn) {
+  if (!endsOn) return "Gäller tills vidare";
+  return `Gäller till och med ${formatDate(endsOn)}`;
+}
+
+function permanentPassesForChild(childId) {
+  return state.permanentPasses.filter((pass) => (pass.children || []).some((item) => item.child_id === childId));
+}
+
+function renderPermanentLinkedField(contactId) {
+  const names = new Map(state.children.map((child) => [child.id, child.name]));
+  const linked = permanentLinkedContacts(state.pickupContacts, names, contactId);
+  if (!linked.length) return "";
+  return `<label class="check" data-permanent-linked><input type="checkbox" name="include_linked"> Gäller också ${esc(linked.map((item) => item.childName).join(", "))}</label>`;
+}
+
 function stopPickupScanner() {
   scanGeneration += 1;
   if (scanStream) {
@@ -1974,13 +2031,46 @@ function renderPublicPass() {
   if (!pass.ok) {
     return `<section class="pass-sheet"><article class="card stop-card"><h2>Stopp</h2><p>${esc(pass.error || "Hämtpasset kan inte användas.")}</p></article></section>`;
   }
+  if (pass.permanent) {
+    const several = / och |,/.test(String(pass.first_name || ""));
+    const privacy = several
+      ? "Passet visar bara barnens förnamn. Visa det för personalen och dela inte länken."
+      : "Passet visar bara barnets förnamn. Visa det för personalen och dela inte länken.";
+    return `<section class="pass-sheet"><p class="kicker">Permanent hämtpass</p><h1>Visa för personalen</h1><p class="pass-child">${esc(pass.first_name || "")}</p><p>${esc(permanentValidityLabel(pass.ends_on))}</p><div id="pass-qr" class="pass-qr" role="img" aria-label="QR-kod för hämtpasset"></div><p class="pass-code">${esc(pickupShortCode(pass.qr_payload))}</p><p class="pass-privacy">${privacy}</p></section>`;
+  }
   return `<section class="pass-sheet"><p class="kicker">Hämtpass</p><h1>Visa för personalen</h1><p class="pass-child">${esc(pass.first_name || "")}</p><p>${esc(formatDate(pass.pickup_date))}</p><div id="pass-qr" class="pass-qr" role="img" aria-label="QR-kod för hämtpasset"></div><p class="pass-code">${esc(pickupShortCode(pass.qr_payload))}</p><p class="pass-privacy">Passet visar bara barnets förnamn. Visa det för personalen och dela inte länken.</p></section>`;
 }
 
 function renderCreatedPass(childId) {
   if (!state.createdPass?.token || state.createdPass.child_id !== childId) return "";
   const code = state.createdPass.short_code || pickupShortCode(state.createdPass.token);
+  if (state.createdPass.permanent) {
+    return `<article class="card success-card"><p class="kicker">Kopiera länken nu</p><h3>Permanent hämtpass ${esc(code)}</h3><p class="form-hint">Den som hämtar behöver inget konto. Länken visar förnamn, QR-kod och samma sexsiffriga kod. ${esc(permanentValidityLabel(state.createdPass.ends_on))}. En ny kod gör den här länken ogiltig.</p><code class="secret-value">${esc(passLink(state.createdPass.token))}</code><button class="primary" type="button" data-action="copy-pass" data-token="${esc(state.createdPass.token)}">Kopiera länk</button></article>`;
+  }
   return `<article class="card success-card"><p class="kicker">Kopiera länken nu</p><h3>Hämtpass till ${esc(code)}</h3><p class="form-hint">Den som hämtar behöver inget konto. Länken visar förnamn, datum, QR-kod och samma sexsiffriga kod.</p><code class="secret-value">${esc(passLink(state.createdPass.token))}</code><button class="primary" type="button" data-action="copy-pass" data-token="${esc(state.createdPass.token)}">Kopiera länk</button></article>`;
+}
+
+function renderPermanentPassSection(child) {
+  if (!state.permanentPassesReady) {
+    return `<section class="card" id="permanent-passes"><h2>Permanent hämtpass</h2><p class="form-hint">Permanenta hämtpass är inte aktiverade i databasen ännu.</p></section>`;
+  }
+  const passes = permanentPassesForChild(child.id);
+  const allowed = state.pickupContacts.filter((contact) => contact.child_id === child.id && !contact.blocked);
+  const rows = passes.map((pass) => {
+    const live = pass.pass_status === "active";
+    const extra = live ? "" : ` · ${permanentPassStatusLabel(pass.pass_status)}`;
+    const actions = live
+      ? `<button class="link" type="button" data-action="regenerate-permanent-pass" data-id="${esc(pass.pass_id)}" data-child-id="${esc(child.id)}">Ny kod</button><button class="link danger-link" type="button" data-action="revoke-permanent-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>`
+      : pass.pass_status === "blocked" || pass.pass_status === "removed"
+        ? `<button class="link danger-link" type="button" data-action="revoke-permanent-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>`
+        : "";
+    return `<li><div><strong>${esc(pass.contact_relation || "")} ${esc(pass.contact_name || "Personuppgiften är borta")}</strong><span>${esc(pass.child_names || "")} · ${esc(permanentValidityLabel(pass.ends_on))}${esc(extra)}</span></div><div class="invite-actions">${actions}</div></li>`;
+  }).join("");
+  const firstContact = allowed[0]?.contact_id || "";
+  const form = allowed.length
+    ? `<form class="form-stack" data-form="permanent-pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa permanent hämtpass</h3>${selectField("Person som får hämta", "contact_id", allowed.map((contact) => [contact.contact_id, `${contact.relation} ${contact.name}`]), firstContact, true)}${field("Slutdatum, valfritt", "ends_on", "", { type: "date", min: todayIso(), max: addDaysIso(todayIso(), 1825) })}<div data-permanent-linked-slot>${renderPermanentLinkedField(firstContact)}</div><p class="form-hint">Passet kan användas flera gånger. Utan slutdatum gäller det tills det återkallas. Länken visas en gång.</p><button class="primary" type="submit">Skapa permanent hämtpass</button></form>`
+    : `<p class="form-hint">Lägg först till personen på hämtlistan. Ett permanent pass kan bara kopplas till någon som får hämta.</p>`;
+  return `<section class="card" id="permanent-passes"><h2>Permanent hämtpass</h2><p class="form-hint">För någon som redan får hämta, till exempel en mor- eller farförälder. Båda vårdnadshavarna kan se och återkalla passet. Det slutar fungera om personen spärras, tas bort eller inte längre får hämta.</p>${rows ? `<ul class="invite-list">${rows}</ul>` : `<p class="form-hint">Inget permanent hämtpass är skapat.</p>`}${form}</section>`;
 }
 
 function renderPickupSection(child) {
@@ -1992,7 +2082,8 @@ function renderPickupSection(child) {
     <form class="card form-stack" data-form="pickup-contact" data-child-id="${esc(child.id)}"><h3>Lägg till på hämtlistan</h3><div class="form-grid">${field("Namn", "name", "", { required: true, maxlength: "80" })}${field("Relation", "relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "phone", "", { type: "tel", maxlength: "40", autocomplete: "tel" })}<button class="primary" type="submit">Spara på hämtlistan</button></form>
     ${renderCreatedPass(child.id)}
     <section class="card" id="pickup-passes"><h2>Hämtpass</h2><p class="form-hint">Ett pass gäller ett barn och en dag, kan användas en gång och kan återkallas av båda vårdnadshavarna.</p>${passes.length ? `<ul class="invite-list">${passes.map((pass) => `<li><div><strong>${esc(pass.person_relation || "")} ${esc(pass.person_name || "Personuppgiften är rensad")}</strong><span>${esc(formatDate(pass.pickup_date))} · ${esc(pass.window_start)}–${esc(pass.window_end)} · ${esc(passStatusLabel(pass.pass_status))}</span></div>${pass.pass_status === "active" || pass.pass_status === "scheduled" ? `<button class="link danger-link" type="button" data-action="revoke-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>` : ""}</li>`).join("")}</ul>` : `<p class="form-hint">Inget hämtpass är skapat.</p>`}</section>
-    <form class="card form-stack" data-form="pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa hämtpass</h3>${field("Datum", "pickup_date", todayIso(), { type: "date", required: true, min: todayIso(), max: maxDate })}<div class="form-grid">${field("Från", "window_start", "14:00", { type: "time", required: true })}${field("Till", "window_end", "17:00", { type: "time", required: true })}</div><div class="form-grid">${field("Hämtas av", "person_name", "", { required: true, maxlength: "80" })}${field("Relation", "person_relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "person_phone", "", { type: "tel", maxlength: "40" })}<p class="form-hint">Inget foto används. Länken visas en gång så att du kan skicka den själv.</p><button class="primary" type="submit">Skapa hämtpass</button></form>`;
+    <form class="card form-stack" data-form="pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa hämtpass</h3>${field("Datum", "pickup_date", todayIso(), { type: "date", required: true, min: todayIso(), max: maxDate })}<div class="form-grid">${field("Från", "window_start", "14:00", { type: "time", required: true })}${field("Till", "window_end", "17:00", { type: "time", required: true })}</div><div class="form-grid">${field("Hämtas av", "person_name", "", { required: true, maxlength: "80" })}${field("Relation", "person_relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "person_phone", "", { type: "tel", maxlength: "40" })}<p class="form-hint">Inget foto används. Länken visas en gång så att du kan skicka den själv.</p><button class="primary" type="submit">Skapa hämtpass</button></form>
+    ${renderPermanentPassSection(child)}`;
 }
 
 function renderNoticeList(kicker, title, notices) {
@@ -2041,11 +2132,24 @@ function renderPickupBlocks() {
     <form class="form-stack" data-form="pickup-block-create"><h3>Spärra en person</h3>${selectField("Barn", "child_id", [["", "Välj barn"], ...state.children.map((child) => [child.id, `${child.name} · ${departmentName(child.department_id)}`])], "", true)}<div class="form-grid">${field("Namn", "name", "", { required: true, maxlength: "80" })}${field("Relation", "relation", "", { required: true, maxlength: "80" })}</div>${field("Telefon, valfritt", "phone", "", { type: "tel", maxlength: "40" })}<button class="primary" type="submit" ${state.children.length ? "" : "disabled"}>Spara spärr</button></form></section>`;
 }
 
+function renderPermanentScanCard(result) {
+  const children = Array.isArray(result.children) ? result.children : [];
+  const ready = children.filter((child) => child.checked_in);
+  const waiting = children.filter((child) => !child.checked_in);
+  const buttons = ready.map((child) => `<button class="primary" type="button" data-action="confirm-permanent-pickup" data-child-id="${esc(child.child_id)}" data-child-name="${esc(child.child_name)}">Checka ut ${esc(child.child_name)}</button>`).join("");
+  const waitingText = waiting.length
+    ? `<p class="form-hint">${esc(waiting.map((child) => child.child_name).join(", "))} ${waiting.length === 1 ? "är inte incheckad" : "är inte incheckade"}.</p>`
+    : "";
+  return `<article class="card confirm-card"><p class="kicker">Permanent hämtpass</p><h2>${esc(result.pickup_relation)} ${esc(result.pickup_name)}</h2><p class="id-ask">Be om legitimation</p><p class="form-hint">${esc(permanentValidityLabel(result.ends_on))}. Utfärdat av ${esc(result.issued_by || "")}.</p>${waitingText}<div class="stack-actions">${buttons}<button class="secondary" type="button" data-action="close-scan">Avbryt</button></div></article>`;
+}
+
 function renderScanCard(scan) {
   const result = scan.result || {};
   if (!result.ok) {
-    return `<article class="card stop-card"><h2>Stopp</h2><p>${esc(PICKUP_STOPS[result.stop] || PICKUP_STOPS.unavailable)}</p><button class="secondary" type="button" data-action="close-scan">Stäng</button></article>`;
+    const kicker = result.permanent ? `<p class="kicker">Permanent hämtpass</p>` : "";
+    return `<article class="card stop-card">${kicker}<h2>Stopp</h2><p>${esc(PICKUP_STOPS[result.stop] || PICKUP_STOPS.unavailable)}</p><button class="secondary" type="button" data-action="close-scan">Stäng</button></article>`;
   }
+  if (result.permanent) return renderPermanentScanCard(result);
   return `<article class="card confirm-card"><p class="kicker">Bekräfta</p><h2>${esc(result.child_name)}</h2><p>${esc(result.pickup_relation)} ${esc(result.pickup_name)}</p><p class="form-hint">Utfärdat av ${esc(result.issued_by)} · ${esc(formatTimestamp(result.issued_at))}</p>${result.ask_for_id ? `<p class="id-ask">Be om legitimation</p>` : ""}<div class="stack-actions"><button class="primary" type="button" data-action="confirm-pickup">Bekräfta utcheckning</button><button class="secondary" type="button" data-action="close-scan">Avbryt</button></div></article>`;
 }
 
@@ -2500,10 +2604,12 @@ function childPickupStatus() {
   if (!child) return "Ingen på listan";
   const contacts = state.pickupContacts.filter((contact) => contact.child_id === child.id).length;
   const passes = state.pickupPasses.filter((pass) => pass.child_id === child.id && (pass.pass_status === "active" || pass.pass_status === "scheduled")).length;
-  if (!contacts && !passes) return "Ingen på listan";
+  const permanent = permanentPassesForChild(child.id).filter((pass) => pass.pass_status === "active").length;
+  if (!contacts && !passes && !permanent) return "Ingen på listan";
   const parts = [];
   if (contacts) parts.push(contacts === 1 ? "1 person" : `${contacts} personer`);
   if (passes) parts.push(passes === 1 ? "1 pass" : `${passes} pass`);
+  if (permanent) parts.push(permanent === 1 ? "1 permanent" : `${permanent} permanenta`);
   return parts.join(" · ");
 }
 
@@ -3807,6 +3913,23 @@ document.body.addEventListener("submit", (event) => {
     }, "Hämtpasset är skapat. Kopiera länken nu.");
     return;
   }
+  if (type === "permanent-pickup-pass") {
+    if (!values.contact_id) {
+      state.notice = { type: "error", text: "Välj en person som får hämta." };
+      render();
+      return;
+    }
+    runMutation(async () => {
+      const created = await rpc("create_permanent_pickup_pass", {
+        target_contact_id: values.contact_id,
+        ends_on: values.ends_on || null,
+        include_linked: values.include_linked === "on",
+      });
+      state.createdPass = { ...(Array.isArray(created) ? created[0] : created), child_id: form.dataset.childId, permanent: true };
+      await loadData();
+    }, "Det permanenta hämtpasset är skapat. Kopiera länken nu.");
+    return;
+  }
   if (type === "pickup-block-create") {
     if (!values.child_id) {
       state.notice = { type: "error", text: "Välj vilket barn spärren gäller." };
@@ -4396,7 +4519,7 @@ document.body.addEventListener("click", (event) => {
   }
   if (action === "confirm-pickup") {
     const scan = state.scan;
-    if (!scan?.result?.pass_id) return;
+    if (!scan?.result?.pass_id || scan.result.permanent) return;
     runMutation(async () => {
       await rpc("confirm_pickup", {
         target_pass_id: scan.result.pass_id,
@@ -4405,6 +4528,21 @@ document.body.addEventListener("click", (event) => {
       state.scan = null;
       await loadData();
     }, `${scan.result.child_name} är utcheckad.`);
+    return;
+  }
+  if (action === "confirm-permanent-pickup") {
+    const scan = state.scan;
+    if (!scan?.result?.permanent || !scan.result.pass_id || !target.dataset.childId) return;
+    const childName = target.dataset.childName || "Barnet";
+    runMutation(async () => {
+      await rpc("confirm_permanent_pickup", {
+        target_pass_id: scan.result.pass_id,
+        target_child_id: target.dataset.childId,
+        pickup_method: scan.method === "code" ? "code" : "qr",
+      });
+      state.scan = null;
+      await loadData();
+    }, `${childName} är utcheckad.`);
     return;
   }
   if (action === "copy-pass") {
@@ -4417,6 +4555,22 @@ document.body.addEventListener("click", (event) => {
       if (state.createdPass?.pass_id === target.dataset.id) state.createdPass = null;
       await loadData();
     }, "Hämtpasset är återkallat.");
+    return;
+  }
+  if (action === "revoke-permanent-pass") {
+    runMutation(async () => {
+      await rpc("revoke_permanent_pickup_pass", { target_pass_id: target.dataset.id });
+      if (state.createdPass?.pass_id === target.dataset.id) state.createdPass = null;
+      await loadData();
+    }, "Det permanenta hämtpasset är återkallat.");
+    return;
+  }
+  if (action === "regenerate-permanent-pass") {
+    runMutation(async () => {
+      const created = await rpc("regenerate_permanent_pickup_pass", { target_pass_id: target.dataset.id });
+      state.createdPass = { ...(Array.isArray(created) ? created[0] : created), child_id: target.dataset.childId, permanent: true };
+      await loadData();
+    }, "Ny kod skapad. Den gamla länken fungerar inte längre.");
     return;
   }
   if (action === "delete-pickup-contact") {
@@ -4679,8 +4833,12 @@ document.body.addEventListener("click", (event) => {
 
 document.body.addEventListener("change", (event) => {
   const select = event.target.closest("[data-pickup-choice]");
-  if (!select?.form) return;
-  updatePickupChoice(select.form);
+  if (select?.form) updatePickupChoice(select.form);
+  const contact = event.target;
+  const form = contact.closest?.("[data-form='permanent-pickup-pass']");
+  if (!form || contact.name !== "contact_id") return;
+  const slot = form.querySelector("[data-permanent-linked-slot]");
+  if (slot) slot.innerHTML = renderPermanentLinkedField(contact.value);
 });
 
 window.addEventListener("popstate", syncHubFromHistory);
