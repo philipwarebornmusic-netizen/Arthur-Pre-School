@@ -5,7 +5,7 @@
 - Vårdnadshavare kan ladda upp, byta och ta bort en kvadratisk profilbild på Barnet. Bilden beskärs i webbläsaren, förminskas till cirka 512 pixlar och sparas som JPEG utan kamerans dolda uppgifter.
 - Personal och administratörer på barnets avdelning ser namn och bild, till exempel i närvaron och under Personer. De kan inte ändra bilden eller klasslistan.
 - Andra vårdnadshavare ser en klasslista för samma avdelning. Förnamnet visas om minst en vårdnadshavare sagt ja och ingen sagt nej. Bilden visas bara om varje kopplad vårdnadshavare sagt ja. Ett nej gäller direkt.
-- Svaren loggas med vem, barn, vad och när. Den privata bucketen `child-photos` skapas av migrationen. En borttagen bild tas bort från lagringen.
+- Svaren loggas med vem, barn, vad och när. Den privata bucketen `child-photos` skapas av migrationen. Appen tar bort bildfilen via Storage. Databasen rensar bara sökvägen och raderar inte i `storage.objects`, eftersom det blockeras där. En ny bild ersätter samma fil.
 - Kräver migration `supabase/migrations/015_class_list_photos.sql`. Den har inte körts mot produktion. Tills den är körd visas att klasslistan och profilbilderna inte är aktiverade, och resten av appen fungerar som tidigare.
 
 ## 2026-10-22 — Vårdnadshavare äger barnets uppgifter

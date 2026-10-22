@@ -16,9 +16,13 @@
 -- private bucket with the same limits and run this file again; the bucket
 -- statement is idempotent.
 --
--- Photo objects live at <child_id>/profile.jpg. Guardians upload, replace,
--- and delete. clear_child_photo removes the storage.objects row. The app also
--- calls the Storage API so the file bytes are removed.
+-- Photo objects live at the stable path <child_id>/profile.jpg. Replacing a
+-- photo upserts that same object, so no second file is left behind.
+-- These functions never DELETE from storage.objects. Supabase installs
+-- protect_objects_delete, a statement-level trigger that rejects every SQL
+-- DELETE on that table, including a delete that matches zero rows. The client
+-- removes the file through the Storage API, then clear_child_photo only
+-- clears photo_path after a SELECT shows the object is gone.
 --
 -- Name visibility to other guardians: at least one linked guardian has
 -- show_name = true and no linked guardian has show_name = false.
@@ -370,7 +374,6 @@ declare
   expected_path text := target_child_id::text || '/profile.jpg';
   object_size bigint;
   object_mime text;
-  previous_path text;
 begin
   if auth.uid() is null or not public.is_guardian(target_child_id) then
     raise exception 'Bara barnets vårdnadshavare kan ladda upp profilbilden';
@@ -394,14 +397,6 @@ begin
   if object_mime <> 'image/jpeg' then
     raise exception 'Bilden måste vara en JPEG';
   end if;
-  select child.photo_path into previous_path
-  from public.children child
-  where child.id = target_child_id;
-  if previous_path is not null and previous_path is distinct from expected_path then
-    delete from storage.objects object
-    where object.bucket_id = 'child-photos'
-      and object.name = previous_path;
-  end if;
   update public.children
   set photo_path = expected_path,
       photo_updated_at = now()
@@ -422,16 +417,14 @@ begin
   if auth.uid() is null or not public.is_guardian(target_child_id) then
     raise exception 'Bara barnets vårdnadshavare kan ta bort profilbilden';
   end if;
-  delete from storage.objects object
-  where object.bucket_id = 'child-photos'
-    and object.name in (
-      select child.photo_path
-      from public.children child
-      where child.id = target_child_id
-        and child.photo_path is not null
-      union
-      select target_child_id::text || '/profile.jpg'
-    );
+  if exists (
+    select 1
+    from storage.objects object
+    where object.bucket_id = 'child-photos'
+      and object.name = target_child_id::text || '/profile.jpg'
+  ) then
+    raise exception 'Bilden finns kvar i lagringen. Ta bort den och försök igen';
+  end if;
   update public.children
   set photo_path = null,
       photo_updated_at = now()

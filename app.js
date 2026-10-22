@@ -1467,20 +1467,41 @@ async function saveChildPhoto(childId, file) {
   const hadPhoto = Boolean(state.children.find((child) => child.id === childId)?.photo_path);
   const blob = await transcodeChildPhoto(file);
   await uploadChildPhotoObject(path, blob);
-  try {
-    await rpc("set_child_photo", { target_child_id: childId, object_path: path });
-  } catch (error) {
-    if (!hadPhoto) {
-      try { await deleteChildPhotoObject(path); } catch { /* keep the original upload error */ }
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await rpc("set_child_photo", { target_child_id: childId, object_path: path });
+      return;
+    } catch (error) {
+      lastError = error;
     }
-    throw error;
   }
+  if (!hadPhoto) {
+    try {
+      await deleteChildPhotoObject(path);
+    } catch {
+      throw new Error(`Profilen uppdaterades inte och den nya bilden kunde inte tas bort. Försök igen. ${lastError.message}`);
+    }
+  }
+  throw lastError;
 }
 
 async function removeChildPhoto(childId) {
   if (state.profile.role !== "parent") throw new Error("Bara vårdnadshavare kan ta bort profilbilden.");
   await deleteChildPhotoObject(childPhotoPath(childId));
-  await rpc("clear_child_photo", { target_child_id: childId });
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await rpc("clear_child_photo", { target_child_id: childId });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (/finns kvar/i.test(error.message)) {
+        throw new Error("Bilden finns kvar. Borttagningen avbröts och profilen är oförändrad.");
+      }
+    }
+  }
+  throw new Error(`Bildfilen är borttagen, men profilen pekar fortfarande på den. Försök igen. ${lastError.message}`);
 }
 
 function classListRowsFor(childId) {
