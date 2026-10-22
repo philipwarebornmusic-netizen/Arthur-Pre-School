@@ -48,11 +48,17 @@ First real account
 7. Guardians request an additional child from the app. Staff approve the request before the child is linked.
 
 Guardian-owned child information
-- Run supabase/011_guardian_owned_child_info.sql once in the SQL editor after the earlier migrations.
-- Do not run it against production until guardians should be the only people who can change child information. Deploy previews use the production database, so saving from this version fails there until 011 has been applied on a non-production database.
-- The file does not delete rows or drop columns. It does not touch pickup_contacts, pickup_passes, or pickup_events, so it is safe before or after 010.
-- 010 does not grant staff or admin any write on the child profile, health, emergency contacts, or consents.
-- After 011, guardians edit and remove that information. Staff and administrators keep read access. Creating a child, including name and department, stays with staff and administrators. An administrator can move a child between departments and can still delete a child.
+- supabase/011_guardian_owned_child_info.sql is already applied in production. Do not run it again.
+- The file does not delete rows or drop columns. It does not touch pickup_contacts, pickup_passes, or pickup_events.
+- Guardians edit and remove child profile notes, health, emergency contacts, and consents. Staff and administrators keep read access. Creating a child, including name and department, stays with staff and administrators. An administrator can move a child between departments and can still delete a child.
+
+Term calendar subscriptions
+- supabase/migrations/013_calendar_subscriptions.sql has not been applied. Apply it in the SQL editor only after approval. Do not run it from this repository's tooling.
+- Then deploy the feed, from a machine that is already logged in to the Supabase CLI, with: supabase functions deploy term-feed --no-verify-jwt
+- The function reads SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY from the Supabase environment. Do not copy that key into the repository, the app, or a task note.
+- Guardians create a personal link on the Barnet tab. The database stores only a SHA-256 hash. The raw token is shown once.
+- The feed lists published terms and closures for schools where that guardian has a child. It does not include child names or weekly schedules.
+- Legacy calendar_feeds and calendar_events keep their rows. 013 revokes anon and authenticated privileges on them when those tables exist. It does not drop them.
 
 Fake Test organization and PreSchool Test preschool
 1. Keep this tenant free from real child, health, contact and consent data.

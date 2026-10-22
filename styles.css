@@ -385,7 +385,10 @@ html[data-busy]::after { position: fixed; inset: 0; z-index: 100; display: grid;
   .screen:has(.info-progress) > form,
   .screen:has([data-form="child-create"]) > form,
   .screen:has([data-form="child-create"]) > .card { max-width: none; }
-  .screen:has(.info-progress) > #child-contacts, #child-info-read { grid-column: 1 / -1; }
+  .screen:has(.info-progress) > #child-contacts,
+  .screen:has(.info-progress) > #term-calendar,
+  #child-info-read { grid-column: 1 / -1; }
+  #term-calendar { min-width: 0; }
   .term-overview:has(.term-schedule-card) { grid-template-columns: minmax(280px, .9fr) minmax(320px, 1.2fr); align-items: start; }
   .term-overview:not(:has(.term-schedule-card)) { grid-template-columns: 1fr; }
   .term-overview > .section-head { grid-column: 1 / -1; }

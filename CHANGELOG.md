@@ -1,11 +1,19 @@
 # Ändringslogg
 
+## 2026-10-22 — Vårdnadshavare kan synka terminsschemat
+
+- En vårdnadshavare kan skapa en personlig kalenderlänk under Barnet och lägga till den i Apple, Outlook eller Google.
+- Länken innehåller publicerade terminer och stängda dagar för de förskolor där vårdnadshavaren har ett barn. Inga uppgifter om barnet följer med.
+- Den råa länken visas bara direkt efter att den skapas. Databasen lagrar bara en kontrollsumma. En ny länk stänger den tidigare, och länken kan stängas av.
+- Apple uppdaterar inom ungefär en timme. Google kan ta 12–24 timmar.
+- Kräver migration `supabase/migrations/013_calendar_subscriptions.sql` och att funktionen `term-feed` publiceras. Inget av det är gjort mot produktion.
+
 ## 2026-10-22 — Vårdnadshavare äger barnets uppgifter
 
 - Vårdnadshavare kan ändra och ta bort sina kontaktpersoner, tömma enskilda hälsofält och anteckningen, och svara nej för att ta tillbaka ett samtycke. Borttagning frågar en gång till.
 - Personal och administratörer kan läsa barnets uppgifter, inklusive allergier, men ser inga fält för att ändra dem.
 - En administratör kan fortfarande flytta ett barn mellan avdelningar. Personal och administratörer kan fortfarande lägga till ett barn och sätta namn och avdelning när barnet skapas. En administratör kan fortfarande ta bort ett barn.
-- Kräver migration `supabase/011_guardian_owned_child_info.sql` innan den nya behörigheten gäller. Migrationen har inte körts mot produktion, raderar inga rader och tar inte bort kolumner. Den rör inte hämtpassens tabeller och kan köras före eller efter `010`.
+- Migration `supabase/011_guardian_owned_child_info.sql` är körd mot produktion. Den raderade inga rader och tog inte bort kolumner. Den rör inte hämtpassens tabeller.
 
 ## 2026-10-21 — Inbjudningar styr vem som kommer in
 
