@@ -4,6 +4,7 @@
 import ast
 from html.parser import HTMLParser
 from pathlib import Path
+import subprocess
 from urllib.parse import unquote, urlsplit
 import re
 import sys
@@ -188,6 +189,13 @@ def check_tasks(errors):
     return task_count
 
 
+def check_term_parser(errors):
+    result = subprocess.run(["node", "scripts/term_parser_test.mjs"], cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stdout + result.stderr).strip() or "term parser checks failed"
+        errors.append(detail)
+
+
 def main():
     errors = []
     check_required_files(errors)
@@ -196,6 +204,7 @@ def main():
     check_browser_config(errors)
     python_sources = check_python_sources(errors)
     tasks = check_tasks(errors)
+    check_term_parser(errors)
 
     if errors:
         print("Arthur verification FAILED", file=sys.stderr)

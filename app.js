@@ -105,9 +105,18 @@ function formatTimestamp(value) {
   return new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 const SWEDISH_MONTHS = {
-  januari: 1, februari: 2, mars: 3, april: 4, maj: 5, juni: 6,
-  juli: 7, augusti: 8, september: 9, oktober: 10, november: 11, december: 12,
+  januari: 1, jan: 1, februari: 2, feb: 2, mars: 3, mar: 3, april: 4, apr: 4, maj: 5,
+  juni: 6, jun: 6, juli: 7, jul: 7, augusti: 8, aug: 8, september: 9, sept: 9, sep: 9,
+  oktober: 10, okt: 10, november: 11, nov: 11, december: 12, dec: 12,
 };
+const MONTH_PATTERN = Object.keys(SWEDISH_MONTHS).sort((left, right) => right.length - left.length).join("|");
+const TERM_DATE_PATTERN = new RegExp([
+  "\\b(\\d{4})-(\\d{2})-(\\d{2})\\b",
+  `\\b(\\d{1,2})\\s*[-–—]\\s*(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?\\b`,
+  `\\b(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?\\s*(?:[-–—]|till)\\s*(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?\\b`,
+  `\\b(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?\\b`,
+].join("|"), "gi");
+const TERM_START_LOOKBACK_DAYS = 150;
 const WEEKDAYS = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"];
 const WEEKDAY_PATTERNS = [
   /måndag(?:ar)?/i, /tisdag(?:ar)?/i, /onsdag(?:ar)?/i, /torsdag(?:ar)?/i, /fredag(?:ar)?/i,
@@ -119,50 +128,236 @@ function isoDate(year, month, day) {
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function parseSwedishDates(text) {
-  const pattern = /\b(\d{4})-(\d{2})-(\d{2})\b|\b(\d{1,2})\s+(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)(?:\s+(\d{4}))?\b/gi;
-  const matches = Array.from(text.matchAll(pattern));
-  const currentYear = Number(todayIso().slice(0, 4));
-  let firstDate = "";
-  return matches.map((match, index) => {
-    let year = match[1] ? Number(match[1]) : Number(match[6] || currentYear);
-    const month = match[1] ? Number(match[2]) : SWEDISH_MONTHS[match[5].toLowerCase()];
-    const day = match[1] ? Number(match[3]) : Number(match[4]);
-    let parsed = isoDate(year, month, day);
-    if (index === 1 && !match[1] && !match[6] && parsed < firstDate) {
-      year += 1;
-      parsed = isoDate(year, month, day);
+function shiftIsoDate(value, days) {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function monthNumber(name) {
+  const month = SWEDISH_MONTHS[String(name || "").toLowerCase()];
+  if (!month) throw new Error("Ärtan kunde inte tolka ett av datumen.");
+  return month;
+}
+
+function datePoint(day, month, year) {
+  return { day: Number(day), month: Number(month), year: year ? Number(year) : null };
+}
+
+function termDateMentions(text) {
+  return Array.from(text.matchAll(TERM_DATE_PATTERN), (match) => {
+    const before = text.slice(Math.max(0, match.index - 32), match.index).toLowerCase();
+    const cue = /(?:startar|börjar|startdatum)\s*(?:den\s*)?$/.test(before)
+      ? "start"
+      : /(?:slutar|avslutas|slutdatum)\s*(?:den\s*)?$/.test(before) ? "end" : "";
+    if (match[1]) {
+      return { index: match.index, end: match.index + match[0].length, cue, start: datePoint(match[3], match[2], match[1]), finish: null };
     }
-    if (index === 0) firstDate = parsed;
-    return { value: parsed, index: match.index, end: match.index + match[0].length };
+    if (match[4]) {
+      return { index: match.index, end: match.index + match[0].length, cue, start: datePoint(match[4], monthNumber(match[6]), match[7]), finish: datePoint(match[5], monthNumber(match[6]), match[7]) };
+    }
+    if (match[8]) {
+      return {
+        index: match.index,
+        end: match.index + match[0].length,
+        cue,
+        start: datePoint(match[8], monthNumber(match[9]), match[10]),
+        finish: datePoint(match[11], monthNumber(match[12]), match[13]),
+      };
+    }
+    return { index: match.index, end: match.index + match[0].length, cue, start: datePoint(match[14], monthNumber(match[15]), match[16]), finish: null };
   });
 }
 
+function yearForUndatedStart(month, day, today) {
+  const currentYear = Number(today.slice(0, 4));
+  if (isoDate(currentYear, month, day) >= shiftIsoDate(today, -TERM_START_LOOKBACK_DAYS)) return currentYear;
+  return currentYear + 1;
+}
+
+function yearOnOrAfter(month, day, startIso, endIso = "") {
+  const startYear = Number(startIso.slice(0, 4));
+  let year = isoDate(startYear, month, day) >= startIso ? startYear : startYear + 1;
+  if (endIso) {
+    const candidate = isoDate(year, month, day);
+    const otherYear = year === startYear ? startYear + 1 : startYear;
+    const other = isoDate(otherYear, month, day);
+    if ((candidate < startIso || candidate > endIso) && other >= startIso && other <= endIso) year = otherYear;
+  }
+  return year;
+}
+
+function resolveDatePoint(point, today, startIso = "", endIso = "") {
+  const year = point.year || (startIso ? yearOnOrAfter(point.month, point.day, startIso, endIso) : yearForUndatedStart(point.month, point.day, today));
+  return isoDate(year, point.month, point.day);
+}
+
+function closureContext(text, index) {
+  return /stäng/i.test(text.slice(0, index)) && !/(startar|börjar|slutar)/i.test(text.slice(0, index));
+}
+
+function selectTermMentions(mentions, text) {
+  const used = new Set();
+  const startCue = mentions.find((mention) => mention.cue === "start");
+  const endCue = mentions.find((mention) => mention.cue === "end" && mention !== startCue);
+  let startMention = startCue || null;
+  let endMention = endCue || null;
+  if (!startMention && !endMention) {
+    const span = mentions.find((mention) => mention.finish && !closureContext(text, mention.index));
+    if (span) {
+      startMention = span;
+      endMention = span;
+    } else {
+      const open = mentions.filter((mention) => !closureContext(text, mention.index));
+      if (open[0]) startMention = open[0];
+      if (open[1]) endMention = open[1];
+    }
+  } else if (startMention?.finish && !endMention) {
+    endMention = startMention;
+  } else if (!startMention && endMention?.finish) {
+    startMention = endMention;
+  }
+  if (startMention) used.add(startMention);
+  if (endMention) used.add(endMention);
+  return {
+    startMention,
+    endMention,
+    closures: mentions.filter((mention) => !used.has(mention)),
+  };
+}
+
+function cleanClosureReason(value) {
+  const cleaned = String(value || "")
+    .replace(/^(?:\s*(?:för|kring|under|på|vid|den|de|och|vi|har|är)\b\s*)+/gi, "")
+    .replace(/[\s,:;&-]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (cleaned.length < 2) return "";
+  return cleaned.charAt(0).toLocaleUpperCase("sv-SE") + cleaned.slice(1);
+}
+
+function closureIntroductions(text) {
+  const pattern = new RegExp(`\\bstäng\\w*\\b(?:\\s+(?:för|kring|under|på|vid))?\\s*([^\\d.]{0,80})`, "gi");
+  return Array.from(text.matchAll(pattern), (match) => ({ index: match.index, reason: cleanClosureReason(match[1]) }));
+}
+
+function introductionKey(introductions, index) {
+  let key = -1;
+  introductions.forEach((introduction) => {
+    if (introduction.index < index) key = introduction.index;
+  });
+  return key;
+}
+
+function reasonBefore(introductions, index) {
+  let reason = "";
+  introductions.forEach((introduction) => {
+    if (introduction.index < index && introduction.reason) reason = introduction.reason;
+  });
+  return reason;
+}
+
+function reasonAfter(text, end, limit) {
+  const segment = text.slice(end, limit);
+  const match = segment.match(/^\s*(?:,|&|\boch\b|\s)*för\s+(.+?)(?=\s+och\b|\s*[,.]|$)/i);
+  return match ? cleanClosureReason(match[1]) : "";
+}
+
+function expandMention(mention, today, startIso, endIso) {
+  const first = resolveDatePoint(mention.start, today, startIso, endIso);
+  if (!mention.finish) return [first];
+  const last = resolveDatePoint(mention.finish, today, first);
+  if (last < first) throw new Error("Ärtan kunde inte tolka ett av datumen.");
+  const days = [];
+  let cursor = first;
+  while (cursor <= last && days.length < 45) {
+    days.push(cursor);
+    cursor = shiftIsoDate(cursor, 1);
+  }
+  return days;
+}
+
+function termTitle(prefix, startsOn) {
+  const stripped = prefix
+    .replace(/[-–—,:.\s]+$/g, "")
+    .replace(/\b(?:startar|börjar|slutar|den)\b\s*$/gi, "")
+    .replace(/^(?:vi\s+har\s+|vi\s+)?(?:startar|börjar|slutar)\b\s*/i, "")
+    .replace(/[-–—,:.\s]+$/g, "")
+    .trim();
+  if (stripped.length >= 2 && !/^(?:vi|och)$/i.test(stripped)) return stripped;
+  if (!startsOn) return "";
+  const month = Number(startsOn.slice(5, 7));
+  return `${month >= 8 ? "Hösttermin" : "Vårtermin"} ${startsOn.slice(0, 4)}`;
+}
+
+function missingTermMessage(missing) {
+  const phrases = missing.map((item) => (item === "hours" ? "inga öppettider" : item === "start" ? "inget startdatum" : "inget slutdatum"));
+  if (!phrases.length) return "";
+  if (phrases.length === 1) return `Ärtan hittade ${phrases[0]}.`;
+  return `Ärtan hittade ${phrases.slice(0, -1).join(", ")} och ${phrases.at(-1)}.`;
+}
+
 function clockRanges(text) {
-  return Array.from(text.matchAll(/\b([01]?\d|2[0-3])[.:]([0-5]\d)\s*[-–]\s*([01]?\d|2[0-3])[.:]([0-5]\d)\b/g), (match) => ({
+  return Array.from(text.matchAll(/\b(?:kl\.?\s*)?([01]?\d|2[0-3])[.:]([0-5]\d)\s*(?:[-–—]|till)\s*(?:kl\.?\s*)?([01]?\d|2[0-3])[.:]([0-5]\d)\b/gi), (match) => ({
     start: `${match[1].padStart(2, "0")}:${match[2]}`,
     end: `${match[3].padStart(2, "0")}:${match[4]}`,
     index: match.index,
   }));
 }
 
-function parseTermText(value) {
-  const text = String(value || "").trim();
-  const dates = parseSwedishDates(text);
+function parseTermText(value, today = todayIso()) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const mentions = termDateMentions(text);
+  const selected = selectTermMentions(mentions, text);
+  const startsOn = selected.startMention ? resolveDatePoint(selected.startMention.start, today) : "";
+  const endPoint = selected.endMention ? (selected.endMention.finish && selected.endMention === selected.startMention ? selected.endMention.finish : selected.endMention.finish || selected.endMention.start) : null;
+  const endsOn = endPoint ? resolveDatePoint(endPoint, today, startsOn) : "";
   const times = clockRanges(text);
-  if (dates.length < 2 || !times.length) throw new Error("Skriv terminens start, slut och öppettider, till exempel 3 augusti–18 december, 06.30–17.30.");
-  const name = text.slice(0, dates[0].index).replace(/[-–,:]+$/g, "").trim() || "Termin";
-  const closures = dates.slice(2).map((date, index) => {
-    const next = dates[index + 3]?.index ?? text.length;
-    const segment = text.slice(date.end, next).replace(/^[\s,.:;-]*(?:för\s+)?/i, "").replace(/\s+och\s*$/i, "").replace(/[.,;]+$/g, "").trim();
-    let closureDate = date.value;
-    if (closureDate < dates[0].value || closureDate > dates[1].value) {
-      const endYearCandidate = `${dates[1].value.slice(0, 4)}${closureDate.slice(4)}`;
-      if (endYearCandidate >= dates[0].value && endYearCandidate <= dates[1].value) closureDate = endYearCandidate;
-    }
-    return { date: closureDate, reason: segment || "Stängt" };
+  const introductions = closureIntroductions(text);
+  const seen = new Set();
+  const closures = [];
+  const pending = selected.closures.map((mention, index) => {
+    const next = selected.closures[index + 1]?.index ?? text.length;
+    return { mention, after: reasonAfter(text, mention.end, next) };
   });
-  return { name, startsOn: dates[0].value, endsOn: dates[1].value, opensAt: times[0].start, closesAt: times[0].end, closures };
+  let carriedReason = "";
+  let carriedKey = null;
+  for (let index = pending.length - 1; index >= 0; index -= 1) {
+    const key = introductionKey(introductions, pending[index].mention.index);
+    if (key !== carriedKey) {
+      carriedReason = "";
+      carriedKey = key;
+    }
+    if (pending[index].after) carriedReason = pending[index].after;
+    else if (carriedReason && !reasonBefore(introductions, pending[index].mention.index)) pending[index].after = carriedReason;
+    else carriedReason = "";
+  }
+  pending.forEach((item) => {
+    const reason = item.after || reasonBefore(introductions, item.mention.index) || "Stängt";
+    expandMention(item.mention, today, startsOn, endsOn).forEach((date) => {
+      if (seen.has(date)) return;
+      seen.add(date);
+      closures.push({ date, reason });
+    });
+  });
+  closures.sort((left, right) => left.date.localeCompare(right.date));
+  const missing = [];
+  if (!startsOn) missing.push("start");
+  if (!endsOn) missing.push("end");
+  if (!times.length) missing.push("hours");
+  const nameIndex = selected.startMention?.index ?? selected.endMention?.index ?? text.length;
+  const sentences = [missingTermMessage(missing)];
+  if (startsOn && endsOn && endsOn < startsOn) sentences.push("Slutdatumet ligger före startdatumet.");
+  return {
+    name: termTitle(text.slice(0, nameIndex), startsOn),
+    startsOn,
+    endsOn,
+    opensAt: times[0]?.start || "",
+    closesAt: times[0]?.end || "",
+    closures,
+    error: sentences.filter(Boolean).join(" "),
+  };
 }
 
 function weekdaysIn(value) {
@@ -3404,7 +3599,12 @@ document.body.addEventListener("click", (event) => {
       form.elements.opens_at.value = parsed.opensAt;
       form.elements.closes_at.value = parsed.closesAt;
       form.elements.closures.value = parsed.closures.map((closure) => `${closure.date} | ${closure.reason}`).join("\n");
-      setParseStatus(form, "Ärtan har fyllt i ett utkast. Granska alla datum och tider innan du sparar.");
+      if (parsed.error) {
+        setParseStatus(form, parsed.error, true);
+      } else {
+        const closureNote = parsed.closures.length ? ` ${parsed.closures.length} stängningsdagar står i listan.` : "";
+        setParseStatus(form, `Ärtan har fyllt i ett utkast.${closureNote} Granska alla datum och tider innan du sparar.`);
+      }
     } catch (error) {
       setParseStatus(form, error.message, true);
     }

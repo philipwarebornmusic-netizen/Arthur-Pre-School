@@ -1,5 +1,11 @@
 # Ändringslogg
 
+## 2026-10-22 — Termintext som tål vanlig svenska
+
+- Tolka och fyll i läser start och slut även när de står var för sig, till exempel startar 3 aug och slutar 31 dec. Förkortade månader fungerar, och året väljs så att slutdatumet ligger efter starten.
+- Stängningsdagar kan räknas upp med komma, och, & eller bara mellanslag. En fras före datumen, till exempel kompetensutveckling eller jul/nyår, blir anledningen. Ett spann som 24–31 dec fyller i varje dag.
+- Öppettider kan skrivas 06.30-17.30, 6:30–17:30 eller kl 6.30 till 17.30. Saknas bara en del namnger Ärtan den delen och fyller i resten, inklusive stängningsdagarna, så att de kan granskas innan publicering.
+
 ## 2026-10-22 — Kortöversikt i stället för långa menysidor
 
 - Barnet, Skolor och Personer/Barn öppnas som ett rutnät av kort. Ett tryck visar den delen för sig, med ‹ Tillbaka och rubrik.
