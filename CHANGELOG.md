@@ -12,6 +12,13 @@
 - Apple uppdaterar inom ungefär en timme. Google kan ta 12–24 timmar.
 - Migration `supabase/migrations/013_calendar_subscriptions.sql` är redan körd och funktionen `term-feed` är publicerad. Kör inte migrationen igen.
 
+## 2026-10-22 — Administratören kan låta personal hantera terminen
+
+- En administratör kan ge en lärare behörigheten **Får hantera terminsschema**. Läraren kan då skapa utkast, publicera och ändra publicerade terminer och stängningsdagar för de skolor där läraren arbetar.
+- Övrig personal ser fortfarande bara den publicerade terminen, utan knappar för att skapa eller ändra.
+- Behörigheten kan tas bort när som helst. Varje tilldelning och borttagning sparas med vem, vem det gällde och när.
+- Migration `supabase/migrations/014_term_managers.sql` är redan körd mot produktion. Kör den inte igen. Den ändrar inte befintliga terminsfunktioners argument.
+
 ## 2026-10-22 — Vårdnadshavare äger barnets uppgifter
 
 - Vårdnadshavare kan ändra och ta bort sina kontaktpersoner, tömma enskilda hälsofält och anteckningen, och svara nej för att ta tillbaka ett samtycke. Borttagning frågar en gång till.

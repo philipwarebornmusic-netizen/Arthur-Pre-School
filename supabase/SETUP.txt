@@ -68,6 +68,12 @@ Term calendar subscriptions
 - The feed lists published terms and closures for schools where that guardian has a child. It does not include child names or weekly schedules.
 - Legacy calendar_feeds and calendar_events keep their rows. 013 revokes anon and authenticated privileges on them when those tables exist. It does not drop them.
 
+Term managers
+- supabase/migrations/014_term_managers.sql is already applied in production. Do not run it again.
+- An administrator can grant term management to a staff member from Skolor. The grant covers every school where that person is assigned, and only that person. Other teachers stay read-only.
+- Grants and revocations are appended to term_manager_events. The tables have row-level security and no direct anon or authenticated writes.
+- Existing term function arguments are unchanged.
+
 Fake Test organization and PreSchool Test preschool
 1. Keep this tenant free from real child, health, contact and consent data.
 2. Preview the fixed plan from the repository root:
