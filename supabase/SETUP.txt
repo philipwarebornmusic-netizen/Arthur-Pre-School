@@ -48,8 +48,8 @@ First real account
 7. Guardians request an additional child from the app. Staff approve the request before the child is linked.
 
 Guardian-owned child information
-- Run supabase/011_guardian_owned_child_info.sql once in the SQL editor after the earlier migrations.
-- Do not run it against production until guardians should be the only people who can change child information. Deploy previews use the production database, so saving from this version fails there until 011 has been applied on a non-production database.
+- supabase/011_guardian_owned_child_info.sql is already applied on the production database. Do not run it again.
+- Deploy previews use the production database, so guardian edits on this version use the applied 011 permissions.
 - The file does not delete rows or drop columns. It does not touch pickup_contacts, pickup_passes, or pickup_events, so it is safe before or after 010.
 - 010 does not grant staff or admin any write on the child profile, health, emergency contacts, or consents.
 - After 011, guardians edit and remove that information. Staff and administrators keep read access. Creating a child, including name and department, stays with staff and administrators. An administrator can move a child between departments and can still delete a child.

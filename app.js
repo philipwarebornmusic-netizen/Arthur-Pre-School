@@ -46,6 +46,7 @@ const state = {
   assistantQuestion: "",
   assistantResponse: null,
   postPreviewUrls: [],
+  hubSection: "",
 };
 
 const screen = document.querySelector("#screen");
@@ -277,6 +278,192 @@ function parentReminders(child) {
     .filter((item) => !item.complete)
     .forEach((item) => reminders.push({ text: item.reminder, view: "child", target: item.id }));
   return reminders.slice(0, 3);
+}
+
+// Card hubs. One registerHubCard call is one section. The renderer does not
+// need to change when a later change adds a card. Open pull requests map like this:
+// - #4 Hämtlista: registerHubCard("child", { id: "hamtlista", ... }) only when
+//   that block lives on Barnet. Leave it off the hub if it stays on Min dag.
+// - #7 Kalender / "Synka terminsschemat": registerHubCard("child", { id: "kalender", ... }).
+// - #8 The term-manager toggle stays inside the Terminer card, which wraps
+//   renderTermManager. No extra card.
+// - #9 Profilbild: registerHubCard("child", { id: "profilbild", ... }).
+// - #9 Klasslista is its own nav view. Add a Barnet card only if that change
+//   also puts a consent block on Barnet, with id "klasslista".
+const hubCards = { child: [], schools: [], people: [] };
+const HUB_SLUG = { child: "barnet", schools: "skolor", people: "personer" };
+const VIEW_BY_HUB_SLUG = { barnet: "child", skolor: "schools", personer: "people" };
+const HUB_SECTION_BY_TARGET = {
+  "child-basics": "uppgifter",
+  "child-health": "halsa",
+  "child-contacts": "kontakter",
+  "child-consents": "samtycken",
+};
+
+function registerHubCard(hub, card) {
+  if (!hubCards[hub]) hubCards[hub] = [];
+  hubCards[hub].push(card);
+  return card;
+}
+
+function allowedViewsForRole(role) {
+  return {
+    admin: ["overview", "attendance", "schools", "messages", "people", "account"],
+    staff: ["attendance", "messages", "people", "account"],
+    parent: ["home", "child", "messages", "account"],
+  }[role] || ["home", "child", "messages", "account"];
+}
+
+function peopleChildStatus(child) {
+  const birth = child.birth_date ? formatDate(child.birth_date) : "Saknar födelsedatum";
+  return `${departmentName(child.department_id)} · ${birth}`;
+}
+
+function cardsForHub(hub) {
+  const registered = (hubCards[hub] || []).filter((card) => !card.visible || card.visible());
+  if (hub !== "people") return registered;
+  const childCards = state.children.map((child) => ({
+    id: `barn-${child.id}`,
+    icon: "🌱",
+    title: child.name,
+    status: () => peopleChildStatus(child),
+    render: () => `<article class="card" id="child-info-read">${renderChildFacts(child)}</article>`,
+  }));
+  return registered.concat(childCards);
+}
+
+function readHubHash() {
+  const raw = decodeURIComponent(location.hash.replace(/^#/, ""));
+  if (!raw) return null;
+  const slash = raw.indexOf("/");
+  const slug = slash === -1 ? raw : raw.slice(0, slash);
+  const section = slash === -1 ? "" : raw.slice(slash + 1);
+  const view = VIEW_BY_HUB_SLUG[slug];
+  if (!view) return null;
+  return { view, section };
+}
+
+function hubUrl(view, section = "") {
+  const slug = HUB_SLUG[view] || "";
+  const hash = slug ? (section ? `#${slug}/${section}` : `#${slug}`) : "";
+  return `${location.pathname}${location.search}${hash}`;
+}
+
+function openHubCard(hub) {
+  if (!state.hubSection) return null;
+  const card = cardsForHub(hub).find((item) => item.id === state.hubSection);
+  if (card) return card;
+  state.hubSection = "";
+  if (HUB_SLUG[state.view]) history.replaceState({ hub: true, view: state.view, section: "" }, "", hubUrl(state.view));
+  return null;
+}
+
+function hubClosedBanner(hub) {
+  if (hub === "schools") return `${renderSchoolCodeResult()}${renderInviteResult("staff")}`;
+  if (hub === "people") return renderInviteResult("parent");
+  return "";
+}
+
+function renderHubGrid(cards) {
+  return `<div class="card-hub" role="group" aria-label="Delar">${cards.map((card) => {
+    const status = typeof card.status === "function" ? card.status() : (card.status || "");
+    return `<button type="button" class="hub-card" data-action="hub-open" data-section="${esc(card.id)}"><span class="hub-card-icon" aria-hidden="true">${card.icon || ""}</span><span class="hub-card-title">${esc(card.title)}</span><span class="hub-card-status">${esc(status)}</span></button>`;
+  }).join("")}</div>`;
+}
+
+function renderHubView({ hub, before = "", heroHtml = "" }) {
+  const open = openHubCard(hub);
+  if (open) {
+    return `${noticeHtml()}${before}<section class="hub-panel"><button class="hub-back" type="button" data-action="hub-back">‹ Tillbaka</button><h1 class="h1">${esc(open.title)}</h1>${open.render()}</section>`;
+  }
+  return `${noticeHtml()}${before}${heroHtml}${hubClosedBanner(hub)}${renderHubGrid(cardsForHub(hub))}`;
+}
+
+function showView(view, { section = "", scrollTarget = "", push = true } = {}) {
+  state.view = view;
+  state.hubSection = section;
+  state.notice = null;
+  state.assistantOpen = false;
+  state.assistantQuestion = "";
+  state.assistantResponse = null;
+  const url = hubUrl(view, section);
+  const payload = { hub: Boolean(HUB_SLUG[view]), view, section };
+  const same = `${location.pathname}${location.search}${location.hash}` === url && history.state?.view === view && (history.state?.section || "") === section;
+  if (!same) {
+    if (push) history.pushState(payload, "", url);
+    else history.replaceState(payload, "", url);
+  }
+  render();
+  if (scrollTarget) {
+    requestAnimationFrame(() => {
+      const destination = document.getElementById(scrollTarget);
+      if (destination) destination.scrollIntoView({ behavior: "smooth", block: "start" });
+      else scrollTo({ top: 0, behavior: "smooth" });
+    });
+    return;
+  }
+  scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function closeHub() {
+  if (history.state?.hub && history.state.section && history.length > 1) {
+    history.back();
+    return;
+  }
+  showView(state.view, { section: "" });
+}
+
+function restoreHubFromHash() {
+  if (!state.profile || state.profile.removed_at) return;
+  const parsed = readHubHash();
+  if (!parsed) return;
+  const allowed = allowedViewsForRole(state.profile.role);
+  if (!allowed.includes(parsed.view)) return;
+  const known = !parsed.section || cardsForHub(parsed.view).some((card) => card.id === parsed.section);
+  state.view = parsed.view;
+  state.hubSection = parsed.section && known ? parsed.section : "";
+  if (parsed.section && !known) history.replaceState({ hub: true, view: parsed.view, section: "" }, "", hubUrl(parsed.view));
+}
+
+function applyInitialHub() {
+  if (!state.profile || state.profile.removed_at) return;
+  const allowed = allowedViewsForRole(state.profile.role);
+  const parsed = readHubHash();
+  if (parsed && allowed.includes(parsed.view)) {
+    state.view = parsed.view;
+    const known = !parsed.section || cardsForHub(parsed.view).some((card) => card.id === parsed.section);
+    state.hubSection = parsed.section && known ? parsed.section : "";
+  } else if (parsed) {
+    state.hubSection = "";
+    history.replaceState({ hub: false, view: state.view, section: "" }, "", `${location.pathname}${location.search}`);
+    return;
+  }
+  if (state.hubSection && HUB_SLUG[state.view]) {
+    history.replaceState({ hub: true, view: state.view, section: "" }, "", hubUrl(state.view));
+    history.pushState({ hub: true, view: state.view, section: state.hubSection }, "", hubUrl(state.view, state.hubSection));
+    return;
+  }
+  if (HUB_SLUG[state.view]) {
+    history.replaceState({ hub: true, view: state.view, section: "" }, "", hubUrl(state.view, state.hubSection));
+  }
+}
+
+function syncHubFromHistory() {
+  if (!state.profile || state.profile.removed_at) return;
+  const allowed = allowedViewsForRole(state.profile.role);
+  const parsed = readHubHash();
+  if (parsed && allowed.includes(parsed.view)) {
+    state.view = parsed.view;
+    state.hubSection = parsed.section || "";
+  } else if (history.state?.view && allowed.includes(history.state.view)) {
+    state.view = history.state.view;
+    state.hubSection = history.state.section || "";
+  } else if (!location.hash) {
+    state.hubSection = "";
+    if (!allowed.includes(state.view) || HUB_SLUG[state.view]) state.view = allowed[0];
+  }
+  render();
+  scrollTo({ top: 0 });
 }
 
 function saveSession(session) {
@@ -528,7 +715,9 @@ async function logout() {
       assistantOpen: false,
       assistantQuestion: "",
       assistantResponse: null,
+      hubSection: "",
     });
+    if (location.hash) history.replaceState({ hub: false, view: "home", section: "" }, "", `${location.pathname}${location.search}`);
   }
 }
 
@@ -631,13 +820,9 @@ async function loadData() {
   state.staffMembers = staffMembers || [];
   state.onboarding = { kind: "active" };
   if (!state.children.some((child) => child.id === state.selectedChildId)) state.selectedChildId = state.children[0]?.id || null;
-  const allowedViews = {
-    admin: ["overview", "attendance", "schools", "messages", "people", "account"],
-    staff: ["attendance", "messages", "people", "account"],
-    parent: ["home", "child", "messages", "account"],
-  };
-  const roleViews = allowedViews[state.profile.role] || allowedViews.parent;
+  const roleViews = allowedViewsForRole(state.profile.role);
   if (!roleViews.includes(state.view)) state.view = roleViews[0];
+  restoreHubFromHash();
 }
 
 function clearLoadedData() {
@@ -1353,6 +1538,70 @@ function renderChildFacts(child) {
   </article>`;
 }
 
+function renderChildBasics(child) {
+  return `<form id="child-basics" class="card form-stack child-step" data-form="child-profile" data-child-id="${esc(child.id)}"><p class="kicker">Steg 1 av 4</p><h2>Grunduppgifter</h2>
+      ${field("Barnets namn", "name", child.name, { required: true, autocomplete: "name" })}
+      ${field("Födelsedatum", "birth_date", child.birth_date || "", { type: "date", required: true })}
+      ${textareaField("Det här behöver personalen veta", "notes", child.notes || "", "Trygghet, språk, rutiner eller annat viktigt")}
+      <p class="form-hint">Lämna anteckningen tom och spara om den ska tas bort. Namn och födelsedatum behöver finnas kvar.</p>
+      <button class="primary" type="submit">Spara grunduppgifter</button>
+    </form>`;
+}
+
+function renderChildHealth(child) {
+  const health = healthFor(child.id);
+  return `<form id="child-health" class="card form-stack child-step" data-form="child-health" data-child-id="${esc(child.id)}"><p class="kicker">Steg 2 av 4</p><h2>Hälsa och omsorg</h2><p class="form-hint">Gå igenom steget och spara även om barnet inte har allergier, medicin eller andra särskilda behov. Ett tomt fält tar bort just den uppgiften. De andra fälten behålls.</p>
+      ${field("Allergier, separera med kommatecken", "allergies", health.allergies?.join(", ") || "")}
+      ${field("Sjukdomar eller tillstånd", "conditions", health.conditions?.join(", ") || "")}
+      ${textareaField("Specialkost", "diet", health.diet || "")}
+      ${textareaField("Medicin och instruktion", "medication", health.medication || "")}
+      ${textareaField("Akut information", "emergency", health.emergency || "")}
+      <button class="primary" type="submit">Spara och markera som genomgånget</button>
+      ${health.updated_at ? `<p class="form-hint">Senast uppdaterad ${esc(formatTimestamp(health.updated_at))}</p>` : ""}
+    </form>`;
+}
+
+function renderChildContacts(child) {
+  const contacts = contactsFor(child.id);
+  return `<section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2><p class="form-hint">Ändra namn, relation, telefon, om personen får hämta och om kontakten är primär. Ta bort frågar en gång till innan kontakten försvinner.</p>
+      <div class="contact-editors">${contacts.map((contact) => renderContactEditor(child, contact)).join("")}${renderContactEditor(child)}</div>
+    </section>`;
+}
+
+function renderChildConsents(child) {
+  return `<section id="child-consents" class="card child-step"><p class="kicker">Steg 4 av 4</p><h2>Samtycken</h2><p class="form-hint">Välj ja eller nej för varje punkt. Nej tar tillbaka ett tidigare ja. Du kan ändra svaren när som helst.</p>${renderConsentChoices(child)}</section>`;
+}
+
+function childBasicsStatus() {
+  const child = selectedChild();
+  return child?.birth_date ? "Födelsedatum ifyllt" : "Saknar födelsedatum";
+}
+
+function childHealthStatus() {
+  const child = selectedChild();
+  return child && state.health.some((health) => health.child_id === child.id && health.updated_at) ? "Genomgången" : "Inte genomgången";
+}
+
+function childContactsStatus() {
+  const child = selectedChild();
+  const count = child ? contactsFor(child.id).length : 0;
+  if (!count) return "Ingen sparad";
+  return count === 1 ? "1 sparad" : `${count} sparade`;
+}
+
+function childConsentsStatus() {
+  const child = selectedChild();
+  const count = child ? CONSENT_OPTIONS.filter(([type]) => consentRecorded(child.id, type) && consentFor(child.id, type)).length : 0;
+  if (!count) return "Inga godkända";
+  return count === 1 ? "1 godkänd" : `${count} godkända`;
+}
+
+function childSiblingStatus() {
+  const count = state.siblingRequests.filter((request) => request.status === "pending").length;
+  if (!count) return "Be om koppling";
+  return count === 1 ? "1 väntande" : `${count} väntande`;
+}
+
 function renderChildInfo() {
   if (state.profile.role !== "parent") {
     const child = selectedChild();
@@ -1361,33 +1610,20 @@ function renderChildInfo() {
   }
   const child = selectedChild();
   if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">Inget barn kopplat</h1><p class="sub">Personalen bjuder in dig till ett barn, eller godkänner en förfrågan innan barnet syns här.</p></section>${renderSiblingRequestForm()}`;
-  const health = healthFor(child.id);
-  const contacts = contactsFor(child.id);
   const checklist = childInfoChecklist(child);
   const completed = checklist.filter((item) => item.complete).length;
-  return `${noticeHtml()}${childTabs()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">Fyra tydliga steg. Du kan spara ett steg i taget, tömma ett fält eller ta bort en kontakt.</p></section>
-    <section class="card info-progress"><div><p class="kicker">Din översikt</p><h2>${completed} av ${checklist.length} steg klara</h2><progress max="${checklist.length}" value="${completed}" aria-label="${completed} av ${checklist.length} steg klara"></progress></div><ol class="info-steps">${checklist.map((item, index) => `<li class="${item.complete ? "done" : ""}"><button type="button" data-action="scroll-section" data-target="${esc(item.id)}"><span>${item.complete ? "✓" : index + 1}</span>${esc(item.label)}</button></li>`).join("")}</ol></section>
-    <form id="child-basics" class="card form-stack child-step" data-form="child-profile" data-child-id="${esc(child.id)}"><p class="kicker">Steg 1 av 4</p><h2>Grunduppgifter</h2>
-      ${field("Barnets namn", "name", child.name, { required: true, autocomplete: "name" })}
-      ${field("Födelsedatum", "birth_date", child.birth_date || "", { type: "date", required: true })}
-      ${textareaField("Det här behöver personalen veta", "notes", child.notes || "", "Trygghet, språk, rutiner eller annat viktigt")}
-      <p class="form-hint">Lämna anteckningen tom och spara om den ska tas bort. Namn och födelsedatum behöver finnas kvar.</p>
-      <button class="primary" type="submit">Spara grunduppgifter</button>
-    </form>
-    <form id="child-health" class="card form-stack child-step" data-form="child-health" data-child-id="${esc(child.id)}"><p class="kicker">Steg 2 av 4</p><h2>Hälsa och omsorg</h2><p class="form-hint">Gå igenom steget och spara även om barnet inte har allergier, medicin eller andra särskilda behov. Ett tomt fält tar bort just den uppgiften. De andra fälten behålls.</p>
-      ${field("Allergier, separera med kommatecken", "allergies", health.allergies?.join(", ") || "")}
-      ${field("Sjukdomar eller tillstånd", "conditions", health.conditions?.join(", ") || "")}
-      ${textareaField("Specialkost", "diet", health.diet || "")}
-      ${textareaField("Medicin och instruktion", "medication", health.medication || "")}
-      ${textareaField("Akut information", "emergency", health.emergency || "")}
-      <button class="primary" type="submit">Spara och markera som genomgånget</button>
-      ${health.updated_at ? `<p class="form-hint">Senast uppdaterad ${esc(formatTimestamp(health.updated_at))}</p>` : ""}
-    </form>
-    <section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2><p class="form-hint">Ändra namn, relation, telefon, om personen får hämta och om kontakten är primär. Ta bort frågar en gång till innan kontakten försvinner.</p>
-      <div class="contact-editors">${contacts.map((contact) => renderContactEditor(child, contact)).join("")}${renderContactEditor(child)}</div>
-    </section>
-    <section id="child-consents" class="card child-step"><p class="kicker">Steg 4 av 4</p><h2>Samtycken</h2><p class="form-hint">Välj ja eller nej för varje punkt. Nej tar tillbaka ett tidigare ja. Du kan ändra svaren när som helst.</p>${renderConsentChoices(child)}</section>${renderSiblingRequestForm(true)}`;
+  return renderHubView({
+    hub: "child",
+    before: childTabs(),
+    heroHtml: `<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">${completed} av ${checklist.length} steg klara</p><progress class="hub-progress" max="${checklist.length}" value="${completed}" aria-label="${completed} av ${checklist.length} steg klara"></progress></section>`,
+  });
 }
+
+registerHubCard("child", { id: "uppgifter", icon: "✎", title: "Grunduppgifter", status: childBasicsStatus, render: () => renderChildBasics(selectedChild()) });
+registerHubCard("child", { id: "halsa", icon: "✚", title: "Hälsa", status: childHealthStatus, render: () => renderChildHealth(selectedChild()) });
+registerHubCard("child", { id: "kontakter", icon: "☎", title: "Kontaktpersoner", status: childContactsStatus, render: () => renderChildContacts(selectedChild()) });
+registerHubCard("child", { id: "samtycken", icon: "✓", title: "Samtycken", status: childConsentsStatus, render: () => renderChildConsents(selectedChild()) });
+registerHubCard("child", { id: "syskon", icon: "☺", title: "Syskon", status: childSiblingStatus, render: () => renderSiblingRequestForm(true) });
 
 function groupedPrivateMessages() {
   const cards = [];
@@ -1708,14 +1944,65 @@ function renderTermManager(school) {
   return `<div class="term-admin-list">${terms.map(renderManagedTerm).join("") || emptyState("Ingen termin", "Skapa ett terminsutkast. Det visas här tills du publicerar det.")}${renderTermEditor(school)}</div>`;
 }
 
-function renderSchoolAdmin(school) {
+function renderSchoolDepartmentCard(school) {
   const departments = state.departments.filter((department) => department.preschool_id === school.id);
-  return `<section class="school-admin"><article class="card"><p class="kicker">Skola</p><h2>${esc(school.name)}</h2><p>${esc(compact([school.address, compact([school.postal_code, school.city]).join(" ")]).join(", ") || "Ingen adress registrerad")}</p><p class="meta">${esc(compact([school.phone, school.opening_hours]).join(" · ") || "Inga kontaktuppgifter registrerade")}</p>
+  return `<article class="card school-department-card"><p class="kicker">Skola</p><h2>${esc(school.name)}</h2><p>${esc(compact([school.address, compact([school.postal_code, school.city]).join(" ")]).join(", ") || "Ingen adress registrerad")}</p><p class="meta">${esc(compact([school.phone, school.opening_hours]).join(" · ") || "Inga kontaktuppgifter registrerade")}</p>
     <ul class="rows">${departments.map((department) => `<li><span>${esc(department.name)}</span><span class="status">${state.children.filter((child) => child.department_id === department.id).length} barn</span></li>`).join("") || "<li><span>Inga avdelningar</span></li>"}</ul>
     <form class="form-stack school-department-form" data-form="department-create" data-preschool-id="${esc(school.id)}">${field("Ny avdelning", "department_name", "", { required: true, placeholder: "Till exempel Solen" })}<button class="secondary" type="submit">Lägg till avdelning</button></form>
     <button class="secondary" type="button" data-action="rotate-school-code" data-id="${esc(school.id)}">Skapa ny skolkod</button>
     <p class="form-hint">Skolkoden är ett reservspår för personal. Ansökan väntar tills du godkänner den och väljer avdelning.</p>
-  </article>${renderTermManager(school)}</section>`;
+  </article>`;
+}
+
+function renderSchoolAdmin(school) {
+  return `<section class="school-admin">${renderSchoolDepartmentCard(school)}${renderTermManager(school)}</section>`;
+}
+
+function renderSchoolDepartments() {
+  if (!state.schools.length) return emptyState("Ingen skola skapad", "Skapa organisationens första skola under Ny skola.");
+  return `${renderSchoolCodeResult()}${state.schools.map(renderSchoolDepartmentCard).join("")}`;
+}
+
+function renderSchoolTerms() {
+  if (!state.schools.length) return emptyState("Ingen skola skapad", "Skapa en skola innan du lägger till terminer.");
+  return state.schools.map((school) => `<section class="school-terms"><h2>${esc(school.name)}</h2>${renderTermManager(school)}</section>`).join("");
+}
+
+function renderSchoolCreateForm() {
+  return `<form class="card form-stack" data-form="school-create"><h2>Skapa ny skola</h2>
+      ${field("Skolans namn", "name", "", { required: true })}
+      <div class="form-grid">${field("Telefon", "phone", "", { type: "tel" })}${field("Öppettider", "opening_hours", "", { placeholder: "06:30–17:30" })}</div>
+      ${field("Adress", "address")}
+      <div class="form-grid">${field("Postnummer", "postal_code")}${field("Ort", "city")}</div>
+      ${field("Första avdelningen", "department_name", "", { required: true })}
+      <button class="primary" type="submit">Skapa skola</button>
+    </form>`;
+}
+
+function departmentHubStatus() {
+  const count = state.departments.length;
+  if (!count) return "Inga avdelningar";
+  return count === 1 ? "1 avdelning" : `${count} avdelningar`;
+}
+
+function termHubStatus() {
+  const published = state.schoolTerms.filter((term) => term.term_status === "published").length;
+  const drafts = state.schoolTerms.filter((term) => term.term_status === "draft").length;
+  if (!published && !drafts) return "Ingen termin";
+  if (published && drafts) return `${published === 1 ? "1 publicerad" : `${published} publicerade`} · ${drafts === 1 ? "1 utkast" : `${drafts} utkast`}`;
+  if (published) return published === 1 ? "1 publicerad" : `${published} publicerade`;
+  return drafts === 1 ? "1 utkast" : `${drafts} utkast`;
+}
+
+function staffHubStatus() {
+  const active = staffGroups().length;
+  const pending = state.invitations.filter((invite) => invite.role === "staff" && invite.status === "pending").length;
+  const joins = state.joinRequests.length;
+  if (!active && !pending && !joins) return "Ingen personal";
+  const parts = [active === 1 ? "1 aktiv" : `${active} aktiva`];
+  if (pending) parts.push(pending === 1 ? "1 inbjudan" : `${pending} inbjudningar`);
+  if (joins) parts.push(joins === 1 ? "1 ansökan" : `${joins} ansökningar`);
+  return parts.join(" · ");
 }
 
 function renderStaffAccess() {
@@ -1737,20 +2024,16 @@ function renderStaffAccess() {
 
 function renderSchools() {
   if (state.profile.role !== "admin") return renderAttendance();
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">Skolor och terminer</h1><p class="sub">${esc(state.organization?.name || "")}</p></section>
-    ${renderSchoolCodeResult()}
-    ${renderInviteResult("staff")}
-    ${state.schools.map(renderSchoolAdmin).join("") || emptyState("Ingen skola skapad", "Skapa organisationens första skola nedan.")}
-    ${renderStaffAccess()}
-    <form class="card form-stack" data-form="school-create"><h2>Skapa ny skola</h2>
-      ${field("Skolans namn", "name", "", { required: true })}
-      <div class="form-grid">${field("Telefon", "phone", "", { type: "tel" })}${field("Öppettider", "opening_hours", "", { placeholder: "06:30–17:30" })}</div>
-      ${field("Adress", "address")}
-      <div class="form-grid">${field("Postnummer", "postal_code")}${field("Ort", "city")}</div>
-      ${field("Första avdelningen", "department_name", "", { required: true })}
-      <button class="primary" type="submit">Skapa skola</button>
-    </form>`;
+  return renderHubView({
+    hub: "schools",
+    heroHtml: `<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">Skolor och terminer</h1><p class="sub">${esc(state.organization?.name || "")}</p></section>`,
+  });
 }
+
+registerHubCard("schools", { id: "avdelningar", icon: "🏫", title: "Avdelningar", status: departmentHubStatus, render: renderSchoolDepartments });
+registerHubCard("schools", { id: "terminer", icon: "▦", title: "Terminer", status: termHubStatus, render: renderSchoolTerms });
+registerHubCard("schools", { id: "personal", icon: "👥", title: "Personal", status: staffHubStatus, render: () => `${renderInviteResult("staff")}${renderStaffAccess()}` });
+registerHubCard("schools", { id: "ny-skola", icon: "+", title: "Ny skola", status: () => "Skapa en till", render: renderSchoolCreateForm });
 
 function invitationLink(code) {
   return `${location.origin}${location.pathname}?invite=${encodeURIComponent(code)}`;
@@ -1763,28 +2046,52 @@ function renderSiblingReview(request) {
   return `<form class="form-stack sibling-review" data-form="review-only" data-request-id="${esc(request.request_id)}"><p><strong>${esc(request.child_name)}</strong><span class="meta">${esc(formatDate(request.birth_date))} · ${esc(request.department_name)} · ${esc(request.guardian_name)} (${esc(request.guardian_email)})</span></p>${request.note ? `<p class="form-hint">${esc(request.note)}</p>` : ""}${options.length ? selectField("Befintligt barn på avdelningen", "existing_child_id", [["", "Skapa ett nytt barn från förfrågan"], ...options], "") : `<p class="form-hint">Inget barn med det här namnet finns i listan. Godkännande skapar ett nytt barn och kopplar vårdnadshavaren.</p>`}<div class="stack-actions"><button class="primary" type="button" data-action="review-sibling" data-decision="approve" data-id="${esc(request.request_id)}">Godkänn och koppla</button><button class="secondary" type="button" data-action="review-sibling" data-decision="reject" data-id="${esc(request.request_id)}">Avslå</button></div></form>`;
 }
 
-function renderPeople() {
-  const guardianInvites = state.invitations.filter((invite) => invite.role === "parent" && invite.status === "pending");
-  const reviews = state.siblingRequests.filter((request) => request.status === "pending");
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barn och vårdnadshavare</p><h1 class="h1">Personer</h1><p class="sub">Lägg till barnet på avdelningen. Bjud sedan in varje vårdnadshavare med en egen länk.</p></section>
-    ${renderInviteResult("parent")}
-    <form class="card form-stack" data-form="child-create"><h2>Lägg till barn</h2>
+function renderChildCreateForm() {
+  return `<form class="card form-stack" data-form="child-create"><h2>Lägg till barn</h2>
       ${departmentOptions().length ? selectField("Avdelning", "department_id", departmentOptions(), "", true) : `<p class="notice error">Skapa en skola och avdelning först.</p>`}
       <div class="form-grid">${field("Barnets namn", "name", "", { required: true })}${field("Födelsedatum", "birth_date", "", { type: "date" })}</div>
       <button class="primary" type="submit" ${departmentOptions().length ? "" : "disabled"}>Lägg till barn</button>
-    </form>
-    <form class="card form-stack" data-form="invite-create"><h2>Bjud in vårdnadshavare</h2>
+    </form>`;
+}
+
+function renderGuardianInviteForm() {
+  return `<form class="card form-stack" data-form="invite-create"><h2>Bjud in vårdnadshavare</h2>
       <input type="hidden" name="role" value="parent">
       <p class="form-hint">Länken gäller ett barn, kan användas en gång och slutar gälla efter 14 dagar. En andra vårdnadshavare får en egen länk till samma barn. Den som redan har konto öppnar länken och får barnet på samma konto.</p>
       ${field("E-post", "email", "", { type: "email", required: true, autocomplete: "email" })}
       ${selectField("Barn", "child_id", [["", "Välj barn"], ...state.children.map((child) => [child.id, `${child.name} · ${departmentName(child.department_id)}`])], "", true)}
       ${field("Relation", "relation", "Vårdnadshavare", { placeholder: "Vårdnadshavare" })}
       <button class="primary" type="submit" ${state.children.length ? "" : "disabled"}>Skapa inbjudan</button>
-    </form>
-    <article class="card"><h2>Väntande vårdnadshavarinbjudningar</h2>${guardianInvites.length ? `<ul class="invite-list">${guardianInvites.map((invite) => `<li><div><strong>${esc(invite.email)}</strong><span>${esc(invite.relation || "Vårdnadshavare")} · ${esc(invitePlace(invite))} · ${esc(inviteExpiryLabel(invite))}</span></div>${renderInviteActions(invite)}</li>`).join("")}</ul>` : `<p class="form-hint">Inga väntande inbjudningar.</p>`}</article>
-    <article class="card"><h2>Syskonförfrågningar</h2><p class="form-hint">Godkänn bara när du vet att vårdnadshavaren ska kopplas till barnet. Välj ett barn som redan finns, eller låt förfrågan skapa ett nytt.</p>${reviews.length ? reviews.map(renderSiblingReview).join("") : `<p class="form-hint">Inga förfrågningar väntar.</p>`}</article>
-    <article class="card" id="child-info-read"><h2>Barnens uppgifter</h2><p class="form-hint">Vårdnadshavarna äger barnets uppgifter. Personal och administratörer kan läsa dem, till exempel allergier, men inte ändra dem.${state.profile.role === "admin" ? " En administratör kan flytta barnet mellan avdelningar." : ""}</p>${state.children.length ? `<div class="child-facts-grid">${state.children.map((child) => renderChildFacts(child)).join("")}</div>` : `<p class="form-hint">Inga barn registrerade.</p>`}</article>`;
+    </form>`;
 }
+
+function renderPendingGuardianInvites() {
+  const guardianInvites = state.invitations.filter((invite) => invite.role === "parent" && invite.status === "pending");
+  return `<article class="card"><h2>Väntande vårdnadshavarinbjudningar</h2>${guardianInvites.length ? `<ul class="invite-list">${guardianInvites.map((invite) => `<li><div><strong>${esc(invite.email)}</strong><span>${esc(invite.relation || "Vårdnadshavare")} · ${esc(invitePlace(invite))} · ${esc(inviteExpiryLabel(invite))}</span></div>${renderInviteActions(invite)}</li>`).join("")}</ul>` : `<p class="form-hint">Inga väntande inbjudningar.</p>`}</article>`;
+}
+
+function renderSiblingReviews() {
+  const reviews = state.siblingRequests.filter((request) => request.status === "pending");
+  return `<article class="card"><h2>Syskonförfrågningar</h2><p class="form-hint">Godkänn bara när du vet att vårdnadshavaren ska kopplas till barnet. Välj ett barn som redan finns, eller låt förfrågan skapa ett nytt.</p>${reviews.length ? reviews.map(renderSiblingReview).join("") : `<p class="form-hint">Inga förfrågningar väntar.</p>`}</article>`;
+}
+
+function peopleCountStatus(count, empty, one, many) {
+  if (!count) return empty;
+  return count === 1 ? one : `${count} ${many}`;
+}
+
+function renderPeople() {
+  const heading = state.profile.role === "staff" ? "Barn" : "Personer";
+  return renderHubView({
+    hub: "people",
+    heroHtml: `<section class="hero-card"><p class="kicker">Barn och vårdnadshavare</p><h1 class="h1">${heading}</h1><p class="sub">Lägg till barnet på avdelningen. Bjud sedan in varje vårdnadshavare med en egen länk.</p></section>`,
+  });
+}
+
+registerHubCard("people", { id: "lagg-till", icon: "🌱", title: "Lägg till barn", status: () => peopleCountStatus(state.children.length, "Inget barn ännu", "1 barn", "barn"), render: renderChildCreateForm });
+registerHubCard("people", { id: "bjud-in", icon: "✉", title: "Bjud in vårdnadshavare", status: () => "Egen länk per person", render: () => `${renderInviteResult("parent")}${renderGuardianInviteForm()}` });
+registerHubCard("people", { id: "vantande", icon: "…", title: "Väntande inbjudningar", status: () => peopleCountStatus(state.invitations.filter((invite) => invite.role === "parent" && invite.status === "pending").length, "Inga väntande", "1 väntande", "väntande"), render: () => `${renderInviteResult("parent")}${renderPendingGuardianInvites()}` });
+registerHubCard("people", { id: "syskon", icon: "☺", title: "Syskonförfrågningar", status: () => peopleCountStatus(state.siblingRequests.filter((request) => request.status === "pending").length, "Inga förfrågningar", "1 väntande", "väntande"), render: renderSiblingReviews });
 
 function renderOverview() {
   return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">${esc(state.organization?.name || "")}</h1><p class="sub">${esc(roleLabel(state.profile.role))}</p></section><div class="metric-grid"><article class="metric"><strong>${state.schools.length}</strong><span>Skolor</span></article><article class="metric"><strong>${state.departments.length}</strong><span>Avdelningar</span></article><article class="metric"><strong>${state.children.length}</strong><span>Barn</span></article><article class="metric"><strong>${state.invitations.filter((invite) => invite.status === "pending").length}</strong><span>Väntande inbjudningar</span></article></div>
@@ -2211,17 +2518,10 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "assistant-go") {
-    state.view = target.dataset.view;
-    state.assistantOpen = false;
-    state.assistantQuestion = "";
-    state.assistantResponse = null;
-    state.notice = null;
-    render();
-    requestAnimationFrame(() => {
-      const destination = target.dataset.target ? document.getElementById(target.dataset.target) : null;
-      if (destination) destination.scrollIntoView({ behavior: "smooth", block: "start" });
-      else scrollTo({ top: 0, behavior: "smooth" });
-    });
+    const view = target.dataset.view;
+    const scrollTarget = target.dataset.target || "";
+    const section = view === "child" ? (HUB_SECTION_BY_TARGET[scrollTarget] || "") : "";
+    showView(view, { section, scrollTarget: section ? "" : scrollTarget });
     return;
   }
   if (action === "auth-view") {
@@ -2231,13 +2531,16 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "navigate" || action === "account") {
-    state.view = action === "account" ? "account" : target.dataset.view;
-    state.notice = null;
-    state.assistantOpen = false;
-    state.assistantQuestion = "";
-    state.assistantResponse = null;
-    render();
-    scrollTo({ top: 0, behavior: "smooth" });
+    showView(action === "account" ? "account" : target.dataset.view);
+    return;
+  }
+  if (action === "hub-open") {
+    showView(state.view, { section: target.dataset.section || "" });
+    requestAnimationFrame(() => document.querySelector(".hub-back")?.focus());
+    return;
+  }
+  if (action === "hub-back") {
+    closeHub();
     return;
   }
   if (action === "select-child") {
@@ -2246,10 +2549,10 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "bot-reminder") {
-    state.view = target.dataset.view;
-    state.notice = null;
-    render();
-    requestAnimationFrame(() => document.getElementById(target.dataset.target)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    const view = target.dataset.view;
+    const scrollTarget = target.dataset.target || "";
+    const section = view === "child" ? (HUB_SECTION_BY_TARGET[scrollTarget] || "") : "";
+    showView(view, { section, scrollTarget: section ? "" : scrollTarget });
     return;
   }
   if (action === "scroll-section") {
@@ -2478,6 +2781,8 @@ document.body.addEventListener("click", (event) => {
   }
 });
 
+window.addEventListener("popstate", syncHubFromHistory);
+
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape" || !state.assistantOpen) return;
   state.assistantOpen = false;
@@ -2509,5 +2814,6 @@ document.addEventListener("keydown", (event) => {
       state.busy = false;
     }
   }
+  applyInitialHub();
   render();
 })();
