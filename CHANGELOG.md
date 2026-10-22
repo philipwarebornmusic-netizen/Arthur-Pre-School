@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 2026-10-22 — Dela och skriv ut för vårdnadshavare
+
+- På Min dag kan en vårdnadshavare dela och skriva ut en publicerad termin. Delningen är en textsammanfattning och en `.ics`-fil med terminen och stängningsdagarna. Barnets schema och den personliga kalenderlänken följer inte med.
+- Där webbläsaren kan dela filer används det. Annars laddas filen ner och texten kopieras.
+- Inlägg, bifogade bilder och mottagna privata meddelanden får Dela och Skriv ut. En bilaga delas som filen själv, hämtad via den befintliga signerade adressen, inte som en länk.
+- Skriv ut öppnar en utskriftsvy och anropar utskrift direkt från trycket. Ingen ny publik länk skapas och lagringen är oförändrad.
+
 ## 2026-10-22 — Permanent hämtpass
 
 - En vårdnadshavare kan skapa ett permanent hämtpass för en person som redan får hämta. Passet kan också gälla samma person för vårdnadshavarens andra barn. Det kan användas igen tills det återkallas, eller till ett valfritt slutdatum.

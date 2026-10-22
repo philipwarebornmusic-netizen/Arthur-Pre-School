@@ -741,6 +741,144 @@ function storageSignedUrl(signedPath) {
   return rel.startsWith("/storage/v1/") ? `${base}${rel}` : `${base}/storage/v1${rel}`;
 }
 
+const sharedFiles = new Map();
+const sharedFileTasks = new Map();
+let sharedFileGeneration = 0;
+
+function clearSharedFiles() {
+  sharedFileGeneration += 1;
+  sharedFiles.forEach((entry) => URL.revokeObjectURL(entry.objectUrl));
+  sharedFiles.clear();
+  sharedFileTasks.clear();
+}
+
+function shareSupport() {
+  return {
+    hasShare: typeof navigator.share === "function",
+    canShare(data) {
+      try {
+        return typeof navigator.canShare === "function" && navigator.canShare(data);
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+/* navigator.share has to run in the tap itself on iOS Safari. Callers prefetch
+   files first and this function never waits before invoking share. */
+function sharePrepared(payload) {
+  const plan = ArtanShare.chooseSharePlan(payload, shareSupport());
+  if (plan.mode === "share") {
+    const pending = navigator.share(plan.data);
+    plan.downloads.forEach(downloadSharedFile);
+    Promise.resolve(pending).catch((error) => {
+      if (error?.name === "AbortError") return;
+      if (plan.downloads.length) return;
+      deliverShareFallback({ title: payload.title, text: payload.text, downloads: payload.files || [] });
+    });
+    return;
+  }
+  deliverShareFallback(plan);
+}
+
+function deliverShareFallback(plan) {
+  (plan.downloads || []).forEach(downloadSharedFile);
+  const text = plan.text || "";
+  const finish = (message) => {
+    state.notice = { type: "success", text: message };
+    render();
+  };
+  if (!text && !(plan.downloads || []).length) {
+    finish("Det finns inget att dela.");
+    return;
+  }
+  if (text && navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      finish(plan.downloads?.length ? "Filen är nedladdad och texten är kopierad." : "Texten är kopierad.");
+    }).catch(() => {
+      downloadSharedFile(new File([text], ArtanShare.safeFileName(plan.title || "text", "txt"), { type: "text/plain" }));
+      finish("Filen är nedladdad.");
+    });
+    return;
+  }
+  if (text) downloadSharedFile(new File([text], ArtanShare.safeFileName(plan.title || "text", "txt"), { type: "text/plain" }));
+  finish("Filen är nedladdad.");
+}
+
+function downloadSharedFile(file) {
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = file.name || "fil";
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function sharePending(kind) {
+  state.notice = {
+    type: "success",
+    text: kind === "print" ? "Filen förbereds. Tryck på Skriv ut igen." : "Filen förbereds. Tryck på Dela igen.",
+  };
+  render();
+}
+
+function prefetchShareFile(key, url, filename) {
+  if (!key || !url || sharedFiles.has(key) || sharedFileTasks.has(key)) return;
+  const generation = sharedFileGeneration;
+  const task = fetch(url, { credentials: "omit", cache: "force-cache", referrerPolicy: "no-referrer" })
+    .then((response) => {
+      if (!response.ok) throw new Error("Filen kunde inte hämtas.");
+      return response.blob();
+    })
+    .then((blob) => {
+      if (generation !== sharedFileGeneration) return;
+      const type = blob.type || "application/octet-stream";
+      const named = ArtanShare.fileNameForType(filename, type);
+      const file = new File([blob], named, { type });
+      sharedFiles.set(key, { file, objectUrl: URL.createObjectURL(file), type });
+    })
+    .catch(() => { /* A later tap starts a new attempt. */ })
+    .finally(() => sharedFileTasks.delete(key));
+  sharedFileTasks.set(key, task);
+}
+
+function prefetchGuardianAttachments() {
+  if (state.profile?.role !== "parent") return;
+  const live = new Set(state.postImages.map((image) => image.image_id));
+  sharedFiles.forEach((entry, key) => {
+    if (live.has(key)) return;
+    URL.revokeObjectURL(entry.objectUrl);
+    sharedFiles.delete(key);
+  });
+  state.postImages.forEach((image) => {
+    if (!image.image_id || !image.signed_url) return;
+    prefetchShareFile(image.image_id, image.signed_url, ArtanShare.safeFileName(image.alt_text || "bild", "jpg"));
+  });
+}
+
+function cachedShareFile(key) {
+  return sharedFiles.get(key) || null;
+}
+
+function openPrint(html) {
+  const root = document.getElementById("printRoot");
+  if (!root) return;
+  root.innerHTML = html;
+  document.body.dataset.printing = "1";
+  window.print();
+}
+
+window.addEventListener("afterprint", () => {
+  delete document.body.dataset.printing;
+  const root = document.getElementById("printRoot");
+  if (root) root.innerHTML = "";
+});
+
 async function signPostImages(images) {
   if (!images.length) return [];
   const signed = await request("/storage/v1/object/sign/post-images", {
@@ -907,6 +1045,7 @@ async function logout() {
     if (state.session) await request("/auth/v1/logout", { method: "POST" });
   } finally {
     saveSession(null);
+    clearSharedFiles();
     Object.assign(state, {
       profile: null,
       organization: null,
@@ -1147,6 +1286,7 @@ async function loadData() {
 }
 
 function clearLoadedData() {
+  clearSharedFiles();
   Object.assign(state, {
     organization: null,
     schools: [],
@@ -1880,11 +2020,39 @@ function renderWeeklyScheduleForm(term, child) {
   </form>`;
 }
 
+function renderShareActions(kind, id, label) {
+  if (state.profile?.role !== "parent") return "";
+  const name = esc(label || "innehållet");
+  return `<div class="share-actions"><button class="secondary" type="button" data-action="share-${kind}" data-id="${esc(id)}" aria-label="Dela ${name}">Dela</button><button class="secondary" type="button" data-action="print-${kind}" data-id="${esc(id)}" aria-label="Skriv ut ${name}">Skriv ut</button></div>`;
+}
+
+function termShareModel(termId) {
+  const term = state.schoolTerms.find((item) => item.term_id === termId && item.term_status === "published");
+  if (!term || state.profile?.role !== "parent") return null;
+  const child = selectedChild();
+  const department = child && childSchoolId(child) === term.preschool_id
+    ? state.departments.find((item) => item.id === child.department_id)
+    : null;
+  const school = state.schools.find((item) => item.id === term.preschool_id);
+  return {
+    organizationName: state.organization?.name || "",
+    schoolName: school?.name || "",
+    departmentName: department?.name || "",
+    termId: term.term_id,
+    termName: term.term_name,
+    startsOn: term.starts_on,
+    endsOn: term.ends_on,
+    opensAt: String(term.opens_at || "").slice(0, 5),
+    closesAt: String(term.closes_at || "").slice(0, 5),
+    closures: closuresForTerm(term.term_id).map((closure) => ({ date: closure.closure_date, reason: closure.reason })),
+  };
+}
+
 function renderParentTermSchedules(child) {
   const preschoolId = childSchoolId(child);
   const terms = state.schoolTerms.filter((term) => term.preschool_id === preschoolId && term.term_status === "published");
   if (!terms.length) return `<section><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${emptyState("Ingen publicerad termin", "När förskolan publicerar terminen visas öppettider, stängningsdagar och veckoschema här.")}</section>`;
-  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${terms.map((term) => `<article class="card term-card"><p class="kicker">Publicerad</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p><h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}</article>${renderWeeklyScheduleForm(term, child)}`).join("")}</section>`;
+  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${terms.map((term) => `<article class="card term-card" data-term-id="${esc(term.term_id)}"><p class="kicker">Publicerad</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p><h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}${renderShareActions("term", term.term_id, term.term_name)}<p class="form-hint">Dela skickar terminen och stängningsdagarna. Barnets schema och kalenderlänken följer inte med.</p></article>${renderWeeklyScheduleForm(term, child)}`).join("")}</section>`;
 }
 
 function parseClosureLines(value) {
@@ -2298,8 +2466,15 @@ function renderPost(post) {
   const comments = commentsFor(post.id);
   const images = postImagesFor(post.id);
   const canDelete = post.author_id === state.profile.id || state.profile.role === "admin";
+  const gallery = images.length ? `<div class="post-image-gallery count-${Math.min(images.length, 4)}">${images.map((image) => {
+    const picture = image.signed_url
+      ? `<img src="${esc(image.signed_url)}" alt="${esc(image.alt_text)}" width="${image.width}" height="${image.height}" loading="lazy">`
+      : `<div class="post-image-missing" role="img" aria-label="${esc(image.alt_text)}">Bilden kunde inte laddas</div>`;
+    return `<figure class="post-share-figure">${picture}${renderShareActions("attachment", image.image_id, image.alt_text || post.title)}</figure>`;
+  }).join("")}</div>` : "";
   return `<article class="card school-post"><p class="kicker">Från skolan · ${esc(scope || "Skolan")} · ${esc(formatTimestamp(post.created_at))}</p><h3>${esc(post.title)}</h3><p class="pre-line">${esc(post.body)}</p>
-    ${images.length ? `<div class="post-image-gallery count-${Math.min(images.length, 4)}">${images.map((image) => image.signed_url ? `<img src="${esc(image.signed_url)}" alt="${esc(image.alt_text)}" width="${image.width}" height="${image.height}" loading="lazy">` : `<div class="post-image-missing" role="img" aria-label="${esc(image.alt_text)}">Bilden kunde inte laddas</div>`).join("")}</div>` : ""}
+    ${renderShareActions("post", post.id, post.title)}
+    ${gallery}
     ${canDelete ? `<button class="link danger-link post-delete" type="button" data-action="delete-post" data-id="${esc(post.id)}">Ta bort inlägget</button>` : ""}
     <section class="post-comments"><h4>Kommentarer</h4>${comments.length ? `<ul>${comments.map(renderPostComment).join("")}</ul>` : `<p class="form-hint">Inga kommentarer ännu.</p>`}
       <form class="comment-form" data-form="post-comment" data-post-id="${esc(post.id)}">${field("Skriv en kommentar", "body", "", { required: true, maxlength: "2000" })}<button class="secondary" type="submit">Kommentera</button></form>
@@ -2739,7 +2914,7 @@ function renderPrivateMessaging() {
     </form>
     ${messages.length ? `<div class="private-message-list">${messages.map((message) => {
       const recipientLabel = message.recipientNames?.join(", ") || message.recipient_name;
-      return `<article class="card private-message ${message.sent ? "sent" : "received"}"><p class="kicker">${message.sent ? `Till ${esc(recipientLabel)}` : `Från ${esc(message.sender_name)}`} · ${esc(formatTimestamp(message.created_at))}</p><p>${esc(message.body)}</p></article>`;
+      return `<article class="card private-message ${message.sent ? "sent" : "received"}"><p class="kicker">${message.sent ? `Till ${esc(recipientLabel)}` : `Från ${esc(message.sender_name)}`} · ${esc(formatTimestamp(message.created_at))}</p><p>${esc(message.body)}</p>${message.sent ? "" : renderShareActions("message", message.message_id, message.sender_name)}</article>`;
     }).join("")}</div>` : emptyState("Inga privata meddelanden", "När någon skriver privat visas meddelandet här.")}</section>`;
 }
 
@@ -3759,6 +3934,7 @@ function render() {
   screen.innerHTML = (views[state.view] || fallback)();
   renderNav();
   renderAssistant();
+  prefetchGuardianAttachments();
 }
 
 async function runMutation(work, successText = "Sparat.") {
@@ -4294,10 +4470,122 @@ document.body.addEventListener("change", (event) => {
   }
 });
 
+function postShareText(post) {
+  const scope = post.child_id ? state.children.find((child) => child.id === post.child_id)?.name : departmentName(post.department_id);
+  return ArtanShare.buildTextShare({
+    title: post.title,
+    kicker: `Från skolan · ${scope || "Skolan"} · ${formatTimestamp(post.created_at)}`,
+    body: post.body,
+  });
+}
+
+function readyAttachmentFiles(images, kind) {
+  const files = [];
+  for (const image of images) {
+    const cached = image.signed_url ? cachedShareFile(image.image_id) : null;
+    if (!cached) {
+      prefetchGuardianAttachments();
+      sharePending(kind);
+      return null;
+    }
+    files.push(cached);
+  }
+  return files;
+}
+
+function runShareAction(kind, what, id) {
+  if (state.profile?.role !== "parent") return;
+  if (what === "term") {
+    try {
+      const built = ArtanShare.buildTermShare(termShareModel(id));
+      if (kind === "print") {
+        openPrint(built.print);
+        return;
+      }
+      sharePrepared({
+        title: built.title,
+        text: built.text,
+        files: [new File([built.ics], built.filename, { type: "text/calendar" })],
+      });
+    } catch (error) {
+      state.notice = { type: "error", text: error.message };
+      render();
+    }
+    return;
+  }
+  if (what === "post") {
+    const post = state.posts.find((item) => item.id === id);
+    if (!post) return;
+    const textShare = postShareText(post);
+    const images = postImagesFor(post.id).filter((image) => image.signed_url);
+    if (kind === "print") {
+      const cached = images.length ? readyAttachmentFiles(images, "print") : [];
+      if (cached === null) return;
+      openPrint(ArtanShare.printDocument({
+        kind: "post",
+        kicker: `Från skolan · ${post.child_id ? state.children.find((child) => child.id === post.child_id)?.name || "Skolan" : departmentName(post.department_id)} · ${formatTimestamp(post.created_at)}`,
+        title: post.title,
+        body: post.body,
+        images: images.map((image, index) => ({ url: cached[index].objectUrl, alt: image.alt_text || post.title })),
+      }));
+      return;
+    }
+    if (!images.length) {
+      sharePrepared({ title: textShare.title, text: textShare.text, files: [textShare.file] });
+      return;
+    }
+    const cached = readyAttachmentFiles(images, "share");
+    if (!cached) return;
+    sharePrepared({ title: textShare.title, text: textShare.text, files: cached.map((entry) => entry.file) });
+    return;
+  }
+  if (what === "attachment") {
+    const image = state.postImages.find((item) => item.image_id === id);
+    if (!image?.signed_url) {
+      state.notice = { type: "error", text: "Filen kunde inte laddas." };
+      render();
+      return;
+    }
+    const cached = readyAttachmentFiles([image], kind);
+    if (!cached) return;
+    const entry = cached[0];
+    if (kind === "print") {
+      openPrint(ArtanShare.printDocument({
+        kind: entry.type === "application/pdf" ? "pdf" : "image",
+        title: entry.file.name,
+        alt: image.alt_text || entry.file.name,
+        url: entry.objectUrl,
+      }));
+      return;
+    }
+    sharePrepared({ title: entry.file.name, text: "", files: [entry.file] });
+    return;
+  }
+  if (what === "message") {
+    const message = state.privateMessages.find((item) => item.message_id === id && item.sender_id !== state.profile.id);
+    if (!message) return;
+    const textShare = ArtanShare.buildTextShare({
+      title: `Meddelande från ${message.sender_name}`,
+      kicker: `${formatTimestamp(message.created_at)}`,
+      body: message.body,
+    });
+    if (kind === "print") {
+      openPrint(textShare.print);
+      return;
+    }
+    sharePrepared({ title: textShare.title, text: textShare.text, files: [textShare.file] });
+  }
+}
+
 document.body.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
+  if (/^(share|print)-(term|post|attachment|message)$/.test(action)) {
+    const [kind, what] = action.split("-");
+    runShareAction(kind, what, target.dataset.id);
+    return;
+  }
   if (action === "assistant-toggle" || action === "assistant-close") {
     state.assistantOpen = action === "assistant-toggle" ? !state.assistantOpen : false;
     if (!state.assistantOpen) {
