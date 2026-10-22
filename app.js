@@ -304,14 +304,16 @@ function parentReminders(child) {
     .filter((item) => !item.complete)
     .forEach((item) => reminders.push({ text: item.reminder, view: "child", target: item.id }));
   if ((state.incidentCopies || []).some((copy) => copy.child_name === child.name && !copy.acknowledged_at)) {
-    reminders.unshift({ text: "Bekräfta att du har läst informationen från förskolan.", view: "home", target: "incident-copies" });
+    reminders.unshift({ text: "Bekräfta att du har läst informationen från förskolan.", view: "child", target: "incident-copies" });
   }
   return reminders.slice(0, 3);
 }
 
 // Card hubs. One registerHubCard call is one section.
 // Barnet: Grunduppgifter, Hälsa, Kontaktpersoner, Samtycken, Syskon, Hämtlista,
-// Profilbild, Klasslista (samtycke) and Kalender. Klasslista stays its own nav view.
+// Profilbild, Klasslista (samtycke), Kalender, and Information att läsa when a
+// guardian copy is waiting. Klasslista stays its own nav view.
+// Personer/Barn includes Incidentrapporter for staff and administrators.
 // The Terminer card wraps renderTermManager, including the term-manager toggle.
 // Närvaro keeps the pickup scan. No extra card for that toggle or the scan.
 const hubCards = { child: [], schools: [], people: [] };
@@ -322,6 +324,7 @@ const HUB_SECTION_BY_TARGET = {
   "child-health": "halsa",
   "child-contacts": "kontakter",
   "child-consents": "samtycken",
+  "incident-copies": "information",
 };
 
 function registerHubCard(hub, card) {
@@ -1799,10 +1802,31 @@ function renderPickupNotices() {
   return renderNoticeList("Hämtning", "Senaste hämtningar", state.pickupNotices);
 }
 
-function renderIncidentCopies() {
+function copiesForChild(child) {
   const copies = state.incidentCopies || [];
+  if (!child) return copies;
+  return copies.filter((copy) => copy.child_name === child.name);
+}
+
+function renderIncidentCopies(copies = state.incidentCopies || []) {
   if (!copies.length) return "";
   return `<section class="card" id="incident-copies"><p class="kicker">Från förskolan</p><h2>Information att läsa</h2><p class="form-hint">Texten gäller ditt barn. Andra barn nämns som ett annat barn. Bekräftelsen är att du har läst, inte en signatur.</p>${copies.map((copy) => `<article class="incident-copy"><h3>${esc(copy.child_name)}</h3><p class="pre-line">${esc(copy.body)}</p>${copy.acknowledged_at ? `<p class="form-hint">Du bekräftade ${esc(formatTimestamp(copy.acknowledged_at))}.</p>` : `<button class="primary" type="button" data-action="acknowledge-incident" data-id="${esc(copy.copy_id)}">Jag har läst</button>`}</article>`).join("")}</section>`;
+}
+
+function incidentCopyStatus() {
+  if (!state.incidentReady) return "Inte aktiverad";
+  const copies = copiesForChild(selectedChild());
+  const unread = copies.filter((copy) => !copy.acknowledged_at).length;
+  if (!copies.length) return "Inget att läsa";
+  if (!unread) return "Läst";
+  return unread === 1 ? "1 att läsa" : `${unread} att läsa`;
+}
+
+function renderChildIncidentCopies() {
+  if (!state.incidentReady) {
+    return `<section class="card" id="incident-copies"><h2>Information att läsa</h2><p class="form-hint">Avvikelserapporterna är inte aktiverade i databasen ännu.</p></section>`;
+  }
+  return renderIncidentCopies(copiesForChild(selectedChild())) || `<section class="card" id="incident-copies"><h2>Information att läsa</h2><p class="form-hint">Ingen information från förskolan väntar på det här barnet.</p></section>`;
 }
 
 function renderPickupBlocks() {
@@ -2358,6 +2382,7 @@ registerHubCard("child", { id: "hamtlista", icon: "◎", title: "Hämtlista", st
 registerHubCard("child", { id: "profilbild", icon: "☺", title: "Profilbild", status: childPhotoStatus, render: () => renderChildPhoto(selectedChild()) });
 registerHubCard("child", { id: "klasslista", icon: "☰", title: "Klasslista", status: childClassListStatus, render: () => renderClassListConsent(selectedChild()) });
 registerHubCard("child", { id: "kalender", icon: "▦", title: "Kalender", status: calendarHubStatus, render: () => renderTermCalendarCard() });
+registerHubCard("child", { id: "information", icon: "⚑", title: "Information att läsa", status: incidentCopyStatus, visible: () => Boolean(state.incidentReady) && copiesForChild(selectedChild()).length > 0, render: renderChildIncidentCopies });
 
 function groupedPrivateMessages() {
   const cards = [];
@@ -2871,6 +2896,7 @@ registerHubCard("people", { id: "bjud-in", icon: "✉", title: "Bjud in vårdnad
 registerHubCard("people", { id: "vantande", icon: "…", title: "Väntande inbjudningar", status: () => peopleCountStatus(state.invitations.filter((invite) => invite.role === "parent" && invite.status === "pending").length, "Inga väntande", "1 väntande", "väntande"), render: () => `${renderInviteResult("parent")}${renderPendingGuardianInvites()}` });
 registerHubCard("people", { id: "syskon", icon: "☺", title: "Syskonförfrågningar", status: () => peopleCountStatus(state.siblingRequests.filter((request) => request.status === "pending").length, "Inga förfrågningar", "1 väntande", "väntande"), render: renderSiblingReviews });
 registerHubCard("people", { id: "sparrar", icon: "⛔", title: "Får ej hämta", status: pickupBlockStatus, visible: () => state.profile.role === "admin" && state.pickupReady, render: renderPickupBlocks });
+registerHubCard("people", { id: "incidentrapporter", icon: "⚑", title: "Incidentrapporter", status: incidentHubStatus, visible: () => state.profile.role === "admin" || state.profile.role === "staff", render: renderIncidentBody });
 
 function renderOverview() {
   return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">${esc(state.organization?.name || "")}</h1><p class="sub">${esc(roleLabel(state.profile.role))}</p></section><div class="metric-grid"><article class="metric"><strong>${state.schools.length}</strong><span>Skolor</span></article><article class="metric"><strong>${state.departments.length}</strong><span>Avdelningar</span></article><article class="metric"><strong>${state.children.length}</strong><span>Barn</span></article><article class="metric"><strong>${state.invitations.filter((invite) => invite.status === "pending").length}</strong><span>Väntande inbjudningar</span></article></div>
@@ -3071,19 +3097,40 @@ function renderIncidentDetail() {
   <section class="card"><h2>Händelselogg</h2><ul class="incident-log">${(detail.events || []).map((event) => `<li><strong>${esc(INCIDENT_EVENTS[event.event_kind] || event.event_kind)}</strong><span>${esc(formatTimestamp(event.created_at))}</span><p class="pre-line">${esc(event.detail)}</p></li>`).join("") || `<li>Ingen händelse ännu.</li>`}</ul></section>`;
 }
 
-function renderIncidents() {
+function keepIncidentPlace() {
+  if (state.view === "people" && state.hubSection === "incidentrapporter") return;
+  state.view = "incidents";
+  state.hubSection = "";
+}
+
+function incidentHubStatus() {
+  if (!state.incidentReady) return "Inte aktiverad";
+  const open = (state.incidents || []).filter((report) => report.status !== "closed").length;
+  if (!open) return "Inga öppna";
+  return open === 1 ? "1 öppen" : `${open} öppna`;
+}
+
+function renderIncidentBody() {
   const ready = state.incidentReady ? "" : `<p class="notice error">Avvikelserapporterna är inte aktiverade i databasen ännu.</p>`;
   if (state.incidentScreen === "form") {
-    return `${noticeHtml()}<section class="hero-card"><p class="kicker">Avvikelser</p><h1 class="h1">${state.incidentId ? "Utkast" : "Ny rapport"}</h1></section>${ready}<button class="secondary no-print" type="button" data-action="incident-list">Tillbaka till listan</button>${state.incidentReady ? renderIncidentForm() : ""}`;
+    return `${ready}<button class="secondary no-print" type="button" data-action="incident-list">Tillbaka till listan</button>${state.incidentReady ? renderIncidentForm() : ""}`;
   }
   if (state.incidentScreen === "detail") {
-    return `${noticeHtml()}<section class="hero-card"><div class="incident-head"><div><p class="kicker">Avvikelser</p><h1 class="h1">Rapport</h1></div><button class="secondary no-print" type="button" data-action="print-incident">Skriv ut</button></div></section>${ready}<button class="secondary no-print" type="button" data-action="incident-list">Tillbaka till listan</button>${renderIncidentDetail()}`;
+    return `${ready}<div class="incident-head"><button class="secondary no-print" type="button" data-action="print-incident">Skriv ut</button></div><button class="secondary no-print" type="button" data-action="incident-list">Tillbaka till listan</button>${renderIncidentDetail()}`;
   }
   const notices = (state.notices || []).filter((notice) => notice.kind === "incident_submitted");
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Avvikelser</p><h1 class="h1">Rapporter</h1><p class="sub">Olycksfall, tillbud, kränkande behandling och övriga avvikelser. Vårdnadshavare ser inte själva rapporten.</p></section>${ready}
+  return `${ready}
     ${renderNoticeList("Till dig", "Nya inskick", notices)}
     ${state.incidentReady ? `<button class="primary no-print" type="button" data-action="incident-new">Ny rapport</button>` : ""}
     <div class="incident-list">${(state.incidents || []).map((report) => `<button class="card incident-row" type="button" data-action="open-incident" data-id="${esc(report.report_id)}"><span class="incident-status">${esc(INCIDENT_STATUS[report.status] || "")}</span><strong>${esc(incidentTypeLabel(report.incident_type))}</strong><span>${esc(report.place)} · ${esc(report.department_name || "")}</span><small>${esc(formatTimestamp(report.occurred_at))} · ${report.child_count || 0} barn${report.mine ? " · min" : ""}</small></button>`).join("") || `<p class="form-hint">Inga rapporter är synliga för dig.</p>`}</div>`;
+}
+
+function renderIncidents() {
+  const heading = state.incidentScreen === "form"
+    ? (state.incidentId ? "Utkast" : "Ny rapport")
+    : state.incidentScreen === "detail" ? "Rapport" : "Rapporter";
+  const sub = state.incidentScreen === "list" ? `<p class="sub">Olycksfall, tillbud, kränkande behandling och övriga avvikelser. Vårdnadshavare ser inte själva rapporten.</p>` : "";
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Avvikelser</p><h1 class="h1">${heading}</h1>${sub}</section>${renderIncidentBody()}`;
 }
 
 function renderNav() {
@@ -3194,7 +3241,7 @@ document.body.addEventListener("submit", (event) => {
     runMutation(async () => {
       const saved = await rpc("save_incident_draft", incidentDraftArgs(form, values));
       const id = typeof saved === "string" ? saved : form.dataset.reportId;
-      state.view = "incidents";
+      keepIncidentPlace();
       state.incidentId = id;
       if (intent === "submit") await rpc("submit_incident", { target_report_id: id });
       state.incidentScreen = intent === "submit" ? "detail" : "form";
@@ -3696,6 +3743,11 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "hub-open") {
+    if (target.dataset.section === "incidentrapporter") {
+      state.incidentScreen = "list";
+      state.incidentId = null;
+      state.incidentDetail = null;
+    }
     showView(state.view, { section: target.dataset.section || "" });
     requestAnimationFrame(() => document.querySelector(".hub-back")?.focus());
     return;
@@ -3781,7 +3833,7 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "incident-new") {
-    state.view = "incidents";
+    keepIncidentPlace();
     state.incidentScreen = "form";
     state.incidentId = null;
     state.incidentDetail = null;
@@ -3791,7 +3843,7 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "incident-list") {
-    state.view = "incidents";
+    keepIncidentPlace();
     state.incidentScreen = "list";
     state.incidentId = null;
     state.incidentDetail = null;
@@ -3801,7 +3853,7 @@ document.body.addEventListener("click", (event) => {
   }
   if (action === "open-incident") {
     runMutation(async () => {
-      state.view = "incidents";
+      keepIncidentPlace();
       await openIncident(target.dataset.id);
     }, "");
     return;

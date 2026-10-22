@@ -8,6 +8,8 @@
 - En vårdnadshavarkopia skickas per barn och visar bara det barnets namn. Andra barn står som ett annat barn. Olycksfall nämner kommunens olycksfallsförsäkring. Vårdnadshavaren bekräftar med Jag har läst. Påminnelser stannar i appen.
 - Meddelanden i appen återanvänder hämtpassens meddelandetabell. Administratören aviseras vid inskickning, vårdnadshavaren när kopian skickas och igen om den inte är läst. En händelselogg följer rapporten, och administratören kan skriva ut underlaget för huvudmannen.
 - Migreringen `supabase/012_incident_reports.sql` ska köras för hand. Den är inte körd mot produktion. Den är oberoende av `011_guardian_owned_child_info.sql`.
+- Personal och administratörer öppnar **Incidentrapporter** som ett kort under Personer/Barn. Menyn Avvikelse finns kvar.
+- En vårdnadshavare ser kopian och knappen Jag har läst på Min dag, och som kortet Information att läsa under Barnet när en kopia finns för det valda barnet.
 
 ## 2026-10-22 — Kortöversikt i stället för långa menysidor
 
