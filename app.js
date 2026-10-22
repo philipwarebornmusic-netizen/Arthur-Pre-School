@@ -34,6 +34,9 @@ const state = {
   onboarding: null,
   schoolCodeResult: null,
   migrationReady: true,
+  termManagersReady: true,
+  termPermissions: [],
+  termManagers: [],
   selectedChildId: null,
   view: inviteFromUrl ? "join" : "home",
   authView: inviteFromUrl ? "register" : "login",
@@ -521,6 +524,9 @@ async function logout() {
       inviteResult: null,
       inviteCode: "",
       migrationReady: true,
+      termManagersReady: true,
+      termPermissions: [],
+      termManagers: [],
       termEditor: null,
       selectedChildId: null,
       view: "home",
@@ -569,7 +575,8 @@ async function loadData() {
 
   const organizationId = encodeURIComponent(state.profile.organization_id);
   const date = todayIso();
-  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, schoolTerms, termClosures, weeklySchedules, posts, postImages, invitations, postComments, communityMembers, guardianMessageTargets, privateMessages, playdateRequests, birthdayCandidates, birthdayInvitations, siblingRequests, joinRequests, staffMembers] = await Promise.all([
+  state.termManagersReady = true;
+  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, schoolTerms, termClosures, weeklySchedules, posts, postImages, invitations, postComments, communityMembers, guardianMessageTargets, privateMessages, playdateRequests, birthdayCandidates, birthdayInvitations, siblingRequests, joinRequests, staffMembers, termPermissions, termManagers] = await Promise.all([
     request(`/rest/v1/organizations?select=id,name,type,created_at&id=eq.${organizationId}&limit=1`),
     request(`/rest/v1/preschools?select=id,organization_id,name,phone,address,postal_code,city,opening_hours,created_at&organization_id=eq.${organizationId}&order=name.asc`),
     request("/rest/v1/departments?select=id,preschool_id,name,created_at&order=name.asc"),
@@ -595,6 +602,8 @@ async function loadData() {
     optionalRpc("list_sibling_requests"),
     state.profile.role === "admin" ? optionalRpc("list_join_requests") : Promise.resolve([]),
     state.profile.role === "admin" ? optionalRpc("list_staff_members") : Promise.resolve([]),
+    state.profile.role === "admin" || state.profile.role === "staff" ? optionalTermRpc("my_term_permissions") : Promise.resolve([]),
+    state.profile.role === "admin" ? optionalTermRpc("list_term_managers") : Promise.resolve([]),
   ]);
 
   state.organization = organizations[0] || null;
@@ -609,12 +618,15 @@ async function loadData() {
   state.schoolTerms = schoolTerms || [];
   state.termClosures = termClosures || [];
   state.weeklySchedules = weeklySchedules || [];
+  state.termPermissions = termPermissions || [];
+  state.termManagers = termManagers || [];
   if (state.profile.role !== "admin") {
-    const publishedIds = new Set(state.schoolTerms.filter((term) => term.term_status === "published").map((term) => term.term_id));
-    state.schoolTerms = state.schoolTerms.filter((term) => publishedIds.has(term.term_id));
-    state.termClosures = state.termClosures.filter((closure) => publishedIds.has(closure.term_id));
-    state.weeklySchedules = state.weeklySchedules.filter((schedule) => publishedIds.has(schedule.term_id));
-    state.termEditor = null;
+    const managedSchoolIds = new Set(state.termPermissions.map((permission) => permission.preschool_id));
+    const visibleIds = new Set(state.schoolTerms.filter((term) => term.term_status === "published" || managedSchoolIds.has(term.preschool_id)).map((term) => term.term_id));
+    state.schoolTerms = state.schoolTerms.filter((term) => visibleIds.has(term.term_id));
+    state.termClosures = state.termClosures.filter((closure) => visibleIds.has(closure.term_id));
+    state.weeklySchedules = state.weeklySchedules.filter((schedule) => visibleIds.has(schedule.term_id));
+    if (!state.termEditor || !managedSchoolIds.has(state.termEditor.preschoolId)) state.termEditor = null;
   }
   state.posts = posts;
   state.postImages = await signPostImages(postImages);
@@ -667,8 +679,30 @@ function clearLoadedData() {
     siblingRequests: [],
     joinRequests: [],
     staffMembers: [],
+    termPermissions: [],
+    termManagers: [],
+    termManagersReady: true,
     selectedChildId: null,
   });
+}
+
+function missingTermRpc(error) {
+  return /schema cache|could not find the function|pgrst202/i.test(error.message);
+}
+
+function optionalTermRpc(name) {
+  return rpc(name).catch((error) => {
+    if (missingTermRpc(error)) {
+      state.termManagersReady = false;
+      return [];
+    }
+    throw error;
+  });
+}
+
+function canManageSchoolTerms(preschoolId) {
+  if (state.profile?.role === "admin") return true;
+  return state.termPermissions.some((permission) => permission.preschool_id === preschoolId);
 }
 
 async function acceptInvitation(code) {
@@ -1574,7 +1608,20 @@ function renderAttendance() {
       ]).join(" · ");
       return `<article class="card attendance-row"><div class="attendance-child"><div><strong>${esc(child.name)}</strong><span>${esc(departmentName(child.department_id))}${plan ? ` · ${esc(plan)}` : ""}</span></div><span class="attendance-state ${esc(status)}">${esc(actualTime)}</span></div><div class="attendance-actions"><button class="primary attendance-primary" type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="${primaryTransition}">${primaryLabel}</button>${active ? "" : `<div class="attendance-secondary" role="group" aria-label="Markera frånvaro för ${esc(child.name)}"><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_sick" aria-pressed="${status === "absent_sick"}">Sjuk</button><button type="button" data-action="staff-attendance" data-child-id="${esc(child.id)}" data-transition="absent_leave" aria-pressed="${status === "absent_leave"}">Ledig</button></div>`}</div></article>`;
     }).join("")}</div>` : emptyState("Inga barn", "Du behöver kopplas till en avdelning innan närvarolistan visas.")}
-    ${state.profile.role === "staff" ? renderPublishedTermReadOnly() : ""}`;
+    ${state.profile.role === "staff" ? renderStaffTermSection() : ""}`;
+}
+
+function renderStaffTermSection() {
+  const managedSchools = state.schools.filter((school) => canManageSchoolTerms(school.id));
+  if (!managedSchools.length) return renderPublishedTermReadOnly();
+  const managedIds = new Set(managedSchools.map((school) => school.id));
+  const otherCards = state.schoolTerms
+    .filter((term) => term.term_status === "published" && !managedIds.has(term.preschool_id))
+    .map((term) => {
+      const school = state.schools.find((item) => item.id === term.preschool_id);
+      return `<article class="card term-card" data-term-id="${esc(term.term_id)}" data-term-status="published"><p class="kicker">${esc(school?.name || "Förskola")}</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p><h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}</article>`;
+    }).join("");
+  return `<section id="term-overview" class="term-overview term-staff-manage"><div class="section-head"><div><p class="kicker">Termin</p><h2>Terminsschema</h2><p class="form-hint">Du kan skapa, ändra och publicera terminer för din skola.</p></div></div>${managedSchools.map((school) => `<div class="term-managed-school"><p class="kicker">${esc(school.name)}</p>${renderTermManager(school)}</div>`).join("")}${otherCards}</section>`;
 }
 
 function renderPublishedTermReadOnly() {
@@ -1590,7 +1637,7 @@ function renderPublishedTermReadOnly() {
       <h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}
     </article>`;
   }).join("");
-  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Publicerad termin</h2></div></div>${cards || emptyState("Ingen publicerad termin", "När en administratör publicerar terminen visas datum, öppettider och stängningsdagar här.")}</section>`;
+  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Publicerad termin</h2></div></div>${cards || emptyState("Ingen publicerad termin", "När terminen publiceras visas datum, öppettider och stängningsdagar här.")}</section>`;
 }
 
 function editableDepartments() {
@@ -1641,10 +1688,16 @@ function renderSchoolCodeResult() {
 function staffGroups() {
   const groups = new Map();
   state.staffMembers.forEach((row) => {
-    if (!groups.has(row.staff_id)) groups.set(row.staff_id, { id: row.staff_id, name: row.staff_name, email: row.staff_email, departments: [] });
-    if (row.department_name) groups.get(row.staff_id).departments.push(`${row.preschool_name} · ${row.department_name}`);
+    if (!groups.has(row.staff_id)) groups.set(row.staff_id, { id: row.staff_id, name: row.staff_name, email: row.staff_email, departments: [], schools: [] });
+    const group = groups.get(row.staff_id);
+    if (row.department_name) group.departments.push(`${row.preschool_name} · ${row.department_name}`);
+    if (row.preschool_name && !group.schools.includes(row.preschool_name)) group.schools.push(row.preschool_name);
   });
   return [...groups.values()];
+}
+
+function staffManagesTerms(staffId) {
+  return state.termManagers.some((grant) => grant.staff_profile_id === staffId);
 }
 
 function termsForSchool(preschoolId) {
@@ -1670,7 +1723,7 @@ function renderManagedTerm(term) {
     <p class="kicker">${draft ? "Utkast" : "Publicerad"}</p>
     <h3>${esc(term.term_name)}</h3>
     <p>${esc(termDateSummary(term))}</p>
-    <p class="form-hint">${draft ? "Bara administratörer ser utkastet. Personal och vårdnadshavare ser terminen när du publicerar den." : "Personal och vårdnadshavare ser den här terminen, inklusive senare ändringar."}</p>
+    <p class="form-hint">${draft ? "Utkast syns bara för den som får hantera terminsschemat. Övrig personal och vårdnadshavare ser terminen när den publiceras." : "Personal och vårdnadshavare ser den här terminen, inklusive senare ändringar."}</p>
     <h4>Stängningsdagar</h4>${renderTermClosures(term.term_id)}
     ${conflictList}
     <div class="actions">
@@ -1731,7 +1784,14 @@ function renderStaffAccess() {
       return `<form class="form-stack join-request" data-form="review-only" data-request-id="${esc(request.request_id)}"><p><strong>${esc(request.applicant_name)}</strong><span class="meta">${esc(request.applicant_email)} · ${esc(request.preschool_name)} · ${esc(formatTimestamp(request.created_at))}</span></p>${options.length ? selectField("Avdelning", "department_id", options, "", true) : `<p class="notice error">Skapa en avdelning på skolan först.</p>`}<div class="stack-actions"><button class="primary" type="button" data-action="approve-join" data-id="${esc(request.request_id)}" ${options.length ? "" : "disabled"}>Godkänn</button><button class="secondary" type="button" data-action="reject-join" data-id="${esc(request.request_id)}">Avslå</button></div></form>`;
     }).join("") : `<p class="form-hint">Inga väntande ansökningar. Den som väntar ser inga barn eller meddelanden.</p>`}
     <h3>Aktiv personal</h3>
-    ${groups.length ? `<ul class="invite-list">${groups.map((person) => `<li><div><strong>${esc(person.name)}</strong><span>${esc(person.email)}${person.departments.length ? ` · ${esc(person.departments.join(", "))}` : ""}</span></div><div class="invite-actions"><button class="link danger-link" type="button" data-action="remove-staff" data-id="${esc(person.id)}" data-name="${esc(person.name)}">Ta bort åtkomst</button></div></li>`).join("")}</ul>` : `<p class="form-hint">Ingen personal är kopplad ännu.</p>`}
+    ${state.termManagersReady ? "" : `<p class="form-hint">Behörigheten att låta personal hantera terminer är inte aktiverad i databasen ännu.</p>`}
+    ${groups.length ? `<ul class="invite-list">${groups.map((person) => {
+      const schoolHint = person.schools.length ? `Gäller ${person.schools.join(", ")}.` : "Personen behöver vara kopplad till en skola.";
+      const toggle = state.termManagersReady
+        ? `<label class="check term-manager-toggle"><input type="checkbox" data-action="set-term-manager" data-id="${esc(person.id)}" data-name="${esc(person.name)}" ${staffManagesTerms(person.id) ? "checked" : ""} ${person.schools.length ? "" : "disabled"}> Får hantera terminsschema</label><span class="form-hint">${esc(schoolHint)}</span>`
+        : "";
+      return `<li><div><strong>${esc(person.name)}</strong><span>${esc(person.email)}${person.departments.length ? ` · ${esc(person.departments.join(", "))}` : ""}</span>${toggle}</div><div class="invite-actions"><button class="link danger-link" type="button" data-action="remove-staff" data-id="${esc(person.id)}" data-name="${esc(person.name)}">Ta bort åtkomst</button></div></li>`;
+    }).join("")}</ul>` : `<p class="form-hint">Ingen personal är kopplad ännu.</p>`}
   </section>`;
 }
 
@@ -1985,7 +2045,7 @@ document.body.addEventListener("submit", (event) => {
       return;
     }
     if (type === "term-save") {
-      if (state.profile.role !== "admin") throw new Error("Bara administratörer kan hantera terminer.");
+      if (!canManageSchoolTerms(form.dataset.preschoolId)) throw new Error("Du saknar behörighet att hantera terminer.");
       await rpc("save_school_term", {
         target_term_id: form.dataset.termId || null,
         target_preschool_id: form.dataset.preschoolId,
@@ -2294,7 +2354,7 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "edit-term") {
-    if (state.profile.role !== "admin") return;
+    if (!canManageSchoolTerms(target.dataset.preschoolId)) return;
     state.termEditor = { preschoolId: target.dataset.preschoolId, termId: target.dataset.id };
     state.notice = null;
     render();
@@ -2308,11 +2368,26 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "publish-term") {
-    if (state.profile.role !== "admin") return;
+    const publishedTerm = state.schoolTerms.find((term) => term.term_id === target.dataset.id);
+    if (!publishedTerm || !canManageSchoolTerms(publishedTerm.preschool_id)) return;
     runMutation(async () => {
       await rpc("publish_school_term", { target_term_id: target.dataset.id });
       await loadData();
     }, "Terminen är publicerad.");
+    return;
+  }
+  if (action === "set-term-manager") {
+    if (state.profile?.role !== "admin" || target.disabled) return;
+    const enabled = target.checked;
+    const name = target.dataset.name || "personen";
+    if (!enabled && !window.confirm(`Ta bort behörigheten att hantera terminsschemat för ${name}?`)) {
+      target.checked = true;
+      return;
+    }
+    runMutation(async () => {
+      await rpc("set_term_manager", { staff_profile_id: target.dataset.id, enabled });
+      await loadData();
+    }, enabled ? `${name} kan nu hantera terminsschemat.` : "Behörigheten är borttagen.");
     return;
   }
   if (action === "staff-attendance") {
