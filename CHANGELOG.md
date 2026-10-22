@@ -1,8 +1,18 @@
 # Ändringslogg
 
-## 2026-10-22 — Signerade bildadresser i inlägg
+## 2026-10-22 — Signerade bildadresser
 
-- En signerad länk från lagringen saknade `/storage/v1`, så bilder i inlägg blev 404. Adressen byggs nu med den sökvägen.
+- Profilbilder och bilder i inlägg får `/storage/v1` i den signerade adressen, så att de inte blir 404.
+- Efter en sparad profilbild signeras filen om, så att den gamla bilden inte ligger kvar.
+- Om bilden inte kan laddas visas barnets initialer.
+
+## 2026-10-22 — Klasslista och profilbilder
+
+- Vårdnadshavare kan ladda upp, byta och ta bort en kvadratisk profilbild på Barnet. Bilden beskärs i webbläsaren, förminskas till cirka 512 pixlar och sparas som JPEG utan kamerans dolda uppgifter.
+- Personal och administratörer på barnets avdelning ser namn och bild, till exempel i närvaron och under Personer. De kan inte ändra bilden eller klasslistan.
+- Andra vårdnadshavare ser en klasslista för samma avdelning. Förnamnet visas om minst en vårdnadshavare sagt ja och ingen sagt nej. Bilden visas bara om varje kopplad vårdnadshavare sagt ja. Ett nej gäller direkt.
+- Svaren loggas med vem, barn, vad och när. Den privata bucketen `child-photos` skapas av migrationen. Appen tar bort bildfilen via Storage. Databasen rensar bara sökvägen och raderar inte i `storage.objects`, eftersom det blockeras där. En ny bild ersätter samma fil.
+- Migration `supabase/migrations/015_class_list_photos.sql` är redan körd mot produktion. Kör den inte igen.
 
 ## 2026-10-22 — Vårdnadshavare kan synka terminsschemat
 

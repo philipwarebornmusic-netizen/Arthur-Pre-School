@@ -74,6 +74,13 @@ Term managers
 - Grants and revocations are appended to term_manager_events. The tables have row-level security and no direct anon or authenticated writes.
 - Existing term function arguments are unchanged.
 
+Class list and profile photos
+- supabase/migrations/015_class_list_photos.sql is already applied in production. Do not run it again.
+- The file creates the private Storage bucket child-photos (not public, 2 MB, JPEG only) and the consent tables. No separate bucket step is required when that insert succeeds. If the storage schema rejects the insert, create a private bucket with that id, the same size limit and image/jpeg, then run the file again.
+- Guardians upload, replace and delete <child_id>/profile.jpg. Replacement upserts that same path, so the previous file is overwritten. The app deletes the object through the Storage API. clear_child_photo only checks that the object is gone and then clears photo_path. The SQL does not DELETE from storage.objects, because protect_objects_delete rejects every such statement. Staff and administrators of the child's department can read the photo. Other guardians can read it only when every linked guardian has opted in and the child is still named in the class list.
+- Answers are per guardian. A null answer is unanswered, not a no. Any explicit no hides the name immediately. The photo requires yes from every linked guardian. Changes are appended to class_list_consent_events.
+- This opt-in is separate from app_images, group_images and social_media. Do not reuse those rows.
+
 Fake Test organization and PreSchool Test preschool
 1. Keep this tenant free from real child, health, contact and consent data.
 2. Preview the fixed plan from the repository root:
