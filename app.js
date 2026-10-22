@@ -320,6 +320,14 @@ function encodedStoragePath(path) {
   return String(path).split("/").map(encodeURIComponent).join("/");
 }
 
+function storageSignedUrl(signedPath) {
+  if (!signedPath) return "";
+  if (/^https?:\/\//i.test(signedPath)) return signedPath;
+  const base = String(config.url || "").replace(/\/$/, "");
+  const rel = signedPath.startsWith("/") ? signedPath : `/${signedPath}`;
+  return rel.startsWith("/storage/v1/") ? `${base}${rel}` : `${base}/storage/v1${rel}`;
+}
+
 async function signPostImages(images) {
   if (!images.length) return [];
   const signed = await request("/storage/v1/object/sign/post-images", {
@@ -327,10 +335,7 @@ async function signPostImages(images) {
     body: JSON.stringify({ expiresIn: 3600, paths: images.map((image) => image.storage_path) }),
   });
   const urls = new Map((signed || []).map((item) => [item.path, item.signedURL || item.signedUrl]));
-  return images.map((image) => {
-    const signedPath = urls.get(image.storage_path);
-    return { ...image, signed_url: signedPath ? (signedPath.startsWith("http") ? signedPath : `${config.url}${signedPath}`) : "" };
-  });
+  return images.map((image) => ({ ...image, signed_url: storageSignedUrl(urls.get(image.storage_path)) }));
 }
 
 async function uploadPostImage(path, blob) {

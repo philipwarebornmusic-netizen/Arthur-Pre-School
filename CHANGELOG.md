@@ -1,5 +1,9 @@
 # Ändringslogg
 
+## 2026-10-22 — Signerade bildadresser i inlägg
+
+- En signerad länk från lagringen saknade `/storage/v1`, så bilder i inlägg blev 404. Adressen byggs nu med den sökvägen.
+
 ## 2026-10-22 — Vårdnadshavare äger barnets uppgifter
 
 - Vårdnadshavare kan ändra och ta bort sina kontaktpersoner, tömma enskilda hälsofält och anteckningen, och svara nej för att ta tillbaka ett samtycke. Borttagning frågar en gång till.
