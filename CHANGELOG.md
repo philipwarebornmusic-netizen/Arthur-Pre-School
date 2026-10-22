@@ -4,6 +4,14 @@
 
 - En signerad länk från lagringen saknade `/storage/v1`, så bilder i inlägg blev 404. Adressen byggs nu med den sökvägen.
 
+## 2026-10-22 — Vårdnadshavare kan synka terminsschemat
+
+- En vårdnadshavare kan skapa en personlig kalenderlänk under Barnet och lägga till den i Apple, Outlook eller Google.
+- Länken innehåller publicerade terminer och stängda dagar för de förskolor där vårdnadshavaren har ett barn. Inga uppgifter om barnet följer med.
+- Den råa länken visas bara direkt efter att den skapas. Databasen lagrar bara en kontrollsumma. En ny länk stänger den tidigare, och länken kan stängas av.
+- Apple uppdaterar inom ungefär en timme. Google kan ta 12–24 timmar.
+- Migration `supabase/migrations/013_calendar_subscriptions.sql` är redan körd och funktionen `term-feed` är publicerad. Kör inte migrationen igen.
+
 ## 2026-10-22 — Vårdnadshavare äger barnets uppgifter
 
 - Vårdnadshavare kan ändra och ta bort sina kontaktpersoner, tömma enskilda hälsofält och anteckningen, och svara nej för att ta tillbaka ett samtycke. Borttagning frågar en gång till.

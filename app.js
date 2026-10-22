@@ -43,6 +43,9 @@ const state = {
   checkout: null,
   scan: null,
   publicPass: null,
+  calendarReady: true,
+  calendarFeed: null,
+  calendarToken: null,
   selectedChildId: null,
   view: inviteFromUrl ? "join" : "home",
   authView: inviteFromUrl ? "register" : "login",
@@ -535,6 +538,9 @@ async function logout() {
       inviteResult: null,
       inviteCode: "",
       migrationReady: true,
+      calendarReady: true,
+      calendarFeed: null,
+      calendarToken: null,
       termEditor: null,
       pickupReady: true,
       pickupContacts: [],
@@ -663,6 +669,12 @@ async function loadData() {
   if (state.pickupReady) {
     try { await rpc("purge_expired_pickup_details"); } catch { /* Cleanup can wait for the next signed-in visit. */ }
   }
+  if (state.profile.role === "parent") await loadCalendarFeed();
+  else {
+    state.calendarReady = true;
+    state.calendarFeed = null;
+    state.calendarToken = null;
+  }
   state.onboarding = { kind: "active" };
   if (!state.children.some((child) => child.id === state.selectedChildId)) state.selectedChildId = state.children[0]?.id || null;
   const allowedViews = {
@@ -706,8 +718,42 @@ function clearLoadedData() {
     pickupNotices: [],
     checkout: null,
     scan: null,
+    calendarFeed: null,
+    calendarToken: null,
+    calendarReady: true,
     selectedChildId: null,
   });
+}
+
+async function loadCalendarFeed() {
+  try {
+    const rows = await rpc("calendar_feed_status");
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    state.calendarReady = true;
+    state.calendarFeed = row && typeof row === "object" ? row : { active: false, created_at: null };
+    if (!state.calendarFeed.active) state.calendarToken = null;
+  } catch (error) {
+    if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
+      state.calendarReady = false;
+      state.calendarFeed = null;
+      state.calendarToken = null;
+      return;
+    }
+    throw error;
+  }
+}
+
+function termFeedBaseUrl() {
+  const base = String(config.url || "").replace(/\/$/, "");
+  return base ? `${base}/functions/v1/term-feed` : "";
+}
+
+function termFeedHttpsUrl(token) {
+  return `${termFeedBaseUrl()}?token=${encodeURIComponent(token)}`;
+}
+
+function termFeedWebcalUrl(token) {
+  return termFeedHttpsUrl(token).replace(/^https:/i, "webcal:");
 }
 
 async function acceptInvitation(code) {
@@ -1650,7 +1696,7 @@ function renderChildInfo() {
     return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">Vårdnadshavarna äger uppgifterna. Du kan läsa dem här.</p></section><article class="card" id="child-info-read">${renderChildFacts(child)}</article>`;
   }
   const child = selectedChild();
-  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">Inget barn kopplat</h1><p class="sub">Personalen bjuder in dig till ett barn, eller godkänner en förfrågan innan barnet syns här.</p></section>${renderSiblingRequestForm()}`;
+  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">Inget barn kopplat</h1><p class="sub">Personalen bjuder in dig till ett barn, eller godkänner en förfrågan innan barnet syns här.</p></section>${renderTermCalendarCard()}${renderSiblingRequestForm()}`;
   const health = healthFor(child.id);
   const contacts = contactsFor(child.id);
   const checklist = childInfoChecklist(child);
@@ -1676,7 +1722,29 @@ function renderChildInfo() {
     <section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2><p class="form-hint">Ändra namn, relation, telefon, om personen får hämta och om kontakten är primär. Ta bort frågar en gång till innan kontakten försvinner.</p>
       <div class="contact-editors">${contacts.map((contact) => renderContactEditor(child, contact)).join("")}${renderContactEditor(child)}</div>
     </section>
-    <section id="child-consents" class="card child-step"><p class="kicker">Steg 4 av 4</p><h2>Samtycken</h2><p class="form-hint">Välj ja eller nej för varje punkt. Nej tar tillbaka ett tidigare ja. Du kan ändra svaren när som helst.</p>${renderConsentChoices(child)}</section>${renderPickupSection(child)}${renderSiblingRequestForm(true)}`;
+    <section id="child-consents" class="card child-step"><p class="kicker">Steg 4 av 4</p><h2>Samtycken</h2><p class="form-hint">Välj ja eller nej för varje punkt. Nej tar tillbaka ett tidigare ja. Du kan ändra svaren när som helst.</p>${renderConsentChoices(child)}</section>${renderPickupSection(child)}${renderTermCalendarCard()}${renderSiblingRequestForm(true)}`;
+}
+
+function renderTermCalendarCard() {
+  if (state.profile?.role !== "parent") return "";
+  const intro = `<p class="form-hint">Publicerade terminer och stängda dagar för de förskolor där du har ett barn. Inga uppgifter om barnet följer med.</p>`;
+  const timing = `<p class="form-hint">Apple uppdaterar inom ungefär 1 timme. Google kan ta 12–24 timmar.</p>`;
+  if (state.calendarReady === false) {
+    return `<section class="card" id="term-calendar"><p class="kicker">Kalender</p><h2>Synka terminsschemat</h2>${intro}<p class="form-hint">Synken är inte aktiverad i databasen ännu.</p></section>`;
+  }
+  const token = state.calendarToken || "";
+  const active = Boolean(state.calendarFeed?.active);
+  if (!active) {
+    return `<section class="card" id="term-calendar"><p class="kicker">Kalender</p><h2>Synka terminsschemat</h2>${intro}<p class="form-hint">Skapa en länk och lägg till den i kalendern. Länken visas bara direkt efter att den skapas.</p><div class="actions"><button class="primary" type="button" data-action="create-calendar-feed">Skapa länk</button></div>${timing}</section>`;
+  }
+  if (!token) {
+    const since = formatTimestamp(state.calendarFeed?.created_at);
+    return `<section class="card" id="term-calendar"><p class="kicker">Kalender</p><h2>Synka terminsschemat</h2>${intro}<p class="form-hint">Länk aktiv sedan ${esc(since)}. Länken kan inte visas igen. Skapa en ny länk om den ska läggas till i en kalender.</p><div class="actions"><button class="primary" type="button" data-action="rotate-calendar-feed">Skapa ny länk</button><button class="danger" type="button" data-action="revoke-calendar-feed">Stäng av</button></div>${timing}</section>`;
+  }
+  const httpsUrl = termFeedHttpsUrl(token);
+  const webcalUrl = termFeedWebcalUrl(token);
+  const googleUrl = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcalUrl)}`;
+  return `<section class="card" id="term-calendar"><p class="kicker">Kalender</p><h2>Synka terminsschemat</h2>${intro}<p class="form-hint">Länken visas bara den här gången. Lägg till den i kalendern nu. Vi lagrar bara en kontrollsumma, så länken kan inte visas igen.</p><code class="secret-value">${esc(httpsUrl)}</code><div class="actions"><a class="secondary button-link" href="${esc(webcalUrl)}">Lägg till i Apple/Outlook</a><a class="secondary button-link" href="${esc(googleUrl)}" target="_blank" rel="noopener">Lägg till i Google</a><button class="secondary" type="button" data-action="copy-calendar-feed">Kopiera länk</button><button class="secondary" type="button" data-action="rotate-calendar-feed">Skapa ny länk</button><button class="danger" type="button" data-action="revoke-calendar-feed">Stäng av</button></div>${timing}</section>`;
 }
 
 function groupedPrivateMessages() {
@@ -2857,6 +2925,34 @@ document.body.addEventListener("click", (event) => {
       });
       await loadData();
     }, target.dataset.status === "accepted" ? "Lekförfrågan är accepterad." : "Lekförfrågan är avböjd.");
+    return;
+  }
+  if (action === "create-calendar-feed" || action === "rotate-calendar-feed") {
+    if (state.profile?.role !== "parent") return;
+    if (action === "rotate-calendar-feed" && !window.confirm("Skapa en ny länk? Den gamla slutar fungera.")) return;
+    runMutation(async () => {
+      const token = await rpc("create_or_rotate_calendar_feed");
+      if (typeof token !== "string" || !token) throw new Error("Kalenderlänken kunde inte skapas.");
+      state.calendarToken = token;
+      state.calendarReady = true;
+      state.calendarFeed = { active: true, created_at: new Date().toISOString() };
+    }, action === "rotate-calendar-feed" ? "En ny länk är skapad. Den tidigare länken fungerar inte längre." : "Kalenderlänken är skapad. Lägg till den nu.");
+    return;
+  }
+  if (action === "revoke-calendar-feed") {
+    if (state.profile?.role !== "parent") return;
+    if (!window.confirm("Stäng av kalenderlänken? Den slutar fungera direkt.")) return;
+    runMutation(async () => {
+      await rpc("revoke_calendar_feed");
+      state.calendarToken = null;
+      state.calendarFeed = { active: false, created_at: null };
+    }, "Kalenderlänken är avstängd.");
+    return;
+  }
+  if (action === "copy-calendar-feed") {
+    if (state.profile?.role !== "parent" || !state.calendarToken) return;
+    const link = termFeedHttpsUrl(state.calendarToken);
+    runMutation(async () => navigator.clipboard.writeText(link), "Kalenderlänken är kopierad.");
     return;
   }
   if (action === "copy-invite") {

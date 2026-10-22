@@ -61,6 +61,13 @@ Pickup passes
 - Every check-out writes an append-only pickup event and an in-app notice to each guardian.
 - purge_expired_pickup_details() clears the pickup person's name and phone seven days after the pass expires and keeps the event. The signed-in app calls it. An operator who already has a database scheduler can run the same function there. No paid scheduler is added.
 
+Term calendar subscriptions
+- supabase/migrations/013_calendar_subscriptions.sql is already applied, and the term-feed function is already deployed. Do not run the migration again and do not redeploy the function from this release.
+- The function reads SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY from the Supabase environment. Do not copy that key into the repository, the app, or a task note.
+- Guardians create a personal link on the Barnet tab. The database stores only a SHA-256 hash. The raw token is shown once.
+- The feed lists published terms and closures for schools where that guardian has a child. It does not include child names or weekly schedules.
+- Legacy calendar_feeds and calendar_events keep their rows. 013 revokes anon and authenticated privileges on them when those tables exist. It does not drop them.
+
 Fake Test organization and PreSchool Test preschool
 1. Keep this tenant free from real child, health, contact and consent data.
 2. Preview the fixed plan from the repository root:
