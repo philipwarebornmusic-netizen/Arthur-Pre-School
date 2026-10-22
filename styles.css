@@ -326,6 +326,7 @@ html[data-busy]::after { position: fixed; inset: 0; z-index: 100; display: grid;
   .attendance-row { grid-template-columns: minmax(260px, 1.2fr) minmax(260px, .8fr); align-items: center; }
   .weekly-schedule-row { grid-template-columns: minmax(140px, 1fr) minmax(130px, .7fr) minmax(130px, .7fr); align-items: end; }
   .school-admin { grid-template-columns: minmax(260px, .8fr) minmax(0, 1.2fr); align-items: start; }
+  .scan-panel, .checkout-panel, .confirm-card, .stop-card { width: min(100%, 560px); }
 }
 
 @media (min-width: 900px) {
@@ -373,12 +374,19 @@ html[data-busy]::after { position: fixed; inset: 0; z-index: 100; display: grid;
   .app-frame:has(#bottomNav button) .bottom-nav button[aria-current="page"] { background: var(--sun-soft); box-shadow: inset 3px 0 0 var(--sun); }
   .app-frame:has(#bottomNav button) .bottom-nav .ico { display: grid; flex: 0 0 28px; place-items: center; width: 28px; height: 28px; margin: 0; font-size: 18px; }
   body:has(#bottomNav button) .skip-link { left: calc(var(--side-width, 272px) + 16px); }
+  .screen.pass-screen { display: grid; align-content: center; justify-items: center; min-height: calc(100dvh - 148px); padding-bottom: 48px; }
+  .screen:has(.metric-grid) > .scan-panel,
+  .screen:has(.metric-grid) > .checkout-panel,
+  .screen:has(.metric-grid) > .confirm-card,
+  .screen:has(.metric-grid) > .stop-card { width: min(100%, 560px); max-width: 560px; }
+  .scan-launcher { display: flex; margin: 0 0 16px; }
+  .scan-launcher .secondary { width: auto; min-width: 11.5rem; }
   #staff-access > form { max-width: 720px; }
 }
 
 @media (min-width: 1400px) {
   .screen:has(.info-progress), .screen:has([data-form="child-create"]) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; align-items: start; }
-  .screen:has(.info-progress) > :not(form.child-step):not(#child-contacts):not([data-form="contact-create"]),
+  .screen:has(.info-progress) > :not(form.child-step):not(#child-contacts):not([data-form="contact-create"]):not(#pickup-list):not(#pickup-passes):not([data-form="pickup-contact"]):not([data-form="pickup-pass"]),
   .screen:has([data-form="child-create"]) > .hero-card,
   .screen:has([data-form="child-create"]) > .notice,
   .screen:has([data-form="child-create"]) > .success-card { grid-column: 1 / -1; }
@@ -392,6 +400,7 @@ html[data-busy]::after { position: fixed; inset: 0; z-index: 100; display: grid;
   #official-feed { display: grid; gap: 16px; }
   #official-feed, .birthday-list { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
   #official-feed > .section-head, #official-feed > .empty-card { grid-column: 1 / -1; }
+  .screen:has([data-form="child-create"]) > #pickup-blocks { grid-column: 1 / -1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -399,3 +408,19 @@ html[data-busy]::after { position: fixed; inset: 0; z-index: 100; display: grid;
   * { transition: none !important; }
   .bot-mascot { animation: none; background-position: 0 0; }
 }
+
+.screen.pass-screen { padding-bottom: 32px; }
+.pass-sheet { display: grid; justify-items: center; gap: 12px; width: min(100%, 440px); margin: 0 auto; text-align: center; }
+.pass-sheet h1 { margin: 0; font-size: clamp(28px, 8vw, 40px); }
+.pass-child { margin: 0; font-size: clamp(36px, 10vw, 52px); font-weight: 900; line-height: 1; }
+.pass-code { margin: 0; font-size: 32px; font-weight: 900; letter-spacing: .18em; }
+.pass-qr { width: min(240px, 72vw); }
+.pass-qr svg { display: block; width: 100%; height: auto; }
+.pass-privacy { margin: 0; color: var(--muted); font-size: 14px; font-weight: 800; }
+.stop-card { background: #fde8e4; border: 2px solid #c2412d; color: #7a1f14; }
+.stop-card h2, .confirm-card h2 { margin-top: 0; }
+.id-ask { margin: 0; padding: 10px 12px; background: #fff4d6; border-radius: 12px; font-weight: 900; }
+.scan-launcher { display: flex; margin: 0 0 16px; }
+.scan-launcher .secondary { width: auto; min-width: 11.5rem; }
+.scan-panel, .checkout-panel, .pickup-pass { min-width: 0; }
+.scan-panel video { width: 100%; max-height: 280px; background: #1d2428; border-radius: 16px; object-fit: cover; }

@@ -9,7 +9,17 @@
 - Vårdnadshavare kan ändra och ta bort sina kontaktpersoner, tömma enskilda hälsofält och anteckningen, och svara nej för att ta tillbaka ett samtycke. Borttagning frågar en gång till.
 - Personal och administratörer kan läsa barnets uppgifter, inklusive allergier, men ser inga fält för att ändra dem.
 - En administratör kan fortfarande flytta ett barn mellan avdelningar. Personal och administratörer kan fortfarande lägga till ett barn och sätta namn och avdelning när barnet skapas. En administratör kan fortfarande ta bort ett barn.
-- Kräver migration `supabase/011_guardian_owned_child_info.sql` innan den nya behörigheten gäller. Migrationen har inte körts mot produktion, raderar inga rader och tar inte bort kolumner. Den rör inte hämtpassens tabeller och kan köras före eller efter `010`.
+- Migration `supabase/011_guardian_owned_child_info.sql` är redan körd mot produktion. Den raderar inga rader och tar inte bort kolumner. Den rör inte hämtpassens tabeller.
+
+## 2026-10-21 — Hämtpass och utcheckning
+
+- Vårdnadshavare håller en hämtlista per barn och kan skapa ett hämtpass för en dag. Länken visas för den som hämtar utan att den personen behöver ett konto.
+- Personal skannar QR-koden eller skriver en sexsiffrig kod under Närvaro och bekräftar utcheckningen. Inget checkas ut automatiskt.
+- Manuell utcheckning frågar vem som hämtar: vårdnadshavare, någon på hämtlistan eller annan med en kort kommentar.
+- En administratör kan spärra en person med får ej hämta. Spärren gäller före pass och manuell utcheckning.
+- Båda vårdnadshavarna får ett meddelande i appen, och händelsen sparas i en logg. Namn och telefon på passet rensas sju dagar efter att det gått ut.
+- Hämtpasset, skanningen, bekräftelsen, Hämtad av och spärren följer skrivbordets vänsterspalt från 1200 px och bottenmenyn på smalare skärmar. Själva hämtpasset har ingen meny.
+- Migration `supabase/010_pickup_passes.sql` är redan körd mot produktion.
 
 ## 2026-10-21 — Inbjudningar styr vem som kommer in
 

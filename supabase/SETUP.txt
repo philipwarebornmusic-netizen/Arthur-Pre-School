@@ -48,11 +48,18 @@ First real account
 7. Guardians request an additional child from the app. Staff approve the request before the child is linked.
 
 Guardian-owned child information
-- Run supabase/011_guardian_owned_child_info.sql once in the SQL editor after the earlier migrations.
-- Do not run it against production until guardians should be the only people who can change child information. Deploy previews use the production database, so saving from this version fails there until 011 has been applied on a non-production database.
-- The file does not delete rows or drop columns. It does not touch pickup_contacts, pickup_passes, or pickup_events, so it is safe before or after 010.
-- 010 does not grant staff or admin any write on the child profile, health, emergency contacts, or consents.
-- After 011, guardians edit and remove that information. Staff and administrators keep read access. Creating a child, including name and department, stays with staff and administrators. An administrator can move a child between departments and can still delete a child.
+- supabase/011_guardian_owned_child_info.sql is already applied in production. Do not run it again.
+- Guardians edit and remove child information. Staff and administrators keep read access. Creating a child, including name and department, stays with staff and administrators. An administrator can move a child between departments and can still delete a child.
+- The file does not delete rows or drop columns. It does not touch pickup tables. 010 does not grant staff or admin any write on the child profile, health, emergency contacts, or consents.
+
+Pickup passes
+- supabase/010_pickup_passes.sql is already applied in production. Do not run it again.
+- Guardians keep a pickup list per child. An administrator can block a person. Both guardians can create and revoke a one-day, single-use pass.
+- The pass link is copied by the guardian. The app does not send it. The public page shows the child's first name, the date, a QR code, a 6-digit fallback code, and a short privacy notice.
+- Only sha256 hashes of the token and the fallback code are stored. The code is derived from the token so it can be shown to the link holder without a plaintext column. Anonymous callers cannot look up a pass with the 6-digit code.
+- Staff of the child's department scan the QR code or enter the code, then press Bekräfta utcheckning. The camera reader is the local barcode-detector 3.2.3 ponyfill with zxing-wasm 3.1.6, loaded from vendor/. QR images are drawn with the local qrcode-generator 2.0.4 script. No scanner service is called.
+- Every check-out writes an append-only pickup event and an in-app notice to each guardian.
+- purge_expired_pickup_details() clears the pickup person's name and phone seven days after the pass expires and keeps the event. The signed-in app calls it. An operator who already has a database scheduler can run the same function there. No paid scheduler is added.
 
 Fake Test organization and PreSchool Test preschool
 1. Keep this tenant free from real child, health, contact and consent data.
