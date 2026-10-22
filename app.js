@@ -1,7 +1,7 @@
 const APP_NAME = "ärtan";
 const STORAGE_KEY = "artan.session";
 const config = window.ARTAN_SUPABASE || {};
-const inviteFromUrl = new URLSearchParams(location.search).get("invite")?.trim().toUpperCase() || "";
+const inviteFromUrl = new URLSearchParams(location.search).get("invite")?.trim() || "";
 
 const state = {
   session: JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"),
@@ -28,6 +28,12 @@ const state = {
   birthdayCandidates: [],
   birthdayInvitations: [],
   invitations: [],
+  siblingRequests: [],
+  joinRequests: [],
+  staffMembers: [],
+  onboarding: null,
+  schoolCodeResult: null,
+  migrationReady: true,
   selectedChildId: null,
   view: inviteFromUrl ? "join" : "home",
   authView: inviteFromUrl ? "register" : "login",
@@ -463,7 +469,8 @@ async function login(email, password) {
 }
 
 async function register(email, password, name) {
-  const result = await request("/auth/v1/signup", {
+  const redirectTo = new URL(location.href);
+  const result = await request(`/auth/v1/signup?redirect_to=${encodeURIComponent(redirectTo.toString())}`, {
     method: "POST",
     body: JSON.stringify({ email, password, data: { name } }),
   }, false);
@@ -506,6 +513,14 @@ async function logout() {
       birthdayCandidates: [],
       birthdayInvitations: [],
       invitations: [],
+      siblingRequests: [],
+      joinRequests: [],
+      staffMembers: [],
+      onboarding: null,
+      schoolCodeResult: null,
+      inviteResult: null,
+      inviteCode: "",
+      migrationReady: true,
       termEditor: null,
       selectedChildId: null,
       view: "home",
@@ -522,17 +537,39 @@ async function loadData() {
   if (!state.session?.access_token) return;
   const userId = state.session.user?.id;
   if (!userId) throw new Error("Sessionen saknar användar-id.");
-  const profiles = await request(`/rest/v1/profiles?select=id,auth_user_id,organization_id,name,email,phone,role,allow_parent_messages,allow_playdate_requests,allow_birthday_invitations&auth_user_id=eq.${encodeURIComponent(userId)}&limit=1`);
+  state.migrationReady = true;
+  const profileWithAccess = "id,auth_user_id,organization_id,name,email,phone,role,removed_at,allow_parent_messages,allow_playdate_requests,allow_birthday_invitations";
+  const profileWithoutAccess = "id,auth_user_id,organization_id,name,email,phone,role,allow_parent_messages,allow_playdate_requests,allow_birthday_invitations";
+  let profiles;
+  try {
+    profiles = await request(`/rest/v1/profiles?select=${profileWithAccess}&auth_user_id=eq.${encodeURIComponent(userId)}&limit=1`);
+  } catch (error) {
+    if (!/removed_at|column|schema cache/i.test(error.message)) throw error;
+    state.migrationReady = false;
+    profiles = await request(`/rest/v1/profiles?select=${profileWithoutAccess}&auth_user_id=eq.${encodeURIComponent(userId)}&limit=1`);
+  }
   state.profile = profiles[0] || null;
-  if (!state.profile) {
-    state.organization = null;
-    state.view = state.inviteCode ? "join" : "onboarding";
+  if (!state.profile || state.profile.removed_at) {
+    clearLoadedData();
+    if (!state.profile) {
+      try {
+        state.onboarding = await rpc("my_onboarding_status");
+      } catch (error) {
+        if (!/schema cache|could not find the function|pgrst202/i.test(error.message)) throw error;
+        state.migrationReady = false;
+        state.onboarding = { kind: "none" };
+      }
+      state.view = state.onboarding?.kind === "pending" ? "pending" : "onboarding";
+    } else {
+      state.onboarding = { kind: "removed" };
+      state.view = "removed";
+    }
     return;
   }
 
   const organizationId = encodeURIComponent(state.profile.organization_id);
   const date = todayIso();
-  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, schoolTerms, termClosures, weeklySchedules, posts, postImages, invitations, postComments, communityMembers, guardianMessageTargets, privateMessages, playdateRequests, birthdayCandidates, birthdayInvitations] = await Promise.all([
+  const [organizations, schools, departments, staffAssignments, children, health, contacts, consents, attendance, schoolTerms, termClosures, weeklySchedules, posts, postImages, invitations, postComments, communityMembers, guardianMessageTargets, privateMessages, playdateRequests, birthdayCandidates, birthdayInvitations, siblingRequests, joinRequests, staffMembers] = await Promise.all([
     request(`/rest/v1/organizations?select=id,name,type,created_at&id=eq.${organizationId}&limit=1`),
     request(`/rest/v1/preschools?select=id,organization_id,name,phone,address,postal_code,city,opening_hours,created_at&organization_id=eq.${organizationId}&order=name.asc`),
     request("/rest/v1/departments?select=id,preschool_id,name,created_at&order=name.asc"),
@@ -547,7 +584,7 @@ async function loadData() {
     rpc("list_child_weekly_schedules"),
     request("/rest/v1/posts?select=id,department_id,child_id,author_id,type,title,body,created_at&order=created_at.desc&limit=100"),
     rpc("list_post_images"),
-    request("/rest/v1/invitations?select=id,email,role,relation,code,status,department_id,child_id,expires_at,created_at&order=created_at.desc&limit=100"),
+    request("/rest/v1/invitations?select=id,email,role,relation,status,preschool_id,department_id,child_id,expires_at,created_at&order=created_at.desc&limit=100"),
     rpc("list_post_comments"),
     rpc("list_community_members"),
     rpc("list_guardian_message_targets"),
@@ -555,6 +592,9 @@ async function loadData() {
     rpc("list_playdate_requests"),
     rpc("list_birthday_candidates"),
     rpc("list_birthday_invitations"),
+    optionalRpc("list_sibling_requests"),
+    state.profile.role === "admin" ? optionalRpc("list_join_requests") : Promise.resolve([]),
+    state.profile.role === "admin" ? optionalRpc("list_staff_members") : Promise.resolve([]),
   ]);
 
   state.organization = organizations[0] || null;
@@ -586,6 +626,10 @@ async function loadData() {
   state.playdateRequests = playdateRequests;
   state.birthdayCandidates = birthdayCandidates;
   state.birthdayInvitations = birthdayInvitations;
+  state.siblingRequests = siblingRequests || [];
+  state.joinRequests = joinRequests || [];
+  state.staffMembers = staffMembers || [];
+  state.onboarding = { kind: "active" };
   if (!state.children.some((child) => child.id === state.selectedChildId)) state.selectedChildId = state.children[0]?.id || null;
   const allowedViews = {
     admin: ["overview", "attendance", "schools", "messages", "people", "account"],
@@ -596,17 +640,63 @@ async function loadData() {
   if (!roleViews.includes(state.view)) state.view = roleViews[0];
 }
 
+function clearLoadedData() {
+  Object.assign(state, {
+    organization: null,
+    schools: [],
+    departments: [],
+    staffAssignments: [],
+    children: [],
+    health: [],
+    contacts: [],
+    consents: [],
+    attendance: [],
+    schoolTerms: [],
+    termClosures: [],
+    weeklySchedules: [],
+    posts: [],
+    postImages: [],
+    postComments: [],
+    communityMembers: [],
+    guardianMessageTargets: [],
+    privateMessages: [],
+    playdateRequests: [],
+    birthdayCandidates: [],
+    birthdayInvitations: [],
+    invitations: [],
+    siblingRequests: [],
+    joinRequests: [],
+    staffMembers: [],
+    selectedChildId: null,
+  });
+}
+
 async function acceptInvitation(code) {
-  await rpc("accept_invitation", { invite_code: code.trim().toUpperCase() });
+  await rpc("accept_invitation", { invite_code: code.trim() });
   state.inviteCode = "";
-  history.replaceState({}, "", `${location.pathname}${location.hash}`);
+  const url = new URL(location.href);
+  url.searchParams.delete("invite");
+  history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   await loadData();
   state.notice = { type: "success", text: "Inbjudan är accepterad. Välkommen till ärtan!" };
 }
 
 function noticeHtml() {
-  if (!state.notice) return "";
-  return `<div class="notice ${esc(state.notice.type)}" role="status">${esc(state.notice.text)}</div>`;
+  const migration = state.migrationReady === false
+    ? `<div class="notice error" role="status">Inbjudningsreglerna är inte aktiverade i databasen ännu. Befintliga uppgifter kan visas, men nya inbjudningar och godkännanden börjar fungera först när migreringen har körts.</div>`
+    : "";
+  if (!state.notice) return migration;
+  return `${migration}<div class="notice ${esc(state.notice.type)}" role="status">${esc(state.notice.text)}</div>`;
+}
+
+function optionalRpc(name, args) {
+  return rpc(name, args).catch((error) => {
+    if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
+      state.migrationReady = false;
+      return [];
+    }
+    throw error;
+  });
 }
 
 function botMascot(decorative = false) {
@@ -652,9 +742,9 @@ function parentAssistantAnswer(intent) {
   const child = selectedChild();
   if (!child && ["day", "schedule", "reminders", "opening-hours", "consents", "health"].includes(intent)) {
     return assistantResult(
-      "Börja med att lägga till ditt barn. Därefter kan jag hjälpa med dagens plan, barnuppgifter och skolans meddelanden.",
+      "Du är inte kopplad till något barn ännu. Personalen bjuder in dig till barnet, eller så skickar du en syskonförfrågan som personalen godkänner innan barnet kopplas.",
       "Ditt konto i ärtan",
-      { actionLabel: "Lägg till barn", view: "child" },
+      { actionLabel: "Skicka förfrågan", view: "child" },
     );
   }
   if (intent === "schedule") {
@@ -954,35 +1044,59 @@ function selectField(label, name, options, selected = "", required = false) {
 function renderAuth() {
   const registerMode = state.authView === "register";
   const disabled = !config.enabled;
+  const registerIntro = state.inviteCode
+    ? "Använd samma e-postadress som inbjudan gäller. Efteråt hamnar du hos rätt barn eller på rätt avdelning."
+    : "Ett konto öppnar inte en förskola av sig själv. Du behöver en inbjudningslänk, eller en skolkod som en administratör godkänner.";
   return `${noticeHtml()}
-    <section class="hero-card auth-card">${botMascot()}<div><p class="kicker">${APP_NAME}</p><h1 class="h1">${registerMode ? "Skapa konto" : "Välkommen"}</h1><p class="sub">${registerMode ? "Skapa ditt konto och låt Ärtan-botten hjälpa dig hålla barnets uppgifter och vardagsplan uppdaterade." : "Logga in till en enklare förskolevardag med Ärtan-botten som påminnelsehjälp."}</p></div></section>
+    <section class="hero-card auth-card">${botMascot()}<div><p class="kicker">${APP_NAME}</p><h1 class="h1">${registerMode ? "Skapa konto" : "Välkommen"}</h1><p class="sub">${registerMode ? registerIntro : "Logga in till en enklare förskolevardag med Ärtan-botten som påminnelsehjälp."}</p></div></section>
     <article class="card bot-promise"><p class="kicker">En hjälpande bot</p><h2>Rätt sak i rätt tid</h2><p>Ärtan-botten ser vad som saknas i appen och påminner om tider, kontaktuppgifter, hälsa och samtycken. Uppgifterna stannar i ärtan och skickas inte till någon extern AI-tjänst.</p></article>
     ${disabled ? `<article class="card important"><h3>Konfiguration saknas</h3><p>Aktivera Supabase i <code>supabase-config.js</code>.</p></article>` : ""}
     <form class="card form-stack" data-form="${registerMode ? "register" : "login"}">
       ${registerMode ? field("Namn", "name", "", { required: true, autocomplete: "name" }) : ""}
       ${field("E-post", "email", "", { type: "email", required: true, autocomplete: "email" })}
       ${field("Lösenord", "password", "", { type: "password", required: true, autocomplete: registerMode ? "new-password" : "current-password", minlength: "8" })}
-      ${state.inviteCode ? `<p class="form-hint">Inbjudningskod: <strong>${esc(state.inviteCode)}</strong></p>` : ""}
+      ${state.inviteCode ? `<p class="form-hint">Inbjudningslänken följer med när kontot skapas. Använd e-postadressen som inbjudan gäller.</p>` : ""}
       <button class="primary" type="submit" ${disabled ? "disabled" : ""}>${registerMode ? "Skapa konto" : "Logga in"}</button>
       <button class="secondary" type="button" data-action="auth-view" data-view="${registerMode ? "login" : "register"}">${registerMode ? "Jag har redan konto" : "Skapa nytt konto"}</button>
     </form>`;
 }
 
 function renderOnboarding() {
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Kom igång</p><h1 class="h1">Anslut till ärtan</h1><p class="sub">Skapa en ny organisation eller använd koden du fått från skolan.</p></section>
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Kom igång</p><h1 class="h1">Välj hur du kommer in</h1><p class="sub">En förskola går att gå med i via en inbjudan, eller via en skolkod som administratören godkänner.</p></section>
     <form class="card form-stack" data-form="accept-invite">
       <h2>Jag har en inbjudan</h2>
-      ${field("Inbjudningskod", "code", state.inviteCode, { required: true, placeholder: "Skriv koden här" })}
+      <p class="form-hint">Klistra in koden från länken. Den gäller bara din e-postadress och kan användas en gång.</p>
+      ${field("Inbjudningskod", "code", state.inviteCode, { required: true, placeholder: "Klistra in koden från länken" })}
       <button class="primary" type="submit">Acceptera inbjudan</button>
     </form>
+    <form class="card form-stack" data-form="school-code-join">
+      <h2>Jag har en skolkod</h2>
+      <p class="form-hint">Skolkoden skickar en ansökan till administratören. Uppgifter visas först efter godkännande, och administratören väljer då din avdelning.</p>
+      ${field("Skolkod", "school_code", "", { required: true, placeholder: "Till exempel K7M2-QP4L-RX9C", autocomplete: "off" })}
+      <button class="primary" type="submit">Skicka ansökan</button>
+    </form>
     <form class="card form-stack" data-form="create-organization">
-      <h2>Starta en organisation</h2>
+      <h2>Jag startar en ny organisation</h2>
+      <p class="form-hint">Det här är för den som ska administrera en ny förskola. Det kopplar dig inte till en skola som redan finns.</p>
       ${field("Organisationens namn", "organization_name", "", { required: true, placeholder: "Exempelvis Förskolor AB" })}
       ${selectField("Organisationstyp", "organization_type", [["kommun", "Kommun"], ["privat", "Privat"], ["kooperativ", "Kooperativ"]], "privat", true)}
       ${field("Första skolans namn", "preschool_name", "", { required: true })}
       ${field("Första avdelningen", "department_name", "", { required: true })}
       <button class="primary" type="submit">Skapa organisation</button>
-    </form>`;
+    </form>
+    <button class="secondary" data-action="logout">Logga ut</button>`;
+}
+
+function renderPendingAccess() {
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Ansökan</p><h1 class="h1">Väntar på godkännande</h1><p class="sub">Administratören väljer avdelning när ansökan godkänns. Uppgifter visas först då.</p></section>
+    <article class="card"><h2>Inga uppgifter visas ännu</h2><p>Du kan stänga appen och komma tillbaka senare. När ansökan är godkänd loggar du in med samma konto och hamnar på din avdelning.</p></article>
+    <button class="secondary" data-action="logout">Logga ut</button>`;
+}
+
+function renderRemovedAccess() {
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Personal</p><h1 class="h1">Åtkomsten är borttagen</h1><p class="sub">En administratör har tagit bort din personalåtkomst. En ny inbjudan till samma e-postadress kan öppna kontot igen.</p></section>
+    <article class="card"><h2>Inga uppgifter visas</h2><p>${esc(state.profile?.email || "Ditt konto")} är inte kopplat till någon avdelning.</p></article>
+    <button class="secondary" data-action="logout">Logga ut</button>`;
 }
 
 function childTabs() {
@@ -990,16 +1104,23 @@ function childTabs() {
   return `<div class="child-tabs">${state.children.map((child) => `<button type="button" data-action="select-child" data-id="${esc(child.id)}" aria-pressed="${child.id === state.selectedChildId}">${esc(child.name)}<small>${esc(departmentName(child.department_id))}</small></button>`).join("")}</div>`;
 }
 
-function parentChildCreateForm(additional = false) {
+function siblingStatusLabel(status) {
+  return { pending: "Väntar på personalen", approved: "Godkänd", rejected: "Avslagen" }[status] || status;
+}
+
+function renderSiblingRequestForm(additional = false) {
   const options = departmentOptions();
-  return `<form class="card form-stack" data-form="parent-child-create">
-    <p class="kicker">${additional ? "Fler barn" : "Första steget"}</p>
-    <h2>${additional ? "Lägg till ytterligare ett barn" : "Lägg till ditt barn"}</h2>
-    <p class="form-hint">Du skapar bara barn som du själv är vårdnadshavare för. Uppgifterna kopplas direkt till ditt konto.</p>
-    ${options.length ? selectField("Förskola och avdelning", "department_id", options, "", true) : `<p class="notice error">Ingen avdelning är tillgänglig. Kontakta förskolan.</p>`}
+  const history = state.profile.role === "parent" ? state.siblingRequests : [];
+  return `<form class="card form-stack" data-form="sibling-request">
+    <p class="kicker">${additional ? "Fler barn" : "Koppling till barn"}</p>
+    <h2>${additional ? "Be om att koppla ett syskon" : "Be personalen koppla ett barn"}</h2>
+    <p class="form-hint">Förskolan godkänner förfrågan innan barnet syns på ditt konto. Har du fått en inbjudningslänk använder du den i stället.</p>
+    ${options.length ? selectField("Förskola och avdelning", "department_id", options, "", true) : `<p class="notice error">Ingen avdelning är tillgänglig. Be personalen bjuda in dig.</p>`}
     <div class="form-grid">${field("Barnets namn", "name", "", { required: true, autocomplete: "name" })}${field("Födelsedatum", "birth_date", "", { type: "date", required: true, max: todayIso() })}</div>
-    <button class="primary" type="submit" ${options.length ? "" : "disabled"}>${additional ? "Lägg till barn" : "Skapa barnprofil"}</button>
-  </form>`;
+    ${textareaField("Meddelande till personalen", "note", "", "Till exempel att barnet redan går på avdelningen")}
+    <button class="primary" type="submit" ${options.length ? "" : "disabled"}>${additional ? "Skicka syskonförfrågan" : "Skicka förfrågan"}</button>
+  </form>
+  ${history.length ? `<article class="card"><h2>Dina förfrågningar</h2><ul class="invite-list">${history.map((request) => `<li><div><strong>${esc(request.child_name)}</strong><span>${esc(request.department_name)} · ${esc(siblingStatusLabel(request.status))}</span></div><span class="status">${esc(formatDate(request.birth_date))}</span></li>`).join("")}</ul></article>` : ""}`;
 }
 
 
@@ -1126,7 +1247,7 @@ function setParseStatus(form, message, error = false) {
 
 function renderParentHome() {
   const child = selectedChild();
-  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Min dag</p><h1 class="h1">Välkommen</h1><p class="sub">Börja med att lägga till ditt barn. Därefter hjälper Ärtan-botten dig med barnuppgifter och dagens plan.</p></section>${parentChildCreateForm()}`;
+  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Min dag</p><h1 class="h1">Välkommen</h1><p class="sub">När personalen har kopplat ett barn hjälper Ärtan-botten dig med vardagsplanen. Du kan också be om en koppling här.</p></section>${renderSiblingRequestForm()}`;
   const attendance = attendanceFor(child.id);
   const pickupContacts = contactsFor(child.id).filter((contact) => contact.can_pickup);
   const messages = state.posts.filter((post) => !post.child_id || post.child_id === child.id).slice(0, 3);
@@ -1175,7 +1296,7 @@ function renderPost(post) {
 
 function renderChildInfo() {
   const child = selectedChild();
-  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">Lägg till ditt barn</h1><p class="sub">Skapa barnprofilen själv för att komma igång.</p></section>${parentChildCreateForm()}`;
+  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">Inget barn kopplat</h1><p class="sub">Personalen bjuder in dig till ett barn, eller godkänner en förfrågan innan barnet syns här.</p></section>${renderSiblingRequestForm()}`;
   const health = healthFor(child.id);
   const contacts = contactsFor(child.id);
   const checklist = childInfoChecklist(child);
@@ -1209,7 +1330,7 @@ function renderChildInfo() {
       const recorded = consentRecorded(child.id, type);
       const allowed = consentFor(child.id, type);
       return `<div class="consent-question"><div><strong>${esc(label)}</strong><span>${recorded ? allowed ? "Ja" : "Nej" : "Ej besvarat"}</span></div><div class="consent-choices" role="group" aria-label="${esc(label)}"><button type="button" data-action="set-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}" data-allowed="true" aria-pressed="${recorded && allowed}">Ja</button><button type="button" data-action="set-consent" data-child-id="${esc(child.id)}" data-type="${esc(type)}" data-allowed="false" aria-pressed="${recorded && !allowed}">Nej</button></div></div>`;
-    }).join("")}</div></section>${parentChildCreateForm(true)}`;
+    }).join("")}</div></section>${renderSiblingRequestForm(true)}`;
 }
 
 function groupedPrivateMessages() {
@@ -1422,8 +1543,52 @@ function editableDepartments() {
   return state.departments.filter((department) => assignedIds.has(department.id));
 }
 
-function departmentOptions() {
-  return editableDepartments().map((department) => [department.id, `${schoolName(department.preschool_id)} · ${department.name}`]);
+function departmentOptions(preschoolId = "") {
+  return editableDepartments()
+    .filter((department) => !preschoolId || department.preschool_id === preschoolId)
+    .map((department) => [department.id, preschoolId ? department.name : `${schoolName(department.preschool_id)} · ${department.name}`]);
+}
+
+function invitePlace(invite) {
+  if (invite.role === "parent") {
+    const child = state.children.find((item) => item.id === invite.child_id);
+    return child ? `${child.name} · ${departmentName(child.department_id)}` : "Barn";
+  }
+  const department = state.departments.find((item) => item.id === invite.department_id);
+  if (!department) return "Avdelning";
+  return `${schoolName(department.preschool_id)} · ${department.name}`;
+}
+
+function inviteExpiryLabel(invite) {
+  const when = formatTimestamp(invite.expires_at);
+  if (invite.status === "pending" && new Date(invite.expires_at).getTime() <= Date.now()) return `Utgången ${when}`;
+  return `Går ut ${when}`;
+}
+
+function renderInviteActions(invite) {
+  return `<div class="invite-actions"><button class="link" type="button" data-action="resend-invite" data-id="${esc(invite.id)}">Skicka igen</button><button class="link danger-link" type="button" data-action="revoke-invite" data-id="${esc(invite.id)}">Återkalla</button></div>`;
+}
+
+function renderInviteResult(role = "") {
+  if (!state.inviteResult?.token) return "";
+  if (role && state.inviteResult.role !== role) return "";
+  const link = invitationLink(state.inviteResult.token);
+  const days = state.inviteResult.role === "staff" ? "7 dagar" : "14 dagar";
+  return `<article class="card success-card"><p class="kicker">Kopiera länken nu</p><h3>${esc(state.inviteResult.email)}</h3><p class="form-hint">Länken visas bara den här gången, fungerar en gång och gäller i ${days}. Den gamla länken slutar fungera när du skickar en ny.</p><code class="secret-value">${esc(link)}</code><div class="actions"><button class="primary" type="button" data-action="copy-invite" data-token="${esc(state.inviteResult.token)}">Kopiera inbjudningslänk</button><a class="secondary button-link" href="mailto:${encodeURIComponent(state.inviteResult.email)}?subject=${encodeURIComponent(`Inbjudan till ${APP_NAME}`)}&body=${encodeURIComponent(`Du är inbjuden till ${APP_NAME}. Öppna ${link}`)}">Öppna e-post på den här enheten</a></div></article>`;
+}
+
+function renderSchoolCodeResult() {
+  if (!state.schoolCodeResult?.code) return "";
+  return `<article class="card success-card"><p class="kicker">Kopiera skolkoden nu</p><h3>${esc(state.schoolCodeResult.preschool_name)}</h3><p class="form-hint">Koden visas bara den här gången. Den som använder den får en ansökan som väntar tills du godkänner den. En ny kod ersätter den här.</p><code class="secret-value">${esc(state.schoolCodeResult.code)}</code><div class="actions"><button class="primary" type="button" data-action="copy-text" data-text="${esc(state.schoolCodeResult.code)}">Kopiera skolkod</button></div></article>`;
+}
+
+function staffGroups() {
+  const groups = new Map();
+  state.staffMembers.forEach((row) => {
+    if (!groups.has(row.staff_id)) groups.set(row.staff_id, { id: row.staff_id, name: row.staff_name, email: row.staff_email, departments: [] });
+    if (row.department_name) groups.get(row.staff_id).departments.push(`${row.preschool_name} · ${row.department_name}`);
+  });
+  return [...groups.values()];
 }
 
 function termsForSchool(preschoolId) {
@@ -1487,10 +1652,40 @@ function renderTermManager(school) {
   return `<div class="term-admin-list">${terms.map(renderManagedTerm).join("") || emptyState("Ingen termin", "Skapa ett terminsutkast. Det visas här tills du publicerar det.")}${renderTermEditor(school)}</div>`;
 }
 
+function renderSchoolAdmin(school) {
+  const departments = state.departments.filter((department) => department.preschool_id === school.id);
+  return `<section class="school-admin"><article class="card"><p class="kicker">Skola</p><h2>${esc(school.name)}</h2><p>${esc(compact([school.address, compact([school.postal_code, school.city]).join(" ")]).join(", ") || "Ingen adress registrerad")}</p><p class="meta">${esc(compact([school.phone, school.opening_hours]).join(" · ") || "Inga kontaktuppgifter registrerade")}</p>
+    <ul class="rows">${departments.map((department) => `<li><span>${esc(department.name)}</span><span class="status">${state.children.filter((child) => child.department_id === department.id).length} barn</span></li>`).join("") || "<li><span>Inga avdelningar</span></li>"}</ul>
+    <form class="form-stack school-department-form" data-form="department-create" data-preschool-id="${esc(school.id)}">${field("Ny avdelning", "department_name", "", { required: true, placeholder: "Till exempel Solen" })}<button class="secondary" type="submit">Lägg till avdelning</button></form>
+    <button class="secondary" type="button" data-action="rotate-school-code" data-id="${esc(school.id)}">Skapa ny skolkod</button>
+    <p class="form-hint">Skolkoden är ett reservspår för personal. Ansökan väntar tills du godkänner den och väljer avdelning.</p>
+  </article>${renderTermManager(school)}</section>`;
+}
+
+function renderStaffAccess() {
+  const staffInvites = state.invitations.filter((invite) => invite.role === "staff" && invite.status === "pending");
+  const groups = staffGroups();
+  return `<section class="card form-stack" id="staff-access"><h2>Personal</h2>
+    <form class="form-stack" data-form="staff-invite">${field("E-post till personal", "email", "", { type: "email", required: true, autocomplete: "email" })}${departmentOptions().length ? selectField("Skola och avdelning", "department_id", departmentOptions(), "", true) : `<p class="notice error">Lägg till en avdelning först.</p>`}<p class="form-hint">Länken gäller en skola och en avdelning, kan användas en gång och slutar gälla efter 7 dagar.</p><button class="primary" type="submit" ${departmentOptions().length ? "" : "disabled"}>Bjud in personal</button></form>
+    <h3>Väntande personalinbjudningar</h3>
+    ${staffInvites.length ? `<ul class="invite-list">${staffInvites.map((invite) => `<li><div><strong>${esc(invite.email)}</strong><span>${esc(invitePlace(invite))} · ${esc(inviteExpiryLabel(invite))}</span></div>${renderInviteActions(invite)}</li>`).join("")}</ul>` : `<p class="form-hint">Inga väntande personalinbjudningar.</p>`}
+    <h3>Ansökningar med skolkod</h3>
+    ${state.joinRequests.length ? state.joinRequests.map((request) => {
+      const options = departmentOptions(request.preschool_id);
+      return `<form class="form-stack join-request" data-form="review-only" data-request-id="${esc(request.request_id)}"><p><strong>${esc(request.applicant_name)}</strong><span class="meta">${esc(request.applicant_email)} · ${esc(request.preschool_name)} · ${esc(formatTimestamp(request.created_at))}</span></p>${options.length ? selectField("Avdelning", "department_id", options, "", true) : `<p class="notice error">Skapa en avdelning på skolan först.</p>`}<div class="stack-actions"><button class="primary" type="button" data-action="approve-join" data-id="${esc(request.request_id)}" ${options.length ? "" : "disabled"}>Godkänn</button><button class="secondary" type="button" data-action="reject-join" data-id="${esc(request.request_id)}">Avslå</button></div></form>`;
+    }).join("") : `<p class="form-hint">Inga väntande ansökningar. Den som väntar ser inga barn eller meddelanden.</p>`}
+    <h3>Aktiv personal</h3>
+    ${groups.length ? `<ul class="invite-list">${groups.map((person) => `<li><div><strong>${esc(person.name)}</strong><span>${esc(person.email)}${person.departments.length ? ` · ${esc(person.departments.join(", "))}` : ""}</span></div><div class="invite-actions"><button class="link danger-link" type="button" data-action="remove-staff" data-id="${esc(person.id)}" data-name="${esc(person.name)}">Ta bort åtkomst</button></div></li>`).join("")}</ul>` : `<p class="form-hint">Ingen personal är kopplad ännu.</p>`}
+  </section>`;
+}
+
 function renderSchools() {
   if (state.profile.role !== "admin") return renderAttendance();
   return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">Skolor och terminer</h1><p class="sub">${esc(state.organization?.name || "")}</p></section>
-    ${state.schools.map((school) => `<section class="school-admin"><article class="card"><p class="kicker">Skola</p><h2>${esc(school.name)}</h2><p>${esc(compact([school.address, compact([school.postal_code, school.city]).join(" ")]).join(", ") || "Ingen adress registrerad")}</p><p class="meta">${esc(compact([school.phone, school.opening_hours]).join(" · ") || "Inga kontaktuppgifter registrerade")}</p><ul class="rows">${state.departments.filter((department) => department.preschool_id === school.id).map((department) => `<li><span>${esc(department.name)}</span><span class="status">${state.children.filter((child) => child.department_id === department.id).length} barn</span></li>`).join("") || "<li><span>Inga avdelningar</span></li>"}</ul></article>${renderTermManager(school)}</section>`).join("") || emptyState("Ingen skola skapad", "Skapa organisationens första skola nedan.")}
+    ${renderSchoolCodeResult()}
+    ${renderInviteResult("staff")}
+    ${state.schools.map(renderSchoolAdmin).join("") || emptyState("Ingen skola skapad", "Skapa organisationens första skola nedan.")}
+    ${renderStaffAccess()}
     <form class="card form-stack" data-form="school-create"><h2>Skapa ny skola</h2>
       ${field("Skolans namn", "name", "", { required: true })}
       <div class="form-grid">${field("Telefon", "phone", "", { type: "tel" })}${field("Öppettider", "opening_hours", "", { placeholder: "06:30–17:30" })}</div>
@@ -1505,25 +1700,33 @@ function invitationLink(code) {
   return `${location.origin}${location.pathname}?invite=${encodeURIComponent(code)}`;
 }
 
+function renderSiblingReview(request) {
+  const options = state.children
+    .filter((child) => child.department_id === request.department_id)
+    .map((child) => [child.id, `${child.name} · ${formatDate(child.birth_date)}`]);
+  return `<form class="form-stack sibling-review" data-form="review-only" data-request-id="${esc(request.request_id)}"><p><strong>${esc(request.child_name)}</strong><span class="meta">${esc(formatDate(request.birth_date))} · ${esc(request.department_name)} · ${esc(request.guardian_name)} (${esc(request.guardian_email)})</span></p>${request.note ? `<p class="form-hint">${esc(request.note)}</p>` : ""}${options.length ? selectField("Befintligt barn på avdelningen", "existing_child_id", [["", "Skapa ett nytt barn från förfrågan"], ...options], "") : `<p class="form-hint">Inget barn med det här namnet finns i listan. Godkännande skapar ett nytt barn och kopplar vårdnadshavaren.</p>`}<div class="stack-actions"><button class="primary" type="button" data-action="review-sibling" data-decision="approve" data-id="${esc(request.request_id)}">Godkänn och koppla</button><button class="secondary" type="button" data-action="review-sibling" data-decision="reject" data-id="${esc(request.request_id)}">Avslå</button></div></form>`;
+}
+
 function renderPeople() {
-  const admin = state.profile.role === "admin";
-  const pendingInvites = state.invitations.filter((invite) => invite.status === "pending");
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barn och inbjudningar</p><h1 class="h1">Personer</h1><p class="sub">Lägg till barnet först. Bjud sedan in vårdnadshavare eller personal med rätt behörighet.</p></section>
+  const guardianInvites = state.invitations.filter((invite) => invite.role === "parent" && invite.status === "pending");
+  const reviews = state.siblingRequests.filter((request) => request.status === "pending");
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barn och vårdnadshavare</p><h1 class="h1">Personer</h1><p class="sub">Lägg till barnet på avdelningen. Bjud sedan in varje vårdnadshavare med en egen länk.</p></section>
+    ${renderInviteResult("parent")}
     <form class="card form-stack" data-form="child-create"><h2>Lägg till barn</h2>
       ${departmentOptions().length ? selectField("Avdelning", "department_id", departmentOptions(), "", true) : `<p class="notice error">Skapa en skola och avdelning först.</p>`}
       <div class="form-grid">${field("Barnets namn", "name", "", { required: true })}${field("Födelsedatum", "birth_date", "", { type: "date" })}</div>
       <button class="primary" type="submit" ${departmentOptions().length ? "" : "disabled"}>Lägg till barn</button>
     </form>
-    <form class="card form-stack" data-form="invite-create"><h2>Skapa inbjudan</h2>
-      ${admin ? selectField("Roll", "role", [["parent", "Vårdnadshavare"], ["staff", "Personal"]], "parent", true) : `<input type="hidden" name="role" value="parent"><p class="form-hint">Du kan bjuda in vårdnadshavare till barn i din avdelning.</p>`}
+    <form class="card form-stack" data-form="invite-create"><h2>Bjud in vårdnadshavare</h2>
+      <input type="hidden" name="role" value="parent">
+      <p class="form-hint">Länken gäller ett barn, kan användas en gång och slutar gälla efter 14 dagar. En andra vårdnadshavare får en egen länk till samma barn. Den som redan har konto öppnar länken och får barnet på samma konto.</p>
       ${field("E-post", "email", "", { type: "email", required: true, autocomplete: "email" })}
-      ${selectField("Barn (för vårdnadshavare)", "child_id", [["", "Välj barn"], ...state.children.map((child) => [child.id, `${child.name} · ${departmentName(child.department_id)}`])], "")}
-      ${admin ? selectField("Avdelning (för personal)", "department_id", [["", "Välj avdelning"], ...departmentOptions()], "") : ""}
+      ${selectField("Barn", "child_id", [["", "Välj barn"], ...state.children.map((child) => [child.id, `${child.name} · ${departmentName(child.department_id)}`])], "", true)}
       ${field("Relation", "relation", "Vårdnadshavare", { placeholder: "Vårdnadshavare" })}
-      <button class="primary" type="submit">Skapa inbjudan</button>
+      <button class="primary" type="submit" ${state.children.length ? "" : "disabled"}>Skapa inbjudan</button>
     </form>
-    ${state.inviteResult ? `<article class="card success-card"><p class="kicker">Inbjudan skapad</p><h3>${esc(state.inviteResult.email)}</h3><code class="invite-code">${esc(state.inviteResult.code)}</code><div class="actions"><button class="primary" data-action="copy-invite" data-code="${esc(state.inviteResult.code)}">Kopiera inbjudningslänk</button><a class="secondary button-link" href="mailto:${encodeURIComponent(state.inviteResult.email)}?subject=${encodeURIComponent(`Inbjudan till ${APP_NAME}`)}&body=${encodeURIComponent(`Du är inbjuden till ${APP_NAME}. Öppna ${invitationLink(state.inviteResult.code)}`)}">Öppna e-post</a></div></article>` : ""}
-    <article class="card"><h2>Aktiva inbjudningar</h2>${pendingInvites.length ? `<ul class="invite-list">${pendingInvites.map((invite) => `<li><div><strong>${esc(invite.email)}</strong><span>${esc(roleLabel(invite.role))} · går ut ${esc(formatDate(invite.expires_at?.slice(0, 10)))}</span><code>${esc(invite.code)}</code></div><div><button class="link" data-action="copy-invite" data-code="${esc(invite.code)}">Kopiera</button><button class="link danger-link" data-action="revoke-invite" data-id="${esc(invite.id)}">Återkalla</button></div></li>`).join("")}</ul>` : `<p class="form-hint">Inga väntande inbjudningar.</p>`}</article>
+    <article class="card"><h2>Väntande vårdnadshavarinbjudningar</h2>${guardianInvites.length ? `<ul class="invite-list">${guardianInvites.map((invite) => `<li><div><strong>${esc(invite.email)}</strong><span>${esc(invite.relation || "Vårdnadshavare")} · ${esc(invitePlace(invite))} · ${esc(inviteExpiryLabel(invite))}</span></div>${renderInviteActions(invite)}</li>`).join("")}</ul>` : `<p class="form-hint">Inga väntande inbjudningar.</p>`}</article>
+    <article class="card"><h2>Syskonförfrågningar</h2><p class="form-hint">Godkänn bara när du vet att vårdnadshavaren ska kopplas till barnet. Välj ett barn som redan finns, eller låt förfrågan skapa ett nytt.</p>${reviews.length ? reviews.map(renderSiblingReview).join("") : `<p class="form-hint">Inga förfrågningar väntar.</p>`}</article>
     <article class="card"><h2>Barn</h2>${state.children.length ? `<ul class="rows">${state.children.map((child) => `<li><span><strong>${esc(child.name)}</strong><br><small>${esc(departmentName(child.department_id))}</small></span><span class="status">${child.birth_date ? esc(formatDate(child.birth_date)) : "Födelsedatum saknas"}</span></li>`).join("")}</ul>` : `<p class="form-hint">Inga barn registrerade.</p>`}</article>`;
 }
 
@@ -1567,8 +1770,8 @@ function render() {
   }
   accountButton.hidden = false;
   accountButton.innerHTML = `<strong>${esc(state.profile?.name || "Konto")}</strong><small>${esc(state.profile ? roleLabel(state.profile.role) : "Kom igång")}</small>`;
-  if (!state.profile) {
-    screen.innerHTML = renderOnboarding();
+  if (!state.profile || state.profile.removed_at) {
+    screen.innerHTML = state.profile?.removed_at ? renderRemovedAccess() : state.onboarding?.kind === "pending" ? renderPendingAccess() : renderOnboarding();
     nav.innerHTML = "";
     renderAssistant();
     return;
@@ -1620,6 +1823,7 @@ document.body.addEventListener("submit", (event) => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(form));
   const type = form.dataset.form;
+  if (type === "review-only") return;
   if (type === "assistant-question") {
     const question = String(values.question || "").trim();
     if (!question) return;
@@ -1640,7 +1844,13 @@ document.body.addEventListener("submit", (event) => {
             ? "Terminen är uppdaterad. Vårdnadshavare ser ändringen direkt. Scheman som inte ryms markeras och tas inte bort."
             : "Utkastet är uppdaterat.")
           : "Utkastet är skapat. Du hittar det i listan och kan publicera det när det är granskat.")
-        : "Sparat.";
+        : {
+          "invite-create": "Inbjudan är skapad. Kopiera länken nu. Den visas inte igen.",
+          "staff-invite": "Personalinbjudan är skapad. Kopiera länken nu. Den visas inte igen.",
+          "sibling-request": "Förfrågan är skickad. Barnet kopplas först när personalen godkänner den.",
+          "school-code-join": "Ansökan är skickad. Uppgifter visas först efter godkännande.",
+          "department-create": "Avdelningen är skapad.",
+        }[type] || "Sparat.";
   runMutation(async () => {
     if (type === "login") {
       await login(values.email.trim(), values.password);
@@ -1665,6 +1875,42 @@ document.body.addEventListener("submit", (event) => {
       });
       await loadData();
       state.view = "overview";
+      return;
+    }
+    if (type === "school-code-join") {
+      await rpc("request_staff_join", { school_code: values.school_code.trim() });
+      await loadData();
+      return;
+    }
+    if (type === "department-create") {
+      await rpc("create_department", {
+        target_preschool_id: form.dataset.preschoolId,
+        department_name: values.department_name.trim(),
+      });
+      await loadData();
+      return;
+    }
+    if (type === "staff-invite") {
+      if (!values.department_id) throw new Error("Välj vilken avdelning personalen ska kopplas till.");
+      const invitation = await rpc("create_invitation", {
+        invite_email: values.email.trim().toLowerCase(),
+        invite_role: "staff",
+        invite_department_id: values.department_id,
+        invite_child_id: null,
+        invite_relation: null,
+      });
+      state.inviteResult = Array.isArray(invitation) ? invitation[0] : invitation;
+      await loadData();
+      return;
+    }
+    if (type === "sibling-request") {
+      await rpc("submit_sibling_request", {
+        child_name: values.name.trim(),
+        child_birth_date: values.birth_date,
+        child_department_id: values.department_id,
+        request_note: values.note.trim(),
+      });
+      await loadData();
       return;
     }
     if (type === "school-create") {
@@ -1705,29 +1951,14 @@ document.body.addEventListener("submit", (event) => {
       await loadData();
       return;
     }
-    if (type === "parent-child-create") {
-      const created = await rpc("register_guardian_child", {
-        child_name: values.name.trim(),
-        child_birth_date: values.birth_date,
-        child_department_id: values.department_id,
-      });
-      await loadData();
-      const result = Array.isArray(created) ? created[0] : created;
-      state.selectedChildId = result?.child_id || state.children.at(-1)?.id || null;
-      state.view = "child";
-      setTimeout(() => scrollTo({ top: 0 }), 0);
-      return;
-    }
     if (type === "invite-create") {
-      const role = values.role;
-      if (role === "parent" && !values.child_id) throw new Error("Välj vilket barn vårdnadshavaren ska kopplas till.");
-      if (role === "staff" && !values.department_id) throw new Error("Välj vilken avdelning personalen ska kopplas till.");
+      if (!values.child_id) throw new Error("Välj vilket barn vårdnadshavaren ska kopplas till.");
       const invitation = await rpc("create_invitation", {
         invite_email: values.email.trim().toLowerCase(),
-        invite_role: role,
-        invite_department_id: role === "staff" ? values.department_id : null,
-        invite_child_id: role === "parent" ? values.child_id : null,
-        invite_relation: role === "parent" ? values.relation.trim() || "Vårdnadshavare" : null,
+        invite_role: "parent",
+        invite_department_id: null,
+        invite_child_id: values.child_id,
+        invite_relation: values.relation.trim() || "Vårdnadshavare",
       });
       state.inviteResult = Array.isArray(invitation) ? invitation[0] : invitation;
       await loadData();
@@ -2083,19 +2314,79 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "copy-invite") {
-    const link = invitationLink(target.dataset.code);
+    const link = invitationLink(target.dataset.token);
     runMutation(async () => navigator.clipboard.writeText(link), "Inbjudningslänken är kopierad.");
+    return;
+  }
+  if (action === "copy-text") {
+    runMutation(async () => navigator.clipboard.writeText(target.dataset.text), "Koden är kopierad.");
+    return;
+  }
+  if (action === "resend-invite") {
+    runMutation(async () => {
+      const invitation = await rpc("resend_invitation", { invite_id: target.dataset.id });
+      state.inviteResult = Array.isArray(invitation) ? invitation[0] : invitation;
+      await loadData();
+    }, "En ny länk är skapad. Kopiera den nu. Den tidigare länken fungerar inte längre.");
     return;
   }
   if (action === "revoke-invite") {
     runMutation(async () => {
-      await request(`/rest/v1/invitations?id=eq.${encodeURIComponent(target.dataset.id)}`, {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ status: "revoked", revoked_at: new Date().toISOString() }),
-      });
+      await rpc("revoke_invitation", { invite_id: target.dataset.id });
+      if (state.inviteResult?.id === target.dataset.id) state.inviteResult = null;
       await loadData();
     }, "Inbjudan är återkallad.");
+    return;
+  }
+  if (action === "rotate-school-code") {
+    runMutation(async () => {
+      const result = await rpc("rotate_school_join_code", { target_preschool_id: target.dataset.id });
+      state.schoolCodeResult = Array.isArray(result) ? result[0] : result;
+      await loadData();
+    }, "Ny skolkod är skapad. Kopiera den nu. Den tidigare koden fungerar inte längre.");
+    return;
+  }
+  if (action === "approve-join") {
+    const form = target.closest("form");
+    const departmentId = form?.elements.department_id?.value;
+    if (!departmentId) {
+      state.notice = { type: "error", text: "Välj avdelning innan du godkänner." };
+      render();
+      return;
+    }
+    runMutation(async () => {
+      await rpc("approve_staff_join", { request_id: target.dataset.id, target_department_id: departmentId });
+      await loadData();
+    }, "Ansökan är godkänd och personen är kopplad till avdelningen.");
+    return;
+  }
+  if (action === "reject-join") {
+    runMutation(async () => {
+      await rpc("reject_staff_join", { request_id: target.dataset.id });
+      await loadData();
+    }, "Ansökan är avslagen.");
+    return;
+  }
+  if (action === "remove-staff") {
+    const name = target.dataset.name || "personen";
+    if (!window.confirm(`Ta bort åtkomsten för ${name}? Barn och vårdnadshavare finns kvar. Personen ser inga uppgifter efteråt.`)) return;
+    runMutation(async () => {
+      await rpc("remove_staff_member", { target_profile_id: target.dataset.id });
+      await loadData();
+    }, "Personalens åtkomst är borttagen.");
+    return;
+  }
+  if (action === "review-sibling") {
+    const form = target.closest("form");
+    const existingChildId = target.dataset.decision === "approve" ? form?.elements.existing_child_id?.value || null : null;
+    runMutation(async () => {
+      await rpc("review_sibling_request", {
+        request_id: target.dataset.id,
+        decision: target.dataset.decision,
+        existing_child_id: existingChildId,
+      });
+      await loadData();
+    }, target.dataset.decision === "approve" ? "Förfrågan är godkänd och vårdnadshavaren är kopplad." : "Förfrågan är avslagen.");
   }
 });
 
@@ -2113,7 +2404,16 @@ document.addEventListener("keydown", (event) => {
     state.busy = true;
     render();
     try {
-      await loadData();
+      if (state.inviteCode) {
+        try {
+          await acceptInvitation(state.inviteCode);
+        } catch (error) {
+          state.notice = { type: "error", text: error.message };
+          await loadData();
+        }
+      } else {
+        await loadData();
+      }
     } catch (error) {
       state.notice = { type: "error", text: error.message };
       if (/jwt|token|session/i.test(error.message)) saveSession(null);

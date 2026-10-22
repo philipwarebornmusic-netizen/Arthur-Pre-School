@@ -111,7 +111,14 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .status { color: var(--muted); font-size: 13px; text-align: right; }
 .contact-list a { flex: 0 0 auto; font-weight: 900; }
 .invite-list code { display: inline-block; margin-top: 5px; font-size: 12px; }
-.invite-list li > div:last-child { display: flex; gap: 10px; }
+.invite-list li > div:last-child, .invite-actions { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.invite-actions .link { min-height: 44px; }
+.secret-value { display: block; margin: 12px 0 0; padding: 12px; overflow-wrap: anywhere; background: var(--paper); border: 1px dashed var(--sage); border-radius: 14px; font-size: 14px; line-height: 1.45; }
+.stack-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.stack-actions > * { width: auto; flex: 1 1 160px; }
+.school-department-form, .join-request, .sibling-review { margin-top: 16px; }
+.join-request, .sibling-review { padding-top: 14px; border-top: 1px solid var(--line); }
+.school-admin .secondary { margin-top: 10px; }
 .rows li > *, .contact-list li > *, .invite-list li > * { min-width: 0; }
 .rows strong, .contact-list strong, .invite-list strong { overflow-wrap: anywhere; }
 .invite-code { display: block; margin: 16px 0; padding: 14px; background: var(--paper); border: 1px dashed var(--sage); border-radius: 14px; font-size: clamp(18px, 5vw, 26px); font-weight: 900; letter-spacing: .06em; text-align: center; }
@@ -345,6 +352,7 @@ html[data-busy]::after { position: fixed; inset: 0; z-index: 100; display: grid;
   .app-frame:has(#bottomNav button) .bottom-nav button[aria-current="page"] { background: var(--sun-soft); box-shadow: inset 3px 0 0 var(--sun); }
   .app-frame:has(#bottomNav button) .bottom-nav .ico { display: grid; flex: 0 0 28px; place-items: center; width: 28px; height: 28px; margin: 0; font-size: 18px; }
   body:has(#bottomNav button) .skip-link { left: calc(var(--side-width, 272px) + 16px); }
+  #staff-access > form { max-width: 720px; }
 }
 
 @media (min-width: 1400px) {

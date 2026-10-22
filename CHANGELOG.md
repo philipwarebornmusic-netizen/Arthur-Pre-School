@@ -1,5 +1,15 @@
 # Ändringslogg
 
+## 2026-10-21 — Inbjudningar styr vem som kommer in
+
+- En administratör skapar organisationen, skolan och avdelningarna och bjuder in personal till en bestämd skola och avdelning.
+- Personal bjuder in varje vårdnadshavare till ett visst barn. En andra vårdnadshavare får en egen länk, och ett befintligt konto kan ta emot ytterligare ett barn.
+- En skolkod kan användas som reserv, men ansökan visar inga uppgifter förrän en administratör godkänner den och väljer avdelning.
+- Vårdnadshavare kan inte längre koppla ett barn själva. Ett syskon kopplas först när personalen godkänner förfrågan.
+- Inbjudningslänkar kan användas en gång. Personalens länk gäller i 7 dagar och vårdnadshavarens i 14 dagar. Administratören kan se, skicka igen och återkalla väntande inbjudningar samt ta bort personalens åtkomst.
+- Råa inbjudningskoder lagras inte. Migreringen `supabase/009_invite_onboarding.sql` ska köras för hand och har inte körts mot produktion.
+- Inbjudningssidorna följer skrivbordets vänsterspalt från 1200 px och bottenmenyn på smalare skärmar. Den som ännu inte har en profil ser samma breda välkomstsida som övriga kontosidor.
+
 ## 2026-10-21 — Skrivbordslayout som fyller skärmen
 
 - Låter appen använda hela fönstret på breda skärmar i stället för en centrerad kolumn.
@@ -16,7 +26,7 @@
 - Låter administratörer ändra datum, vardagsöppettider och stängningsdagar även efter publicering.
 - Behåller förbudet mot överlappande publicerade terminer. Personal och vårdnadshavare ser bara publicerade terminer, inklusive senare ändringar.
 - Markerar vårdnadshavarens veckoschema när tiderna inte längre ryms inom öppettiderna, i stället för att ta bort det.
-- Kräver migration `supabase/008_term_staff_publish_and_edits.sql` innan den nya behörigheten gäller i drift. Migrationen är inte körd mot produktionsdatabasen.
+- Kräver migration `supabase/008_term_staff_publish_and_edits.sql` innan den nya behörigheten gäller i drift. Migrationen är redan körd mot produktionsdatabasen.
 
 ## 2026-10-21 — Responsiv layout på mobil, surfplatta och dator
 
