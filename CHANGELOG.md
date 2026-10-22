@@ -1,5 +1,11 @@
 # Ändringslogg
 
+## 2026-10-22 — Signerade bildadresser
+
+- Profilbilder och bilder i inlägg får `/storage/v1` i den signerade adressen, så att de inte blir 404.
+- Efter en sparad profilbild signeras filen om, så att den gamla bilden inte ligger kvar.
+- Om bilden inte kan laddas visas barnets initialer.
+
 ## 2026-10-22 — Klasslista och profilbilder
 
 - Vårdnadshavare kan ladda upp, byta och ta bort en kvadratisk profilbild på Barnet. Bilden beskärs i webbläsaren, förminskas till cirka 512 pixlar och sparas som JPEG utan kamerans dolda uppgifter.

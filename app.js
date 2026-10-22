@@ -324,6 +324,14 @@ function encodedStoragePath(path) {
   return String(path).split("/").map(encodeURIComponent).join("/");
 }
 
+function storageSignedUrl(signedPath) {
+  if (!signedPath) return "";
+  if (/^https?:\/\//i.test(signedPath)) return signedPath;
+  const base = String(config.url || "").replace(/\/$/, "");
+  const rel = signedPath.startsWith("/") ? signedPath : `/${signedPath}`;
+  return rel.startsWith("/storage/v1/") ? `${base}${rel}` : `${base}/storage/v1${rel}`;
+}
+
 async function signPostImages(images) {
   if (!images.length) return [];
   const signed = await request("/storage/v1/object/sign/post-images", {
@@ -331,10 +339,7 @@ async function signPostImages(images) {
     body: JSON.stringify({ expiresIn: 3600, paths: images.map((image) => image.storage_path) }),
   });
   const urls = new Map((signed || []).map((item) => [item.path, item.signedURL || item.signedUrl]));
-  return images.map((image) => {
-    const signedPath = urls.get(image.storage_path);
-    return { ...image, signed_url: signedPath ? (signedPath.startsWith("http") ? signedPath : `${config.url}${signedPath}`) : "" };
-  });
+  return images.map((image) => ({ ...image, signed_url: storageSignedUrl(urls.get(image.storage_path)) }));
 }
 
 async function uploadPostImage(path, blob) {
@@ -760,7 +765,7 @@ async function signChildPhotos(paths) {
     (signed || []).forEach((item) => {
       const signedPath = item.signedURL || item.signedUrl;
       if (!item.path || !signedPath) return;
-      urls[item.path] = signedPath.startsWith("http") ? signedPath : `${config.url}${signedPath}`;
+      urls[item.path] = storageSignedUrl(signedPath);
     });
     return urls;
   } catch {
@@ -1407,9 +1412,10 @@ function childPhotoUrl(path) {
 }
 
 function childAvatarHtml(name, url, color = "") {
-  if (url) return `<span class="child-avatar has-photo"><img src="${esc(url)}" alt=""></span>`;
+  const initials = esc(childInitials(name));
   const style = color ? ` style="background:${esc(color)}"` : "";
-  return `<span class="child-avatar"${style} aria-hidden="true">${esc(childInitials(name))}</span>`;
+  if (url) return `<span class="child-avatar has-photo"${style}><img src="${esc(url)}" alt="" onerror="this.parentElement.classList.remove('has-photo'); this.remove();"><span class="avatar-initials">${initials}</span></span>`;
+  return `<span class="child-avatar"${style} aria-hidden="true">${initials}</span>`;
 }
 
 function childPhotoPath(childId) {
@@ -1471,6 +1477,9 @@ async function saveChildPhoto(childId, file) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       await rpc("set_child_photo", { target_child_id: childId, object_path: path });
+      delete state.childPhotoUrls[path];
+      const fresh = await signChildPhotos([path]);
+      if (fresh[path]) state.childPhotoUrls[path] = fresh[path];
       return;
     } catch (error) {
       lastError = error;
