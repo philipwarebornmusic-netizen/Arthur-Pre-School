@@ -91,24 +91,14 @@
     const open = Boolean(term) && !closed;
     const horizonEnd = addDays(today, 6);
     const plan = plansByDate.get(iso);
-    const previous = plansByDate.get(addDays(iso, -7));
+    const savedDropoff = clock(plan?.dropoff_at);
+    const savedPickup = clock(plan?.pickup_at);
+    const saved = Boolean(savedDropoff && savedPickup);
+    const picker = saved ? explicitPicker(plan) : null;
     const standardRow = (term?.standard || []).find((row) => Number(row.weekday) === weekday && row.attending);
-    const standardPicker = (input.standardPickers || []).find((row) => Number(row.weekday) === weekday);
-    let dropoff = clock(plan?.dropoff_at);
-    let pickup = clock(plan?.pickup_at);
-    if (!dropoff || !pickup) {
-      const previousDropoff = clock(previous?.dropoff_at);
-      const previousPickup = clock(previous?.pickup_at);
-      if (previousDropoff && previousPickup) {
-        dropoff = previousDropoff;
-        pickup = previousPickup;
-      } else if (standardRow) {
-        dropoff = clock(standardRow.dropoff_at);
-        pickup = clock(standardRow.pickup_at);
-      }
-    }
-    const picker = explicitPicker(plan) || carriedPicker(previous) || carriedPicker(standardPicker);
-    const times = dropoff && pickup ? `${dropoff}–${pickup}` : "";
+    const suggestionDropoff = !saved && open ? clock(standardRow?.dropoff_at) : "";
+    const suggestionPickup = !saved && open ? clock(standardRow?.pickup_at) : "";
+    const suggestion = Boolean(suggestionDropoff && suggestionPickup);
     return {
       iso,
       weekday,
@@ -119,12 +109,16 @@
       open,
       today: iso === today,
       inHorizon: Boolean(today) && iso >= today && iso <= horizonEnd,
-      times,
-      dropoff,
-      pickup,
+      saved,
+      times: saved ? `${savedDropoff}–${savedPickup}` : "",
+      dropoff: saved ? savedDropoff : "",
+      pickup: saved ? savedPickup : "",
+      suggestion,
+      suggestionDropoff: suggestion ? suggestionDropoff : "",
+      suggestionPickup: suggestion ? suggestionPickup : "",
       picker,
       otherPerson: someoneElse(open, picker, input.viewerId),
-      filled: Boolean(open && times && picker),
+      filled: Boolean(open && saved && picker),
       closureReason: term?.closureReasons?.[iso] || "",
     };
   }
@@ -178,18 +172,20 @@
     if (day.today) classes.push("is-today");
     if (day.closed) classes.push("is-closed");
     if (day.outside) classes.push("is-outside");
-    if (day.open && !day.times) classes.push("is-empty");
+    if (day.open && !day.saved) classes.push("is-empty");
     if (day.open && !day.filled && day.inHorizon) classes.push("is-open");
     const person = day.otherPerson ? personIcon() : "";
-    const clocks = day.dropoff && day.pickup
+    const clocks = day.saved
       ? `<span class="term-cell-times"><span>${escapeHtml(day.dropoff)}</span><span class="term-cell-dash">–</span><span>${escapeHtml(day.pickup)}</span></span>`
-      : "";
+      : day.suggestion
+        ? `<span class="term-cell-times is-suggestion"><span>${escapeHtml(day.suggestionDropoff)}</span><span class="term-cell-dash">–</span><span>${escapeHtml(day.suggestionPickup)}</span></span>`
+        : "";
     const body = day.closed
       ? `${closedIcon()}<span class="visually-hidden">Stängt${day.closureReason ? `, ${escapeHtml(day.closureReason)}` : ""}</span>`
       : clocks || `<span class="term-cell-empty" aria-hidden="true"></span>`;
     const label = [
       shortDate(day.iso),
-      day.closed ? "stängt" : day.times || (day.open ? "ingen tid" : ""),
+      day.closed ? "stängt" : day.times || (day.suggestion ? `förslag ${day.suggestionDropoff}–${day.suggestionPickup}` : (day.open ? "ingen tid" : "")),
       day.otherPerson ? "någon annan hämtar" : "",
     ].filter(Boolean).join(", ");
     const todayId = day.today ? 'id="pickup-today"' : "";
@@ -209,7 +205,8 @@
     const weeks = grid.weeks.map((week) => {
       const range = week.label.replace(/ v\.\d+$/, "");
       const number = week.label.match(/v\.\d+$/)?.[0] || "";
-      const labelInner = `<span>${escapeHtml(range)}</span><small>${escapeHtml(number)}</small>${week.needsPlan ? "<em>Inte ifylld</em>" : ""}`;
+      const unsaved = week.days.some((day) => day.open && !day.saved);
+      const labelInner = `<span>${escapeHtml(range)}</span><small>${escapeHtml(number)}</small>${unsaved ? "<em>Ej ifylld</em>" : ""}`;
       const label = editable
         ? `<button type="button" class="term-grid-label" data-action="edit-pickup-week" data-monday="${escapeHtml(week.monday)}">${labelInner}</button>`
         : `<div class="term-grid-label">${labelInner}</div>`;
@@ -264,7 +261,11 @@
       if (weekMonday(item.plan.plan_date) !== bestMonday) continue;
       byWeekday.set(weekdayNumber(item.plan.plan_date), item.times);
     }
-    return byWeekday;
+    return { monday: bestMonday, byWeekday };
+  }
+
+  function hasEarlierSavedWeek(input, monday) {
+    return Boolean(latestSavedWeek(input, monday));
   }
 
   function clonePicker(picker) {
@@ -295,7 +296,7 @@
     if (!week) return [];
     const plans = new Map((input?.dayPlans || []).map((plan) => [plan.plan_date, plan]));
     const standardWeek = week.days.some((day) => day.open && standardEntry(input, day.iso));
-    const recent = standardWeek ? null : latestSavedWeek(input, monday);
+    const recent = standardWeek ? null : latestSavedWeek(input, monday)?.byWeekday;
     const seeded = week.days.map((day) => {
       const own = planTimes(plans.get(day.iso));
       const standard = standardWeek && day.open ? standardEntry(input, day.iso) : null;
@@ -414,25 +415,33 @@
 
   function fillFromPreviousWeek(days, input, monday) {
     const plans = new Map((input?.dayPlans || []).map((plan) => [plan.plan_date, plan]));
-    let copied = 0;
-    const next = (days || []).map((day) => {
-      if (!day.open || day.closed) return day;
-      const saved = planTimes(plans.get(addDays(day.iso, -7)));
-      if (!saved) return day;
-      copied += 1;
-      const picker = clonePicker(saved.picker) || clonePicker(day.picker);
-      return {
-        ...day,
-        dropoff: saved.dropoff,
-        pickup: saved.pickup,
-        ledig: false,
-        picker,
-        pickerDefault: !saved.picker && Boolean(day.pickerDefault),
-        manual: false,
-        origin: "previous",
-      };
-    });
-    return { days: next, copied };
+    const apply = (lookup) => {
+      let copied = 0;
+      const next = (days || []).map((day) => {
+        if (!day.open || day.closed) return day;
+        const saved = lookup(day);
+        if (!saved) return day;
+        copied += 1;
+        const picker = clonePicker(saved.picker) || clonePicker(day.picker);
+        return {
+          ...day,
+          dropoff: saved.dropoff,
+          pickup: saved.pickup,
+          ledig: false,
+          picker,
+          pickerDefault: !saved.picker && Boolean(day.pickerDefault),
+          manual: false,
+          origin: "previous",
+        };
+      });
+      return { days: next, copied };
+    };
+    const direct = apply((day) => planTimes(plans.get(addDays(day.iso, -7))));
+    if (direct.copied) return { ...direct, weekNumber: isoWeekNumber(addDays(monday, -7)), fallback: false };
+    const recent = latestSavedWeek(input, monday);
+    if (!recent) return { days: days || [], copied: 0, weekNumber: 0, fallback: false };
+    const fallback = apply((day) => recent.byWeekday.get(day.weekday));
+    return { ...fallback, weekNumber: isoWeekNumber(recent.monday), fallback: Boolean(fallback.copied) };
   }
 
   function renderWeekEditor(model) {
@@ -456,7 +465,9 @@
       return `<div class="${classes.join(" ")}" data-weekday="${weekday}">${circle}<label class="week-time"><span class="visually-hidden">Lämning ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="dropoff" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.dropoff || "")}" ${disabled}></label><span class="week-dash" aria-hidden="true">–</span><label class="week-time"><span class="visually-hidden">Hämtning ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="pickup" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.pickup || "")}" ${disabled}></label><label class="week-ledig"><input type="checkbox" data-week-ledig data-date="${escapeHtml(day.iso)}" ${day.ledig ? "checked" : ""}><span>Ledig</span></label><button class="week-avatar ${avatarKind}" type="button" data-action="open-picker" data-date="${escapeHtml(day.iso)}" aria-label="Vem hämtar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(day.initials || "?")}</button></div>`;
     }).join("");
     const error = model?.error ? `<p class="notice error">${escapeHtml(model.error)}</p>` : "";
-    return `<section id="week-sheet" class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="week-sheet-title"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="week-sheet-title">Vecka ${escapeHtml(model?.weekNumber || "")}</h1><button class="week-save" type="button" data-action="save-pickup-week">Spara</button></header><div class="week-sheet-body">${error}<button class="secondary week-copy" type="button" data-action="same-as-previous-week">Samma som förra veckan</button>${rows}<p class="form-hint">Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen.</p></div></section>`;
+    const note = model?.note ? `<p class="form-hint" data-week-note>${escapeHtml(model.note)}</p>` : "";
+    const copyButton = model?.canCopyPrevious ? `<button class="secondary week-copy" type="button" data-action="same-as-previous-week">Samma som förra veckan</button>` : "";
+    return `<section id="week-sheet" class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="week-sheet-title"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="week-sheet-title">Vecka ${escapeHtml(model?.weekNumber || "")}</h1><button class="week-save" type="button" data-action="save-pickup-week">Spara</button></header><div class="week-sheet-body">${error}${note}${copyButton}${rows}<p class="form-hint">Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen.</p></div></section>`;
   }
 
   function renderPickerSheet(model) {
@@ -469,7 +480,13 @@
   }
 
   function staffPickupCaption(rows, today) {
-    const ordered = [...(rows || [])].sort((left, right) => String(left.plan_date).localeCompare(String(right.plan_date)));
+    const savedOnly = (row) => {
+      if (row?.saved === false || row?.source === "previous" || row?.source === "standard") {
+        return { ...row, dropoff_at: "", pickup_at: "", picker_label: "" };
+      }
+      return row;
+    };
+    const ordered = [...(rows || [])].map(savedOnly).sort((left, right) => String(left.plan_date).localeCompare(String(right.plan_date)));
     const todayRow = ordered.find((row) => row.plan_date === today);
     let todayText = "";
     if (todayRow?.in_term && todayRow.closed) todayText = "Idag stängt";
@@ -490,6 +507,7 @@
     isoWeekNumber,
     assignDefaultPicker,
     fillFromPreviousWeek,
+    hasEarlierSavedWeek,
     personInitials,
     reopenWeekDay,
     renderPickerSheet,

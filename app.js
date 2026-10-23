@@ -2099,7 +2099,7 @@ function renderParentTermSchedules(child) {
   const edit = state.pickupWeekReady
     ? `<button class="secondary" type="button" data-action="navigate" data-view="pickup">Ändra i Hämtning</button>`
     : terms.map((term) => renderWeeklyScheduleForm(term, child)).join("");
-  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${cards}${grid ? `<article class="card term-card">${grid}<p class="form-hint">Varje rad är en vecka. Rosa dagar är stängda, grå dagar ligger utanför terminen, och dagens ruta är markerad.</p></article>` : ""}${edit}</section>`;
+  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${cards}${grid ? `<article class="card term-card">${grid}<p class="form-hint">Varje rad är en vecka. Bara sparade dagar är ifyllda. Rosa dagar är stängda, grå dagar ligger utanför terminen, och dagens ruta är markerad.</p></article>` : ""}${edit}</section>`;
 }
 
 function parseClosureLines(value) {
@@ -2306,7 +2306,7 @@ function pickupGridInput(child) {
 function renderPickupWeekNudge(child) {
   if (!child || !state.pickupWeekReady || typeof ArtanPickup === "undefined") return "";
   if (!ArtanPickup.buildTermGrid(pickupGridInput(child)).unfilled) return "";
-  return `<section class="card pickup-nudge"><p class="kicker">Hämtning</p><h2>Nästa vecka är inte ifylld</h2><p>Fyll i tider och vem som hämtar för de närmaste vardagarna. En standardvecka eller samma tider som förra veckan räcker.</p><button class="primary" type="button" data-action="navigate" data-view="pickup">Öppna hämtningen</button></section>`;
+  return `<section class="card pickup-nudge"><p class="kicker">Hämtning</p><h2>Nästa vecka är inte ifylld</h2><p>Fyll i tider och vem som hämtar för de närmaste vardagarna. Bara sparade dagar räknas.</p><button class="primary" type="button" data-action="navigate" data-view="pickup">Öppna hämtningen</button></section>`;
 }
 
 function pickerToken(picker) {
@@ -2389,6 +2389,8 @@ function weekEditorModel(child, editor) {
   return {
     weekNumber: ArtanPickup.isoWeekNumber(editor.monday),
     error: editor.error || "",
+    note: editor.note || "",
+    canCopyPrevious: ArtanPickup.hasEarlierSavedWeek(pickupGridInput(child), editor.monday),
     days: editor.days.map((day) => {
       const source = byIso.get(day.iso) || {};
       const name = pickupPersonName(child, day.picker);
@@ -2455,6 +2457,7 @@ function openPickupWeek(monday) {
     pickerIso: null,
     draftToken: "",
     error: "",
+    note: "",
     days: ArtanPickup.weekEditorSeed(pickupGridInput(child), monday, viewerId),
   };
   state.pickupScrollRestore = scrollY;
@@ -2596,7 +2599,7 @@ function renderPickupHub() {
     ? `${grid || `<p class="form-hint">Ingen publicerad termin att visa ännu.</p>`}<button class="term-add no-print" type="button" data-action="pickup-add" aria-label="Planera vecka">+</button>${renderPickupOverlay(child)}`
     : `<section class="card"><h2>Veckoschema</h2><p class="form-hint">Veckoschemat för hämtning är inte aktiverat i databasen ännu.</p>${grid}</section>`;
   return `${noticeHtml()}${childTabs()}<section class="hero-card"><p class="kicker">Hämtning</p><h1 class="h1">${esc(childFirstName(child) || child.name)}</h1><p class="sub">Schema, hämtpass och hämtlista för ${esc(departmentName(child.department_id))}.</p></section>
-    <section class="card term-card" id="pickup-schedule"><div class="section-head"><div><p class="kicker">Schema</p><h2>Terminen</h2></div></div>${schedule}<p class="form-hint">Tryck på en vecka för att ändra tider och vem som hämtar. Rutan visar lämning och hämtning. En personikon betyder att någon annan än du hämtar. Veckor som saknar plan den närmaste veckan är markerade.</p></section>
+    <section class="card term-card" id="pickup-schedule"><div class="section-head"><div><p class="kicker">Schema</p><h2>Terminen</h2></div></div>${schedule}<p class="form-hint">Tryck på en vecka för att ändra. Bara sparade dagar är ifyllda. En svag tid är standardveckan, och Ej ifylld betyder att veckan inte är sparad. En personikon betyder att någon annan än du hämtar.</p></section>
     ${renderPickupSection(child)}`;
 }
 
@@ -5383,10 +5386,9 @@ document.body.addEventListener("click", (event) => {
     if (!editor || editor.mode !== "week" || !child || typeof ArtanPickup === "undefined") return;
     syncWeekEditorFromDom();
     const filled = ArtanPickup.fillFromPreviousWeek(editor.days, pickupGridInput(child), editor.monday);
-    if (!filled.copied) {
-      editor.error = "Förra veckan har inga sparade dagar.";
-    } else {
+    if (filled.copied) {
       editor.days = ArtanPickup.assignDefaultPicker(filled.days, editor.viewerId);
+      editor.note = filled.fallback ? `Kopierade vecka ${filled.weekNumber}` : "";
       editor.error = "";
     }
     state.pickupScrollRestore = editor.scrollY;

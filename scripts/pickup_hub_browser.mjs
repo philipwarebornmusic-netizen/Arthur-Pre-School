@@ -68,7 +68,13 @@ const preview = `<!doctype html>
         closureReasons: { "2026-10-23": "Planering" },
         standard: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, attending: true, dropoff_at: "08:00", pickup_at: "16:30" })),
       }],
-      dayPlans: [],
+      dayPlans: [0, 1, 2, 3, 4].map((offset) => ({
+        plan_date: ArtanPickup.addDays("2026-10-12", offset),
+        dropoff_at: "08:00",
+        pickup_at: "16:30",
+        picker_kind: "guardian",
+        picker_id: "g1",
+      })),
       standardPickers: [{ weekday: 4, picker_kind: "guardian", picker_id: "g1" }],
     };
     let editor = null;
@@ -99,6 +105,8 @@ const preview = `<!doctype html>
       return {
         weekNumber: ArtanPickup.isoWeekNumber(editor.monday),
         error: editor.error || "",
+        note: editor.note || "",
+        canCopyPrevious: ArtanPickup.hasEarlierSavedWeek(input, editor.monday),
         days: (editor.days || []).map((day) => ({
           iso: day.iso,
           weekday: day.weekday,
@@ -155,6 +163,7 @@ const preview = `<!doctype html>
           pickerIso: null,
           draftToken: "",
           error: "",
+          note: "",
         };
         notice = "";
         render();
@@ -187,9 +196,9 @@ const preview = `<!doctype html>
       }
       if (action === "same-as-previous-week") {
         const filled = ArtanPickup.fillFromPreviousWeek(editor.days, input, editor.monday);
-        if (!filled.copied) editor.error = "Förra veckan har inga sparade dagar.";
-        else {
+        if (filled.copied) {
           editor.days = ArtanPickup.assignDefaultPicker(filled.days, "g1");
+          editor.note = filled.fallback ? "Kopierade vecka " + filled.weekNumber : "";
           editor.error = "";
         }
         render();
@@ -423,6 +432,39 @@ try {
   assert(pos.scroll > 200 && pos.firstTop < 0 && pos.weekTop < 140, `kalendern öppnas inte vid aktuell vecka (${JSON.stringify(pos)})`);
   assert(pos.text.includes("19 okt") && pos.text.includes("v.43"), `fel vecka ligger överst (${pos.text})`);
   await shot("pickup-hub-grid-mobile.png");
+  const savedLeak = await evaluate(`(() => {
+    const plans = [0, 1, 2, 3, 4].map((offset) => ({
+      plan_date: ArtanPickup.addDays("2026-10-19", offset),
+      dropoff_at: "08:00",
+      pickup_at: "16:30",
+      picker_kind: "guardian",
+      picker_id: "g1",
+    }));
+    const savedInput = {
+      today: "2026-10-22",
+      terms: [{ starts_on: "2026-10-19", ends_on: "2026-11-13", closures: [], standard: [] }],
+      dayPlans: plans,
+      standardPickers: [],
+      viewerId: "g1",
+    };
+    const grid = ArtanPickup.buildTermGrid(savedInput);
+    const next = grid.weeks.find((week) => week.monday === "2026-10-26");
+    const html = ArtanPickup.renderTermGrid(savedInput, { editable: true });
+    const schedule = document.getElementById("pickup-schedule");
+    window.__scheduleHold = schedule.innerHTML;
+    schedule.innerHTML = html;
+    const slice = html.slice(html.indexOf('data-monday="2026-10-26"'), html.indexOf('data-monday="2026-11-02"'));
+    return {
+      empty: next.days.every((day) => !day.saved && !day.filled && !day.times),
+      unmarked: !slice.includes("term-cell-times") && slice.includes("Ej ifylld") && slice.includes("is-empty"),
+    };
+  })()`);
+  assert(savedLeak.empty && savedLeak.unmarked, `sparad vecka fyllde nästa (${JSON.stringify(savedLeak)})`);
+  await shot("pickup-hub-grid-saved-mobile.png");
+  await evaluate(`(() => {
+    document.getElementById("pickup-schedule").innerHTML = window.__scheduleHold;
+    document.getElementById("pickup-current-week").scrollIntoView({ block: "start" });
+  })()`);
 
   await click("#pickup-today");
   await waitForSelector("#week-sheet");
@@ -474,10 +516,26 @@ try {
   })()`);
   assert(mondayOnly.tueDrop === "08:00" && mondayOnly.tuePick === "16:30" && mondayOnly.fri && mondayOnly.ledig, `måndagens tid fylldes inte på tomma dagar (${JSON.stringify(mondayOnly)})`);
   await shot("pickup-hub-week-fill-mobile.png");
-  await evaluate(`window.__showDays(ArtanPickup.weekEditorSeed(input, "2026-10-19", "g1"))`);
-  await click('[data-action="same-as-previous-week"]');
-  const previousNote = await evaluate(`document.getElementById("week-sheet").innerText`);
-  assert(previousNote.includes("Förra veckan har inga sparade dagar."), `förra veckan saknar feltext (${previousNote.slice(0, 240)})`);
+  const copyProbe = await evaluate(`(() => {
+    const days = ArtanPickup.weekEditorSeed({
+      today: "2026-10-22",
+      terms: [{ starts_on: "2026-10-19", ends_on: "2026-11-20", closures: [], standard: [] }],
+      dayPlans: [],
+      standardPickers: [],
+    }, "2026-11-16", "g1");
+    const filled = ArtanPickup.fillFromPreviousWeek(days, {
+      dayPlans: [0, 1, 2, 3, 4].map((offset) => ({
+        plan_date: ArtanPickup.addDays("2026-11-02", offset),
+        dropoff_at: "08:00",
+        pickup_at: "16:30",
+        picker_kind: "guardian",
+        picker_id: "g1",
+      })),
+    }, "2026-11-16");
+    const hidden = ArtanPickup.renderWeekEditor({ weekNumber: 43, canCopyPrevious: false, days: [] }).includes("same-as-previous-week");
+    return { copied: filled.copied, fallback: filled.fallback, weekNumber: filled.weekNumber, hidden };
+  })()`);
+  assert(copyProbe.copied === 5 && copyProbe.fallback && copyProbe.weekNumber === 45 && !copyProbe.hidden, `äldre vecka kopierades inte (${JSON.stringify(copyProbe)})`);
   await evaluate(`window.__showDays(ArtanPickup.weekEditorSeed(input, "2026-10-19", "g1"))`);
   await click('#week-sheet [data-action="open-picker"][data-date="2026-10-22"]');
   await waitForSelector("#picker-sheet");

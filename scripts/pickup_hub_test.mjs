@@ -67,22 +67,25 @@ eq(day(empty, "2026-10-19").outside, true, "dagen före terminen är utanför");
 eq(day(empty, "2026-10-22").today, true, "torsdagen är idag");
 eq(day(empty, "2026-10-23").closed, true, "stängningsdagen kommer från terminen");
 eq(day(empty, "2026-10-23").filled, false, "en stängd dag räknas inte som ofylld plan");
-eq(day(empty, "2026-10-20").times, "08:00–16:30", "standardveckan ger tiderna");
-eq(day(empty, "2026-10-20").filled, false, "tid utan hämtare är inte ifylld");
+eq(day(empty, "2026-10-20").times, "", "standardveckan är inte en sparad tid");
+eq(day(empty, "2026-10-20").suggestion, true, "standardveckan syns som förslag");
+eq(day(empty, "2026-10-20").suggestionDropoff, "08:00", "förslaget har lämning");
+eq(day(empty, "2026-10-20").filled, false, "ett förslag räknas inte som ifyllt");
+eq(day(empty, "2026-10-20").saved, false, "ett förslag är inte sparat");
 
 const guardians = ArtanPickup.buildTermGrid({
   ...base,
   standardPickers: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, picker_kind: "guardian", picker_id: "g1" })),
 });
-eq(day(guardians, "2026-10-22").filled, true, "standardtid och vårdnadshavare fyller dagen");
-eq(day(guardians, "2026-10-22").otherPerson, false, "vårdnadshavare får ingen personikon");
-assert(!guardians.unfilled, "ifylld horisont ger ingen påminnelse");
+eq(day(guardians, "2026-10-22").filled, false, "standardveckan fyller inte kalendern");
+eq(day(guardians, "2026-10-22").otherPerson, false, "ett förslag får ingen personikon");
+assert(guardians.unfilled, "osparade dagar inom sju dagar ger en påminnelse");
 
 const contacts = ArtanPickup.buildTermGrid({
   ...base,
   standardPickers: [{ weekday: 4, picker_kind: "contact", picker_id: "c1" }],
 });
-eq(day(contacts, "2026-10-22").otherPerson, true, "hämtlistan ger en personikon");
+eq(day(contacts, "2026-10-22").otherPerson, false, "standardhämtaren ritas inte som sparad person");
 eq(day(contacts, "2026-10-21").otherPerson, false, "en annan veckodag ärver inte ikonen");
 
 const carried = ArtanPickup.buildTermGrid({
@@ -98,9 +101,10 @@ const carried = ArtanPickup.buildTermGrid({
   standardPickers: [{ weekday: 4, picker_kind: "guardian", picker_id: "g1" }],
 });
 const thursday = day(carried, "2026-10-22");
-eq(thursday.times, "07:30–15:00", "förra veckans tider används");
-eq(thursday.picker.kind, "guardian", "ett engångspass följer inte med");
-eq(thursday.otherPerson, false, "vårdnadshavaren från standardveckan syns inte som ikon");
+eq(thursday.times, "", "förra veckan syns inte i kalendern");
+eq(thursday.saved, false, "en osparad dag är inte ifylld");
+eq(thursday.suggestionDropoff, "08:00", "kalendern visar bara standardveckan som förslag");
+eq(thursday.otherPerson, false, "ett förslag får ingen personikon");
 
 const permanent = ArtanPickup.buildTermGrid({
   ...base,
@@ -113,8 +117,8 @@ const permanent = ArtanPickup.buildTermGrid({
     pass_kind: "permanent",
   }],
 });
-eq(day(permanent, "2026-10-22").picker.passKind, "permanent", "ett permanent pass följer med från förra veckan");
-eq(day(permanent, "2026-10-22").otherPerson, true, "permanent pass ger en personikon");
+eq(day(permanent, "2026-10-22").saved, false, "förra veckans permanenta pass syns inte i kalendern");
+eq(day(permanent, "2026-10-22").otherPerson, false, "osparad dag får ingen personikon");
 
 const explicit = ArtanPickup.buildTermGrid({
   ...base,
@@ -124,7 +128,10 @@ const explicit = ArtanPickup.buildTermGrid({
   ],
 });
 eq(day(explicit, "2026-10-22").times, "08:15–16:00", "dagens egen tid vinner");
+eq(day(explicit, "2026-10-22").saved, true, "sparad dag är ifylld");
 eq(day(explicit, "2026-10-22").picker.passKind, "day", "dagens engångspass visas den dagen");
+eq(day(explicit, "2026-10-29").saved, false, "veckan efter en sparad vecka är inte sparad");
+eq(day(explicit, "2026-10-29").times, "", "veckan efter visar inte den sparade tiden");
 
 const quiet = ArtanPickup.buildTermGrid({ ...base, markUnfilled: false });
 assert(!quiet.unfilled && quiet.weeks.every((week) => !week.needsPlan), "saknad migration döljer påminnelsen");
@@ -140,26 +147,58 @@ assert(editable.includes("is-outside"), "dagar utanför terminen är grå");
 assert(editable.includes('data-action="edit-pickup-week"') && editable.includes('data-monday="2026-10-19"'), "en vecka går att öppna");
 assert(!editable.includes("edit-pickup-day") && !editable.includes("term-cell-day"), "dagen redigeras inte inline och datumet är inte rubrik");
 assert(editable.includes(">08:00<") && editable.includes(">16:30<"), "rutan visar lämning och hämtning");
-assert(editable.includes("is-unfilled") && editable.includes("Inte ifylld"), "ofylld vecka syns i kalendern");
+assert(editable.includes("is-unfilled") && editable.includes("Ej ifylld") && editable.includes("is-suggestion"), "ofylld vecka syns, och standardveckan är ett svagt förslag");
 assert(editable.includes("term-person") === false || editable.includes('aria-label="Någon annan hämtar"'), "personikonen har ett namn");
 
-const withPerson = ArtanPickup.renderTermGrid(contacts, { editable: true });
-assert(withPerson.includes("term-person") && withPerson.includes("Någon annan hämtar"), "hämtlista ritar personikonen");
-const guardianHtml = ArtanPickup.renderTermGrid(guardians, { editable: true });
-assert(!guardianHtml.includes("term-person"), "vårdnadshavare ritar ingen personikon");
-assert(!guardianHtml.includes("Inte ifylld"), "ifylld vecka är inte markerad");
+const savedContact = ArtanPickup.buildTermGrid({
+  ...base,
+  dayPlans: [{ plan_date: "2026-10-22", dropoff_at: "08:00", pickup_at: "16:30", picker_kind: "contact", picker_id: "c1" }],
+});
+const withPerson = ArtanPickup.renderTermGrid(savedContact, { editable: true });
+assert(withPerson.includes("term-person") && withPerson.includes("Någon annan hämtar"), "sparad hämtlista ritar personikonen");
+const savedSelf = ArtanPickup.buildTermGrid({
+  ...base,
+  viewerId: "g1",
+  dayPlans: [{ plan_date: "2026-10-22", dropoff_at: "08:00", pickup_at: "16:30", picker_kind: "guardian", picker_id: "g1" }],
+});
+const guardianHtml = ArtanPickup.renderTermGrid(savedSelf, { editable: true });
+assert(!guardianHtml.includes("term-person"), "inloggad vårdnadshavare ritar ingen personikon");
 const otherGuardian = ArtanPickup.buildTermGrid({
   ...base,
   viewerId: "me",
-  standardPickers: [{ weekday: 4, picker_kind: "guardian", picker_id: "g1" }],
+  dayPlans: [{ plan_date: "2026-10-22", dropoff_at: "08:00", pickup_at: "16:30", picker_kind: "guardian", picker_id: "g1" }],
 });
-eq(day(otherGuardian, "2026-10-22").otherPerson, true, "en annan vårdnadshavare ger personikon");
+eq(day(otherGuardian, "2026-10-22").otherPerson, true, "en annan sparad vårdnadshavare ger personikon");
 const selfGuardian = ArtanPickup.buildTermGrid({
   ...base,
   viewerId: "g1",
-  standardPickers: [{ weekday: 4, picker_kind: "guardian", picker_id: "g1" }],
+  dayPlans: [{ plan_date: "2026-10-22", dropoff_at: "08:00", pickup_at: "16:30", picker_kind: "guardian", picker_id: "g1" }],
 });
 eq(day(selfGuardian, "2026-10-22").otherPerson, false, "inloggad vårdnadshavare ger ingen personikon");
+
+const savedOnly = {
+  today: "2026-10-22",
+  terms: [{ starts_on: "2026-10-19", ends_on: "2026-11-13", closures: [], standard: [] }],
+  dayPlans: [0, 1, 2, 3, 4].map((offset) => ({
+    plan_date: ArtanPickup.addDays("2026-10-19", offset),
+    dropoff_at: "08:00",
+    pickup_at: "16:30",
+    picker_kind: "guardian",
+    picker_id: "g1",
+  })),
+  standardPickers: [],
+  viewerId: "g1",
+};
+const savedGrid = ArtanPickup.buildTermGrid(savedOnly);
+const savedWeek = savedGrid.weeks.find((week) => week.monday === "2026-10-19");
+const nextWeek = savedGrid.weeks.find((week) => week.monday === "2026-10-26");
+assert(savedWeek.days.every((item) => item.saved && item.filled), "sparad vecka är ifylld");
+assert(nextWeek.days.every((item) => item.open && !item.saved && !item.filled && !item.times && !item.suggestion), "nästa vecka blir inte ifylld av den sparade");
+assert(savedGrid.unfilled, "påminnelsen räknar bara sparade dagar");
+const savedHtml = ArtanPickup.renderTermGrid(savedOnly, { editable: true });
+const nextHtml = savedHtml.slice(savedHtml.indexOf('data-monday="2026-10-26"'), savedHtml.indexOf('data-monday="2026-11-02"'));
+assert(nextHtml.includes("Ej ifylld") && nextHtml.includes("is-empty") && !nextHtml.includes("term-cell-times") && !nextHtml.includes("08:00"), "nästa vecka ritas tom");
+assert(!savedHtml.slice(savedHtml.indexOf('data-monday="2026-10-19"'), savedHtml.indexOf('data-monday="2026-10-26"')).includes("Ej ifylld"), "en helt sparad vecka saknar Ej ifylld");
 
 const readonly = ArtanPickup.renderTermGrid(base);
 assert(!readonly.includes("<button") && !readonly.includes("edit-pickup-week"), "terminsöversikten är skrivskyddad");
@@ -167,6 +206,7 @@ assert(readonly.includes("08:00–16:30") && readonly.includes("is-closed"), "sa
 
 const sheet = ArtanPickup.renderWeekEditor({
   weekNumber: 43,
+  canCopyPrevious: true,
   days: [
     { iso: "2026-10-19", weekday: 1, dropoff: "08:00", pickup: "16:30", ledig: false, open: true, initials: "AB", avatarKind: "guardian" },
     { iso: "2026-10-23", weekday: 5, closed: true, open: false },
@@ -175,6 +215,8 @@ const sheet = ArtanPickup.renderWeekEditor({
 assert(sheet.includes("Vecka 43") && sheet.includes("Mån 19 okt") && sheet.includes(">Ledig<") && sheet.includes('type="time"') && sheet.includes(">Spara<") && sheet.includes("is-closed"), "veckovyn visar datum, tider och stängt");
 assert(sheet.includes('data-action="save-pickup-week"') && sheet.includes('data-action="open-picker"'), "veckovyn sparar och väljer hämtare");
 assert(sheet.includes('data-action="same-as-previous-week"') && sheet.includes("Samma som förra veckan"), "veckovyn kan fyllas från förra veckan");
+assert(!ArtanPickup.renderWeekEditor({ weekNumber: 43, canCopyPrevious: false, days: [] }).includes("same-as-previous-week"), "knappen döljs utan sparad vecka");
+assert(ArtanPickup.renderWeekEditor({ weekNumber: 47, canCopyPrevious: true, note: "Kopierade vecka 45", days: [] }).includes("Kopierade vecka 45"), "äldre vecka förklaras neutralt");
 assert(sheet.includes("Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen."), "hinten förklarar ifyllnaden");
 assert(!sheet.includes('data-week-ledig" checked') && !sheet.includes("checked"), "Ledig är avmarkerad när dagen inte är ledig");
 
@@ -282,12 +324,26 @@ const previous = ArtanPickup.fillFromPreviousWeek(blank, {
   ],
 }, "2026-10-19");
 eq(previous.copied, 2, "bara sparade vardagar räknas");
+eq(previous.fallback, false, "närmast föregående vecka är inte en reserv");
 eq(editorDay(previous.days, "2026-10-19").dropoff, "07:20", "förra måndagen kopieras");
 eq(editorDay(previous.days, "2026-10-20").pickup, "15:20", "förra tisdagen kopieras");
 eq(editorDay(previous.days, "2026-10-19").picker.id, "c9", "förra veckans hämtare kopieras");
 eq(editorDay(previous.days, "2026-10-21").dropoff, "", "en osparad dag lämnas");
 assert(editorDay(previous.days, "2026-10-23").closed && !editorDay(previous.days, "2026-10-23").dropoff, "stängd dag kopieras inte");
 eq(ArtanPickup.fillFromPreviousWeek(blank, { dayPlans: [] }, "2026-10-19").copied, 0, "tom förra vecka kopierar inget");
+assert(!ArtanPickup.hasEarlierSavedWeek({ dayPlans: [] }, "2026-10-19"), "utan sparad vecka finns inget att kopiera");
+const older = ArtanPickup.fillFromPreviousWeek(blank, {
+  dayPlans: [
+    { plan_date: "2026-10-05", dropoff_at: "09:05", pickup_at: "15:05", picker_kind: "guardian", picker_id: "g1" },
+    { plan_date: "2026-10-07", dropoff_at: "09:25", pickup_at: "15:25", picker_kind: "contact", picker_id: "c3" },
+  ],
+}, "2026-10-19");
+eq(older.copied, 2, "närmaste äldre vecka används när förra veckan är tom");
+eq(older.fallback, true, "äldre vecka är en reserv");
+eq(older.weekNumber, 41, "reserven talar om vilken vecka");
+eq(editorDay(older.days, "2026-10-19").dropoff, "09:05", "måndagen tas från den äldre veckan");
+eq(editorDay(older.days, "2026-10-21").picker.id, "c3", "onsdagen tas från den äldre veckan");
+eq(editorDay(older.days, "2026-10-20").dropoff, "", "en veckodag som inte var sparad lämnas");
 const pickerSheet = ArtanPickup.renderPickerSheet({
   weekdayName: "torsdag",
   people: [
@@ -310,6 +366,12 @@ eq(staff.todayText, "Idag 08:00–16:30 · Mormor Karin", "personal ser dagens t
 eq(staff.weekText, "mån 08:00–16:30, tor 08:00–16:30", "veckoraden hoppar över stängt, utanför och tomt");
 eq(ArtanPickup.staffPickupCaption([{ plan_date: "2026-10-22", in_term: true, closed: true }], "2026-10-22").todayText, "Idag stängt", "stängd dag för personal");
 eq(ArtanPickup.staffPickupCaption([{ plan_date: "2026-10-22", in_term: true, closed: false }], "2026-10-22").todayText, "Idag ingen planerad tid", "öppen dag utan tid");
+const projected = ArtanPickup.staffPickupCaption([
+  { plan_date: "2026-10-22", in_term: true, closed: false, dropoff_at: "08:00", pickup_at: "16:30", picker_label: "Anna", source: "previous" },
+  { plan_date: "2026-10-23", in_term: true, closed: false, dropoff_at: "08:00", pickup_at: "16:30", source: "standard" },
+], "2026-10-22");
+eq(projected.todayText, "Idag ingen planerad tid", "personal räknar inte förra veckan som sparad");
+eq(projected.weekText, "", "personalens vecka hoppar över förslag");
 
 const calendarSql = sliceFunction(sql, "list_pickup_calendar");
 const departmentSql = sliceFunction(sql, "list_department_pickup_plans");
@@ -351,7 +413,7 @@ assert(staffNav.startsWith('role === "staff"') && !staffNav.includes("Hämtning"
 assert(app.includes('staff: ["attendance", "messages", "people", "incidents", "account"]'), "personalens vyer är oförändrade");
 assert(!app.includes('registerHubCard("child", { id: "hamtlista"'), "Hämtlista-kortet är borta");
 assert(app.includes("Öppna Hämtning") && app.includes("Hämtlistan, hämtpassen och veckoschemat finns under Hämtning"), "Kontaktpersoner länkar till Hämtning");
-for (const needle of ["share-pass", "print-pass", "open-pass", "remember_pickup_pass_token", "reveal_pickup_pass", "renderTermGrid", "edit-pickup-week", "save-pickup-week", "open-picker", "same-as-previous-week", "weekEditorSeed", "smartFillWeek", "reopenWeekDay", "pickup-current-week", "pickup-add", "copy-pickup-week", "Ändra i Hämtning", "list_department_pickup_plans"]) {
+for (const needle of ["share-pass", "print-pass", "open-pass", "remember_pickup_pass_token", "reveal_pickup_pass", "renderTermGrid", "edit-pickup-week", "save-pickup-week", "open-picker", "same-as-previous-week", "weekEditorSeed", "smartFillWeek", "reopenWeekDay", "hasEarlierSavedWeek", "Kopierade vecka", "Ej ifylld", "pickup-current-week", "pickup-add", "copy-pickup-week", "Ändra i Hämtning", "list_department_pickup_plans"]) {
   assert(app.includes(needle), `appen saknar ${needle}`);
 }
 assert(!app.includes("edit-pickup-day") && !app.includes('data-form="pickup-day"'), "dagformuläret är borta");

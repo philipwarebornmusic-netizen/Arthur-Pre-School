@@ -1,5 +1,11 @@
 # Ändringslogg
 
+## 2026-10-23 — Kalendern visar bara sparade dagar
+
+- Terminskalendern räknar en dag som ifylld bara när den är sparad. Veckan efter en sparad vecka blir inte ifylld av sig själv. Osparade dagar är streckade. En sparad standardvecka kan synas som en svag, kursiv tid, och veckoraden säger Ej ifylld tills dagarna sparas.
+- Påminnelsen på Min dag använder samma regel och räknar bara sparade dagar. Personalens närvarotext hoppar över en rad som är märkt som förra veckan eller standardveckan. Databasfunktionen som skickar raderna är oförändrad.
+- Samma som förra veckan kopierar förra veckans sparade dagar. Finns inga, tas den senaste sparade veckan före den i stället, med texten Kopierade vecka N. Knappen döljs om ingen vecka är sparad. Förslagen används bara i veckoeditorn.
+
 ## 2026-10-23 — Veckoschemat fylls i på några sekunder
 
 - Ledig är avmarkerad när veckan öppnas. En öppen dag som redan har tider, eller som får ett förslag, är inte ledig förrän man kryssar i den.
