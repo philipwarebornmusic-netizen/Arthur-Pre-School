@@ -232,6 +232,209 @@
     return `${parts[0][0]}${parts[parts.length - 1][0]}`.toLocaleUpperCase("sv");
   }
 
+  function planTimes(plan) {
+    const dropoff = clock(plan?.dropoff_at);
+    const pickup = clock(plan?.pickup_at);
+    if (!dropoff || !pickup) return null;
+    return { dropoff, pickup, picker: explicitPicker(plan) };
+  }
+
+  function standardEntry(input, iso) {
+    const weekday = weekdayNumber(iso);
+    const term = (input?.terms || []).find((item) => iso >= item.starts_on && iso <= item.ends_on);
+    if (!term) return null;
+    const row = (term.standard || []).find((item) => Number(item.weekday) === weekday && item.attending);
+    const dropoff = clock(row?.dropoff_at);
+    const pickup = clock(row?.pickup_at);
+    if (!dropoff || !pickup) return null;
+    const pickerRow = (input.standardPickers || []).find((item) => Number(item.weekday) === weekday);
+    return { dropoff, pickup, picker: carriedPicker(pickerRow) };
+  }
+
+  function latestSavedWeek(input, monday) {
+    const saved = (input?.dayPlans || []).map((plan) => ({ plan, times: planTimes(plan) })).filter((item) => item.times && item.plan.plan_date < monday);
+    if (!saved.length) return null;
+    let bestMonday = "";
+    for (const item of saved) {
+      const week = weekMonday(item.plan.plan_date);
+      if (week > bestMonday) bestMonday = week;
+    }
+    const byWeekday = new Map();
+    for (const item of saved) {
+      if (weekMonday(item.plan.plan_date) !== bestMonday) continue;
+      byWeekday.set(weekdayNumber(item.plan.plan_date), item.times);
+    }
+    return byWeekday;
+  }
+
+  function clonePicker(picker) {
+    if (!picker?.kind || !picker.id) return null;
+    return { kind: picker.kind, id: String(picker.id), passKind: picker.passKind || "" };
+  }
+
+  function spreadFilledDay(days) {
+    const donor = days.find((day) => day.open && !day.closed && !day.ledig && day.dropoff && day.pickup);
+    if (!donor) return days;
+    return days.map((day) => {
+      if (day.iso === donor.iso || !day.open || day.closed || day.ledig || day.manual || day.dropoff || day.pickup) return day;
+      const picker = day.picker && !day.pickerDefault ? clonePicker(day.picker) : clonePicker(donor.picker);
+      return {
+        ...day,
+        dropoff: donor.dropoff,
+        pickup: donor.pickup,
+        picker,
+        pickerDefault: Boolean(picker) && !(day.picker && !day.pickerDefault) && Boolean(donor.pickerDefault),
+        origin: "copied",
+      };
+    });
+  }
+
+  function weekEditorSeed(input, monday, viewerId) {
+    const grid = buildTermGrid({ ...(input || {}), markUnfilled: false });
+    const week = (grid.weeks || []).find((item) => item.monday === monday);
+    if (!week) return [];
+    const plans = new Map((input?.dayPlans || []).map((plan) => [plan.plan_date, plan]));
+    const standardWeek = week.days.some((day) => day.open && standardEntry(input, day.iso));
+    const recent = standardWeek ? null : latestSavedWeek(input, monday);
+    const seeded = week.days.map((day) => {
+      const own = planTimes(plans.get(day.iso));
+      const standard = standardWeek && day.open ? standardEntry(input, day.iso) : null;
+      const saved = !standardWeek ? recent?.get(day.weekday) : null;
+      let dropoff = "";
+      let pickup = "";
+      let picker = null;
+      let origin = "empty";
+      if (own) {
+        dropoff = own.dropoff;
+        pickup = own.pickup;
+        picker = own.picker;
+        origin = "own";
+      } else if (standard) {
+        dropoff = standard.dropoff;
+        pickup = standard.pickup;
+        picker = standard.picker;
+        origin = "standard";
+      } else if (saved) {
+        dropoff = saved.dropoff;
+        pickup = saved.pickup;
+        picker = saved.picker;
+        origin = "recent";
+      }
+      const pickerDefault = Boolean(day.open && dropoff && pickup && !picker && viewerId);
+      if (pickerDefault) picker = { kind: "guardian", id: String(viewerId), passKind: "" };
+      return {
+        iso: day.iso,
+        weekday: day.weekday,
+        open: day.open,
+        closed: day.closed,
+        outside: day.outside,
+        dropoff,
+        pickup,
+        ledig: false,
+        picker: clonePicker(picker),
+        pickerDefault,
+        manual: false,
+        origin,
+      };
+    });
+    return standardWeek ? seeded : spreadFilledDay(seeded);
+  }
+
+  function usualWeekValue(days, field) {
+    for (const day of days || []) {
+      if (!day.open || day.closed || day.ledig) continue;
+      if (field === "picker") {
+        if (day.picker && !day.pickerDefault) return clonePicker(day.picker);
+      } else if (day[field]) return day[field];
+    }
+    if (field === "dropoff") return "08:00";
+    if (field === "pickup") return "16:30";
+    return null;
+  }
+
+  function smartFillWeek(days, sourceIso, field, value) {
+    if (field !== "picker" && !value) {
+      return (days || []).map((day) => (day.iso === sourceIso ? { ...day, manual: true, origin: "user", [field]: "" } : day));
+    }
+    return (days || []).map((day) => {
+      if (day.iso === sourceIso) {
+        if (!day.open || day.closed) return day;
+        const next = { ...day, manual: true, origin: "user", picker: clonePicker(day.picker) };
+        if (field === "picker") {
+          next.picker = clonePicker(value) || next.picker;
+          next.pickerDefault = false;
+        } else next[field] = value;
+        return next;
+      }
+      if (!day.open || day.closed || day.ledig || day.manual) return day;
+      if (field === "picker") {
+        const picker = clonePicker(value);
+        if (!picker) return day;
+        if (day.origin !== "copied" && day.picker && !day.pickerDefault) return day;
+        return { ...day, picker, pickerDefault: false, origin: day.origin === "empty" || !day.origin ? "copied" : day.origin };
+      }
+      if (day[field] && day.origin !== "copied") return day;
+      return {
+        ...day,
+        [field]: value,
+        picker: clonePicker(day.picker),
+        origin: day.origin === "empty" || !day.origin ? "copied" : day.origin,
+      };
+    });
+  }
+
+  function assignDefaultPicker(days, viewerId) {
+    if (!viewerId) return days || [];
+    return (days || []).map((day) => {
+      if (!day.open || day.closed || day.ledig || !day.dropoff || !day.pickup || day.picker) return day;
+      return { ...day, picker: { kind: "guardian", id: String(viewerId), passKind: "" }, pickerDefault: true };
+    });
+  }
+
+  function reopenWeekDay(days, iso, viewerId) {
+    const others = (days || []).filter((day) => day.iso !== iso);
+    return (days || []).map((day) => {
+      if (day.iso !== iso || !day.open || day.closed) return day;
+      const next = { ...day, ledig: false, manual: true, origin: "user", picker: clonePicker(day.picker) };
+      if (!next.dropoff) next.dropoff = usualWeekValue(others, "dropoff");
+      if (!next.pickup) next.pickup = usualWeekValue(others, "pickup");
+      if (!next.picker || next.pickerDefault) {
+        const usual = usualWeekValue(others, "picker");
+        if (usual) {
+          next.picker = usual;
+          next.pickerDefault = false;
+        } else if (viewerId) {
+          next.picker = { kind: "guardian", id: String(viewerId), passKind: "" };
+          next.pickerDefault = true;
+        }
+      }
+      return next;
+    });
+  }
+
+  function fillFromPreviousWeek(days, input, monday) {
+    const plans = new Map((input?.dayPlans || []).map((plan) => [plan.plan_date, plan]));
+    let copied = 0;
+    const next = (days || []).map((day) => {
+      if (!day.open || day.closed) return day;
+      const saved = planTimes(plans.get(addDays(day.iso, -7)));
+      if (!saved) return day;
+      copied += 1;
+      const picker = clonePicker(saved.picker) || clonePicker(day.picker);
+      return {
+        ...day,
+        dropoff: saved.dropoff,
+        pickup: saved.pickup,
+        ledig: false,
+        picker,
+        pickerDefault: !saved.picker && Boolean(day.pickerDefault),
+        manual: false,
+        origin: "previous",
+      };
+    });
+    return { days: next, copied };
+  }
+
   function renderWeekEditor(model) {
     const rows = (model?.days || []).map((day) => {
       const weekday = Number(day.weekday) || weekdayNumber(day.iso);
@@ -253,7 +456,7 @@
       return `<div class="${classes.join(" ")}" data-weekday="${weekday}">${circle}<label class="week-time"><span class="visually-hidden">Lämning ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="dropoff" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.dropoff || "")}" ${disabled}></label><span class="week-dash" aria-hidden="true">–</span><label class="week-time"><span class="visually-hidden">Hämtning ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="pickup" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.pickup || "")}" ${disabled}></label><label class="week-ledig"><input type="checkbox" data-week-ledig data-date="${escapeHtml(day.iso)}" ${day.ledig ? "checked" : ""}><span>Ledig</span></label><button class="week-avatar ${avatarKind}" type="button" data-action="open-picker" data-date="${escapeHtml(day.iso)}" aria-label="Vem hämtar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(day.initials || "?")}</button></div>`;
     }).join("");
     const error = model?.error ? `<p class="notice error">${escapeHtml(model.error)}</p>` : "";
-    return `<section id="week-sheet" class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="week-sheet-title"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="week-sheet-title">Vecka ${escapeHtml(model?.weekNumber || "")}</h1><button class="week-save" type="button" data-action="save-pickup-week">Spara</button></header><div class="week-sheet-body">${error}${rows}<p class="form-hint">Ledig hoppar över dagen. En standardvecka syns kvar tills dagen sparas med tider.</p></div></section>`;
+    return `<section id="week-sheet" class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="week-sheet-title"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="week-sheet-title">Vecka ${escapeHtml(model?.weekNumber || "")}</h1><button class="week-save" type="button" data-action="save-pickup-week">Spara</button></header><div class="week-sheet-body">${error}<button class="secondary week-copy" type="button" data-action="same-as-previous-week">Samma som förra veckan</button>${rows}<p class="form-hint">Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen.</p></div></section>`;
   }
 
   function renderPickerSheet(model) {
@@ -285,8 +488,14 @@
     addDays,
     buildTermGrid,
     isoWeekNumber,
+    assignDefaultPicker,
+    fillFromPreviousWeek,
     personInitials,
+    reopenWeekDay,
     renderPickerSheet,
+    smartFillWeek,
+    usualWeekValue,
+    weekEditorSeed,
     renderTermGrid,
     renderWeekEditor,
     shortDate,

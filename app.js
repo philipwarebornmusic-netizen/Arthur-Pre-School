@@ -2443,27 +2443,51 @@ function openPickupWeek(monday) {
   if (!child || typeof ArtanPickup === "undefined") return;
   const week = ArtanPickup.buildTermGrid(pickupGridInput(child)).weeks.find((item) => item.monday === monday);
   if (!week) return;
-  const me = state.profile?.id || "";
   const scrollY = window.scrollY;
+  const viewerId = state.profile?.id || "";
   state.pickupEditor = {
     mode: "week",
     monday,
     childId: child.id,
+    viewerId,
     scrollY,
     sheetScroll: 0,
     pickerIso: null,
     draftToken: "",
     error: "",
-    days: week.days.map((day) => ({
-      iso: day.iso,
-      dropoff: day.dropoff || "",
-      pickup: day.pickup || "",
-      ledig: Boolean(day.open && !day.times),
-      picker: day.picker || (day.open && me ? { kind: "guardian", id: me, passKind: "" } : null),
-    })),
+    days: ArtanPickup.weekEditorSeed(pickupGridInput(child), monday, viewerId),
   };
   state.pickupScrollRestore = scrollY;
   render();
+}
+
+function paintWeekTimes() {
+  const editor = state.pickupEditor;
+  if (!editor || editor.mode !== "week") return;
+  for (const day of editor.days) {
+    for (const field of ["dropoff", "pickup"]) {
+      const input = document.querySelector(`[data-week-time="${field}"][data-date="${day.iso}"]`);
+      if (!input || document.activeElement === input) continue;
+      const value = day[field] || "";
+      if (input.value !== value) input.value = value;
+    }
+    const row = document.querySelector(`[data-week-ledig][data-date="${day.iso}"]`)?.closest(".week-row");
+    if (!row) continue;
+    row.classList.toggle("is-ledig", Boolean(day.ledig));
+    row.querySelectorAll("[data-week-time], [data-action='open-picker']").forEach((node) => {
+      node.disabled = Boolean(day.ledig);
+    });
+  }
+}
+
+function applyWeekField(sourceIso, field, value) {
+  const editor = state.pickupEditor;
+  if (!editor || editor.mode !== "week" || typeof ArtanPickup === "undefined") return;
+  editor.days = ArtanPickup.assignDefaultPicker(
+    ArtanPickup.smartFillWeek(editor.days, sourceIso, field, value),
+    editor.viewerId,
+  );
+  paintWeekTimes();
 }
 
 function syncWeekEditorFromDom() {
@@ -4823,6 +4847,20 @@ function onPeopleDirectoryFilter(event) {
   applyPeopleDirectoryFilter(root);
 }
 
+function primeEmptyWeekTime(input) {
+  if (!input?.matches?.("[data-week-time]") || input.disabled || input.value || state.pickupEditor?.mode !== "week") return;
+  const field = input.dataset.weekTime === "pickup" ? "pickup" : "dropoff";
+  input.value = ArtanPickup.usualWeekValue(state.pickupEditor.days, field);
+  applyWeekField(input.dataset.date, field, input.value);
+}
+
+document.body.addEventListener("pointerdown", (event) => {
+  primeEmptyWeekTime(event.target);
+}, true);
+document.body.addEventListener("focusin", (event) => {
+  primeEmptyWeekTime(event.target);
+});
+
 document.body.addEventListener("input", onPeopleDirectoryFilter);
 document.body.addEventListener("change", onPeopleDirectoryFilter);
 
@@ -4850,17 +4888,18 @@ document.body.addEventListener("change", (event) => {
     input.form.dataset.incidentType = input.value;
   }
   if (state.pickupEditor?.mode === "week" && input.matches("[data-week-ledig]")) {
-    const day = state.pickupEditor.days.find((item) => item.iso === input.dataset.date);
-    if (day) day.ledig = input.checked;
-    const row = input.closest(".week-row");
-    row?.classList.toggle("is-ledig", input.checked);
-    row?.querySelectorAll("[data-week-time], [data-action='open-picker']").forEach((node) => {
-      node.disabled = input.checked;
-    });
+    const editor = state.pickupEditor;
+    if (input.checked) {
+      const day = editor.days.find((item) => item.iso === input.dataset.date);
+      if (day) day.ledig = true;
+    } else {
+      editor.days = ArtanPickup.reopenWeekDay(editor.days, input.dataset.date, editor.viewerId);
+    }
+    paintWeekTimes();
   }
   if (state.pickupEditor?.mode === "week" && input.matches("[data-week-time]")) {
-    const day = state.pickupEditor.days.find((item) => item.iso === input.dataset.date);
-    if (day) day[input.dataset.weekTime === "pickup" ? "pickup" : "dropoff"] = input.value;
+    const field = input.dataset.weekTime === "pickup" ? "pickup" : "dropoff";
+    applyWeekField(input.dataset.date, field, input.value);
   }
   if (input.matches("[data-schedule-attending]")) {
     const row = input.closest("[data-weekday]");
@@ -5323,10 +5362,33 @@ document.body.addEventListener("click", (event) => {
       render();
       return;
     }
-    day.picker = { kind: parsed.picker_kind, id: parsed.picker_id, passKind: parsed.pass_kind || "" };
+    editor.days = ArtanPickup.assignDefaultPicker(
+      ArtanPickup.smartFillWeek(editor.days, editor.pickerIso, "picker", {
+        kind: parsed.picker_kind,
+        id: parsed.picker_id,
+        passKind: parsed.pass_kind || "",
+      }),
+      editor.viewerId,
+    );
     editor.pickerIso = null;
     editor.draftToken = "";
     editor.error = "";
+    state.pickupScrollRestore = editor.scrollY;
+    render();
+    return;
+  }
+  if (action === "same-as-previous-week") {
+    const editor = state.pickupEditor;
+    const child = selectedChild();
+    if (!editor || editor.mode !== "week" || !child || typeof ArtanPickup === "undefined") return;
+    syncWeekEditorFromDom();
+    const filled = ArtanPickup.fillFromPreviousWeek(editor.days, pickupGridInput(child), editor.monday);
+    if (!filled.copied) {
+      editor.error = "Förra veckan har inga sparade dagar.";
+    } else {
+      editor.days = ArtanPickup.assignDefaultPicker(filled.days, editor.viewerId);
+      editor.error = "";
+    }
     state.pickupScrollRestore = editor.scrollY;
     render();
     return;
@@ -5342,6 +5404,7 @@ document.body.addEventListener("click", (event) => {
     for (const day of editor.days) {
       const source = byIso.get(day.iso);
       if (!source?.open || day.ledig) continue;
+      if (!day.dropoff && !day.pickup) continue;
       if (!day.dropoff || !day.pickup || day.dropoff >= day.pickup) {
         editor.error = "Fyll i lämning och hämtning, eller markera dagen som ledig.";
         state.pickupScrollRestore = editor.scrollY;

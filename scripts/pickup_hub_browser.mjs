@@ -95,26 +95,22 @@ const preview = `<!doctype html>
       });
     }
 
-    function weekModel(monday) {
-      const week = ArtanPickup.buildTermGrid(input).weeks.find((item) => item.monday === monday);
+    function weekModel() {
       return {
-        weekNumber: ArtanPickup.isoWeekNumber(monday),
-        days: week.days.map((day) => {
-          const edit = editor?.days?.[day.iso] || {};
-          const pickerKind = edit.pickerKind || day.picker?.kind || "guardian";
-          return {
-            iso: day.iso,
-            weekday: day.weekday,
-            dropoff: edit.dropoff ?? day.dropoff,
-            pickup: edit.pickup ?? day.pickup,
-            ledig: Boolean(edit.ledig),
-            open: day.open,
-            closed: day.closed,
-            outside: day.outside,
-            initials: pickerKind === "contact" ? "MK" : "AB",
-            avatarKind: pickerKind,
-          };
-        }),
+        weekNumber: ArtanPickup.isoWeekNumber(editor.monday),
+        error: editor.error || "",
+        days: (editor.days || []).map((day) => ({
+          iso: day.iso,
+          weekday: day.weekday,
+          dropoff: day.dropoff,
+          pickup: day.pickup,
+          ledig: Boolean(day.ledig),
+          open: day.open,
+          closed: day.closed,
+          outside: day.outside,
+          initials: day.picker?.kind === "contact" ? "MK" : "AB",
+          avatarKind: day.picker?.kind === "contact" ? "contact" : "guardian",
+        })),
       };
     }
 
@@ -132,7 +128,7 @@ const preview = `<!doctype html>
       const readonly = ArtanPickup.renderTermGrid(input);
       let extra = "";
       if (editor?.mode === "week") {
-        extra = ArtanPickup.renderWeekEditor(weekModel(editor.monday));
+        extra = ArtanPickup.renderWeekEditor(weekModel());
         if (editor.pickerIso) {
           extra += ArtanPickup.renderPickerSheet({
             weekdayName: ArtanPickup.weekdayName(editor.pickerIso, "full"),
@@ -152,13 +148,22 @@ const preview = `<!doctype html>
       const action = target.dataset.action;
       if (action === "edit-pickup-week") {
         keptScroll = window.scrollY;
-        editor = { mode: "week", monday: target.dataset.monday, days: {}, pickerIso: null, draftToken: "" };
+        editor = {
+          mode: "week",
+          monday: target.dataset.monday,
+          days: ArtanPickup.weekEditorSeed(input, target.dataset.monday, "g1"),
+          pickerIso: null,
+          draftToken: "",
+          error: "",
+        };
         notice = "";
         render();
       }
       if (action === "open-picker") {
+        const day = editor.days.find((item) => item.iso === target.dataset.date);
         editor.pickerIso = target.dataset.date;
-        editor.draftToken = editor.days[target.dataset.date]?.pickerKind === "contact" ? "contact:c1" : "guardian:g1";
+        editor.draftToken = day?.picker?.kind === "contact" ? "contact:c1" : "guardian:g1";
+        editor.error = "";
         render();
       }
       if (action === "choose-picker") {
@@ -170,8 +175,23 @@ const preview = `<!doctype html>
         });
       }
       if (action === "confirm-picker") {
-        editor.days[editor.pickerIso] = { ...(editor.days[editor.pickerIso] || {}), pickerKind: editor.draftToken.startsWith("contact") ? "contact" : "guardian" };
+        const kind = editor.draftToken.startsWith("contact") ? "contact" : "guardian";
+        editor.days = ArtanPickup.smartFillWeek(editor.days, editor.pickerIso, "picker", {
+          kind,
+          id: kind === "contact" ? "c1" : "g1",
+          passKind: "",
+        });
         editor.pickerIso = null;
+        editor.error = "";
+        render();
+      }
+      if (action === "same-as-previous-week") {
+        const filled = ArtanPickup.fillFromPreviousWeek(editor.days, input, editor.monday);
+        if (!filled.copied) editor.error = "Förra veckan har inga sparade dagar.";
+        else {
+          editor.days = ArtanPickup.assignDefaultPicker(filled.days, "g1");
+          editor.error = "";
+        }
         render();
       }
       if (action === "save-pickup-week") {
@@ -182,8 +202,9 @@ const preview = `<!doctype html>
           byDate[inputField.dataset.date] = slot;
         });
         input.dayPlans = Object.entries(byDate).filter(([, times]) => times.dropoff && times.pickup).map(([plan_date, times]) => {
-          const pickerKind = editor.days[plan_date]?.pickerKind || (plan_date.endsWith("22") ? "guardian" : "guardian");
-          return { plan_date, dropoff_at: times.dropoff, pickup_at: times.pickup, picker_kind: pickerKind, picker_id: pickerKind === "contact" ? "c1" : "g1" };
+          const day = editor.days.find((item) => item.iso === plan_date);
+          const pickerKind = day?.picker?.kind || "guardian";
+          return { plan_date, dropoff_at: times.dropoff, pickup_at: times.pickup, picker_kind: pickerKind, picker_id: day?.picker?.id || "g1" };
         });
         notice = "Veckan är sparad.";
         editor = null;
@@ -227,6 +248,13 @@ const preview = `<!doctype html>
     document.addEventListener("submit", (event) => {
       if (event.target.dataset.form === "pickup-standard") event.preventDefault();
     });
+
+    window.__showDays = (days, errorText = "") => {
+      editor.days = days;
+      editor.error = errorText;
+      editor.pickerIso = null;
+      render();
+    };
 
     render();
   </script>
@@ -412,7 +440,45 @@ try {
     };
   })()`);
   assert(editor.title === "Vecka 43" && editor.position === "fixed" && editor.date && editor.dropoff === "08:00" && editor.pickup === "16:30" && !editor.inline, `veckovyn fylldes inte (${JSON.stringify(editor)})`);
+  const weekFill = await evaluate(`(() => {
+    const sheet = document.getElementById("week-sheet");
+    const boxes = [...sheet.querySelectorAll("[data-week-ledig]")];
+    const row = sheet.querySelector(".week-row");
+    return {
+      ledig: boxes.length > 0 && boxes.every((box) => !box.checked),
+      button: sheet.innerText.includes("Samma som förra veckan"),
+      hint: sheet.innerText.includes("Fyll i en dag, så följer de andra tomma dagarna med."),
+      closedInputs: sheet.querySelectorAll(".is-closed input").length,
+      row: row.scrollWidth,
+      client: row.clientWidth,
+    };
+  })()`);
+  assert(weekFill.ledig && weekFill.button && weekFill.hint && weekFill.closedInputs === 0 && weekFill.row <= weekFill.client + 1, `veckovyns ifyllnad är fel (${JSON.stringify(weekFill)})`);
   await shot("pickup-hub-week-mobile.png");
+  const mondayOnly = await evaluate(`(() => {
+    const seeded = ArtanPickup.weekEditorSeed({
+      today: "2026-10-22",
+      terms: [{ starts_on: "2026-10-19", ends_on: "2026-10-23", closures: ["2026-10-23"], standard: [] }],
+      dayPlans: [{ plan_date: "2026-10-19", dropoff_at: "08:00", pickup_at: "16:30", picker_kind: "guardian", picker_id: "g1" }],
+      standardPickers: [],
+    }, "2026-10-19", "g1");
+    window.__showDays(seeded);
+    const sheet = document.getElementById("week-sheet");
+    const value = (iso, field) => sheet.querySelector('[data-date="' + iso + '"][data-week-time="' + field + '"]')?.value || "";
+    return {
+      tueDrop: value("2026-10-20", "dropoff"),
+      tuePick: value("2026-10-20", "pickup"),
+      fri: sheet.querySelector('[data-date="2026-10-23"][data-week-time="dropoff"]') === null,
+      ledig: [...sheet.querySelectorAll("[data-week-ledig]")].every((box) => !box.checked),
+    };
+  })()`);
+  assert(mondayOnly.tueDrop === "08:00" && mondayOnly.tuePick === "16:30" && mondayOnly.fri && mondayOnly.ledig, `måndagens tid fylldes inte på tomma dagar (${JSON.stringify(mondayOnly)})`);
+  await shot("pickup-hub-week-fill-mobile.png");
+  await evaluate(`window.__showDays(ArtanPickup.weekEditorSeed(input, "2026-10-19", "g1"))`);
+  await click('[data-action="same-as-previous-week"]');
+  const previousNote = await evaluate(`document.getElementById("week-sheet").innerText`);
+  assert(previousNote.includes("Förra veckan har inga sparade dagar."), `förra veckan saknar feltext (${previousNote.slice(0, 240)})`);
+  await evaluate(`window.__showDays(ArtanPickup.weekEditorSeed(input, "2026-10-19", "g1"))`);
   await click('#week-sheet [data-action="open-picker"][data-date="2026-10-22"]');
   await waitForSelector("#picker-sheet");
   const picker = await evaluate(`(() => {

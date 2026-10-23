@@ -174,6 +174,120 @@ const sheet = ArtanPickup.renderWeekEditor({
 });
 assert(sheet.includes("Vecka 43") && sheet.includes("Mån 19 okt") && sheet.includes(">Ledig<") && sheet.includes('type="time"') && sheet.includes(">Spara<") && sheet.includes("is-closed"), "veckovyn visar datum, tider och stängt");
 assert(sheet.includes('data-action="save-pickup-week"') && sheet.includes('data-action="open-picker"'), "veckovyn sparar och väljer hämtare");
+assert(sheet.includes('data-action="same-as-previous-week"') && sheet.includes("Samma som förra veckan"), "veckovyn kan fyllas från förra veckan");
+assert(sheet.includes("Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen."), "hinten förklarar ifyllnaden");
+assert(!sheet.includes('data-week-ledig" checked') && !sheet.includes("checked"), "Ledig är avmarkerad när dagen inte är ledig");
+
+function editorDay(days, iso) {
+  return days.find((item) => item.iso === iso);
+}
+
+const weekTerm = {
+  today: "2026-10-22",
+  terms: [{
+    starts_on: "2026-10-19",
+    ends_on: "2026-10-30",
+    closures: ["2026-10-23"],
+    standard: [],
+  }],
+  dayPlans: [],
+  standardPickers: [],
+};
+const mondayOnly = ArtanPickup.weekEditorSeed({
+  ...weekTerm,
+  dayPlans: [{ plan_date: "2026-10-19", dropoff_at: "08:00", pickup_at: "16:30", picker_kind: "guardian", picker_id: "g1" }],
+}, "2026-10-19", "me");
+eq(editorDay(mondayOnly, "2026-10-19").origin, "own", "måndagens sparade tid behålls");
+eq(editorDay(mondayOnly, "2026-10-20").dropoff, "08:00", "tom tisdag får måndagens lämning");
+eq(editorDay(mondayOnly, "2026-10-20").pickup, "16:30", "tom tisdag får måndagens hämtning");
+eq(editorDay(mondayOnly, "2026-10-20").origin, "copied", "den kopierade dagen är ett förslag");
+eq(editorDay(mondayOnly, "2026-10-20").picker.id, "g1", "hämtaren följer med");
+eq(editorDay(mondayOnly, "2026-10-20").ledig, false, "Ledig är inte ikryssad");
+assert(editorDay(mondayOnly, "2026-10-23").closed && !editorDay(mondayOnly, "2026-10-23").dropoff, "stängd fredag fylls inte");
+assert(mondayOnly.filter((day) => day.open).every((day) => !day.ledig), "öppna dagar börjar utan Ledig");
+
+const fromStandard = ArtanPickup.weekEditorSeed({
+  ...weekTerm,
+  terms: [{
+    ...weekTerm.terms[0],
+    standard: [1, 2, 4, 5].map((weekday) => ({ weekday, attending: true, dropoff_at: "08:15", pickup_at: "15:45" })),
+  }],
+  dayPlans: [{ plan_date: "2026-10-14", dropoff_at: "07:00", pickup_at: "14:00", picker_kind: "contact", picker_id: "old" }],
+  standardPickers: [{ weekday: 4, picker_kind: "guardian", picker_id: "g1" }],
+}, "2026-10-19", "me");
+eq(editorDay(fromStandard, "2026-10-20").dropoff, "08:15", "standardveckan fyller tisdag");
+eq(editorDay(fromStandard, "2026-10-20").origin, "standard", "standardveckan används före äldre veckor");
+eq(editorDay(fromStandard, "2026-10-22").picker.id, "g1", "standardhämtaren följer med");
+eq(editorDay(fromStandard, "2026-10-21").dropoff, "", "en dag utan standardrad lämnas tom");
+eq(editorDay(fromStandard, "2026-10-19").picker.id, "me", "saknad hämtare blir den inloggade");
+eq(editorDay(fromStandard, "2026-10-19").pickerDefault, true, "standardvalet är ett förslag");
+
+const fromRecent = ArtanPickup.weekEditorSeed({
+  ...weekTerm,
+  dayPlans: [
+    { plan_date: "2026-10-05", dropoff_at: "07:00", pickup_at: "14:00", picker_kind: "guardian", picker_id: "old" },
+    { plan_date: "2026-10-12", dropoff_at: "09:00", pickup_at: "15:00", picker_kind: "contact", picker_id: "c1" },
+    { plan_date: "2026-10-14", dropoff_at: "09:30", pickup_at: "15:30", picker_kind: "guardian", picker_id: "g2" },
+  ],
+}, "2026-10-19", "me");
+eq(editorDay(fromRecent, "2026-10-19").dropoff, "09:00", "senaste sparade veckans måndag används");
+eq(editorDay(fromRecent, "2026-10-19").origin, "recent", "senaste veckan är källan");
+eq(editorDay(fromRecent, "2026-10-19").picker.id, "c1", "senaste veckans hämtare används");
+eq(editorDay(fromRecent, "2026-10-21").dropoff, "09:30", "senaste veckans onsdag används");
+eq(editorDay(fromRecent, "2026-10-21").picker.id, "g2", "onsdagens hämtare skrivs inte över");
+eq(editorDay(fromRecent, "2026-10-20").dropoff, "09:00", "en veckodag som saknades fylls från första dagen");
+eq(editorDay(fromRecent, "2026-10-20").origin, "copied", "den ifyllda dagen är ett förslag");
+
+const blank = ArtanPickup.weekEditorSeed(weekTerm, "2026-10-19", "me");
+assert(blank.filter((day) => day.open).every((day) => !day.dropoff && !day.pickup && !day.ledig), "helt tom vecka lämnas tom");
+eq(ArtanPickup.usualWeekValue(blank, "dropoff"), "08:00", "tom lämning öppnas på 08:00");
+eq(ArtanPickup.usualWeekValue(blank, "pickup"), "16:30", "tom hämtning öppnas på 16:30");
+eq(ArtanPickup.usualWeekValue(mondayOnly, "dropoff"), "08:00", "vanlig lämning tas från veckan");
+
+const locked = mondayOnly.map((day) => (day.iso === "2026-10-21" ? { ...day, dropoff: "10:00", pickup: "14:00", manual: true, origin: "user" } : day));
+const smart = ArtanPickup.smartFillWeek(locked, "2026-10-19", "dropoff", "09:10");
+eq(editorDay(smart, "2026-10-19").dropoff, "09:10", "källdagen uppdateras");
+eq(editorDay(smart, "2026-10-19").manual, true, "ändrad dag är manuell");
+eq(editorDay(smart, "2026-10-20").dropoff, "09:10", "förslag följer den nya tiden");
+eq(editorDay(smart, "2026-10-21").dropoff, "10:00", "manuell dag skrivs inte över");
+eq(editorDay(smart, "2026-10-23").dropoff, "", "stängd dag skrivs inte över");
+const ledigLocked = ArtanPickup.smartFillWeek(mondayOnly.map((day) => (day.iso === "2026-10-20" ? { ...day, ledig: true } : day)), "2026-10-19", "pickup", "17:00");
+eq(editorDay(ledigLocked, "2026-10-20").pickup, "16:30", "Ledig hoppas över");
+const cleared = ArtanPickup.smartFillWeek(mondayOnly, "2026-10-19", "dropoff", "");
+eq(editorDay(cleared, "2026-10-19").dropoff, "", "tom tid töms bara på den dagen");
+eq(editorDay(cleared, "2026-10-20").dropoff, "08:00", "övriga dagar behåller tiden");
+
+const picked = ArtanPickup.smartFillWeek(blank, "2026-10-19", "dropoff", "08:00");
+eq(editorDay(picked, "2026-10-20").dropoff, "08:00", "första tiden fyller tomma dagar");
+const both = ArtanPickup.assignDefaultPicker(ArtanPickup.smartFillWeek(picked, "2026-10-19", "pickup", "16:30"), "me");
+eq(editorDay(both, "2026-10-22").picker.id, "me", "ifylld dag utan hämtare får den inloggade");
+eq(editorDay(both, "2026-10-22").pickerDefault, true, "standardhämtaren kan bytas");
+const chosen = ArtanPickup.smartFillWeek(both, "2026-10-22", "picker", { kind: "contact", id: "c1", passKind: "" });
+eq(editorDay(chosen, "2026-10-20").picker.id, "c1", "vald hämtare följer med till förslag");
+eq(editorDay(chosen, "2026-10-22").manual, true, "dagen man valde hämtare på är manuell");
+
+const closedLedig = mondayOnly.map((day) => (day.iso === "2026-10-20" ? { ...day, ledig: true, dropoff: "", pickup: "", picker: null, pickerDefault: false } : day));
+const reopened = ArtanPickup.reopenWeekDay(closedLedig, "2026-10-20", "me");
+eq(editorDay(reopened, "2026-10-20").ledig, false, "avmarkerad Ledig öppnar dagen");
+eq(editorDay(reopened, "2026-10-20").dropoff, "08:00", "avmarkerad Ledig fyller vanlig lämning");
+eq(editorDay(reopened, "2026-10-20").pickup, "16:30", "avmarkerad Ledig fyller vanlig hämtning");
+eq(editorDay(reopened, "2026-10-20").picker.id, "g1", "avmarkerad Ledig får veckans hämtare");
+eq(editorDay(reopened, "2026-10-20").manual, true, "återöppnad dag är manuell");
+
+const previous = ArtanPickup.fillFromPreviousWeek(blank, {
+  dayPlans: [
+    { plan_date: "2026-10-12", dropoff_at: "07:20", pickup_at: "15:10", picker_kind: "contact", picker_id: "c9" },
+    { plan_date: "2026-10-13", dropoff_at: "07:30", pickup_at: "15:20", picker_kind: "guardian", picker_id: "g1" },
+    { plan_date: "2026-10-16", dropoff_at: "07:40", pickup_at: "15:40", picker_kind: "guardian", picker_id: "g1" },
+  ],
+}, "2026-10-19");
+eq(previous.copied, 2, "bara sparade vardagar räknas");
+eq(editorDay(previous.days, "2026-10-19").dropoff, "07:20", "förra måndagen kopieras");
+eq(editorDay(previous.days, "2026-10-20").pickup, "15:20", "förra tisdagen kopieras");
+eq(editorDay(previous.days, "2026-10-19").picker.id, "c9", "förra veckans hämtare kopieras");
+eq(editorDay(previous.days, "2026-10-21").dropoff, "", "en osparad dag lämnas");
+assert(editorDay(previous.days, "2026-10-23").closed && !editorDay(previous.days, "2026-10-23").dropoff, "stängd dag kopieras inte");
+eq(ArtanPickup.fillFromPreviousWeek(blank, { dayPlans: [] }, "2026-10-19").copied, 0, "tom förra vecka kopierar inget");
 const pickerSheet = ArtanPickup.renderPickerSheet({
   weekdayName: "torsdag",
   people: [
@@ -237,7 +351,7 @@ assert(staffNav.startsWith('role === "staff"') && !staffNav.includes("Hämtning"
 assert(app.includes('staff: ["attendance", "messages", "people", "incidents", "account"]'), "personalens vyer är oförändrade");
 assert(!app.includes('registerHubCard("child", { id: "hamtlista"'), "Hämtlista-kortet är borta");
 assert(app.includes("Öppna Hämtning") && app.includes("Hämtlistan, hämtpassen och veckoschemat finns under Hämtning"), "Kontaktpersoner länkar till Hämtning");
-for (const needle of ["share-pass", "print-pass", "open-pass", "remember_pickup_pass_token", "reveal_pickup_pass", "renderTermGrid", "edit-pickup-week", "save-pickup-week", "open-picker", "pickup-current-week", "pickup-add", "copy-pickup-week", "Ändra i Hämtning", "list_department_pickup_plans"]) {
+for (const needle of ["share-pass", "print-pass", "open-pass", "remember_pickup_pass_token", "reveal_pickup_pass", "renderTermGrid", "edit-pickup-week", "save-pickup-week", "open-picker", "same-as-previous-week", "weekEditorSeed", "smartFillWeek", "reopenWeekDay", "pickup-current-week", "pickup-add", "copy-pickup-week", "Ändra i Hämtning", "list_department_pickup_plans"]) {
   assert(app.includes(needle), `appen saknar ${needle}`);
 }
 assert(!app.includes("edit-pickup-day") && !app.includes('data-form="pickup-day"'), "dagformuläret är borta");

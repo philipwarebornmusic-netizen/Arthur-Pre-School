@@ -1,5 +1,13 @@
 # Ändringslogg
 
+## 2026-10-23 — Veckoschemat fylls i på några sekunder
+
+- Ledig är avmarkerad när veckan öppnas. En öppen dag som redan har tider, eller som får ett förslag, är inte ledig förrän man kryssar i den.
+- Tomma dagar fylls från standardveckan om den finns, annars från barnets senaste sparade vecka, samma veckodag och hämtare. Finns ingen standardvecka men någon dag i veckan redan är ifylld, får de andra tomma dagarna den tiderna. Förslagen syns direkt och sparas med Spara.
+- När man sätter lämning, hämtning eller hämtare på en dag följer de andra tomma dagarna med. Dagar man redan ändrat, lediga dagar och stängda dagar rörs inte. Avmarkerar man Ledig fylls dagen med veckans vanliga tider och hämtare.
+- Samma som förra veckan, överst i veckovyn, lägger in förra veckans sparade dagar och hoppar över stängda dagar. En tom tidväljare öppnas på den vanliga tiden, 08:00 eller 16:30 om veckan saknar tid. Saknas hämtare blir det den inloggade vårdnadshavaren.
+- En redan sparad dag kan fortfarande inte tömmas. Ledig hoppar över dagen vid sparning, utan att ta bort det som redan ligger i databasen.
+
 ## 2026-10-23 — Veckoschemat öppnas på den här veckan
 
 - Hämtningens kalender öppnas vid den aktuella veckan. Äldre veckor ligger kvar ovanför och nås genom att skrolla upp.
