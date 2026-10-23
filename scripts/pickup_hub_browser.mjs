@@ -62,8 +62,8 @@ const preview = `<!doctype html>
     const input = {
       today: "2026-10-22",
       terms: [{
-        starts_on: "2026-10-20",
-        ends_on: "2026-11-06",
+        starts_on: "2026-07-29",
+        ends_on: "2026-12-18",
         closures: ["2026-10-23"],
         closureReasons: { "2026-10-23": "Planering" },
         standard: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, attending: true, dropoff_at: "08:00", pickup_at: "16:30" })),
@@ -73,6 +73,11 @@ const preview = `<!doctype html>
     };
     let editor = null;
     let notice = "";
+    let keptScroll = 0;
+    const people = [
+      { token: "guardian:g1", name: "Anna Berg", initials: "AB", kind: "guardian" },
+      { token: "contact:c1", name: "Mormor Karin", initials: "MK", kind: "contact" },
+    ];
     const screen = document.getElementById("screen");
 
     function escapeHtml(value) {
@@ -90,38 +95,99 @@ const preview = `<!doctype html>
       });
     }
 
-    function dayEditor(date) {
-      const day = ArtanPickup.buildTermGrid(input).weeks.flatMap((week) => week.days).find((item) => item.iso === date);
-      if (!day?.open) return "";
-      return \`<form id="pickup-editor" class="card form-stack" data-form="pickup-day" data-date="\${date}"><p class="kicker">Ändra dag</p><h2>\${escapeHtml(ArtanPickup.shortDate(date))}</h2><div class="form-grid"><label>Lämning<input type="time" name="dropoff_at" value="\${escapeHtml(day.dropoff)}" required></label><label>Hämtning<input type="time" name="pickup_at" value="\${escapeHtml(day.pickup)}" required></label></div><label>Vem hämtar?<select name="picker" required><option value="">Välj</option><option value="guardian:g1" \${day.picker?.kind === "guardian" ? "selected" : ""}>Anna</option><option value="contact:c1">Mormor Karin</option></select></label><div class="stack-actions"><button class="primary" type="submit">Spara dagen</button><button class="secondary" type="button" data-action="close-pickup-editor">Avbryt</button></div></form>\`;
+    function weekModel(monday) {
+      const week = ArtanPickup.buildTermGrid(input).weeks.find((item) => item.monday === monday);
+      return {
+        weekNumber: ArtanPickup.isoWeekNumber(monday),
+        days: week.days.map((day) => {
+          const edit = editor?.days?.[day.iso] || {};
+          const pickerKind = edit.pickerKind || day.picker?.kind || "guardian";
+          return {
+            iso: day.iso,
+            weekday: day.weekday,
+            dropoff: edit.dropoff ?? day.dropoff,
+            pickup: edit.pickup ?? day.pickup,
+            ledig: Boolean(edit.ledig),
+            open: day.open,
+            closed: day.closed,
+            outside: day.outside,
+            initials: pickerKind === "contact" ? "MK" : "AB",
+            avatarKind: pickerKind,
+          };
+        }),
+      };
     }
 
     function menu() {
-      return \`<section id="pickup-editor" class="card"><p class="kicker">Hämtning</p><h2>Planera</h2><div class="stack-actions"><button class="primary" type="button" data-action="pickup-standard">Standardvecka</button><button class="secondary" type="button" data-action="copy-pickup-week">Kopiera den här veckan till nästa</button><button class="secondary" type="button" data-action="close-pickup-editor">Stäng</button></div></section>\`;
+      return \`<div class="plan-sheet" role="dialog" aria-label="Planera"><button type="button" class="plan-sheet-backdrop" data-action="close-pickup-editor" aria-label="Stäng"></button><div class="plan-sheet-panel"><h2>Planera</h2><div class="stack-actions"><button class="primary" type="button" data-action="pickup-standard">Standardvecka</button><button class="secondary" type="button" data-action="copy-pickup-week">Kopiera den här veckan till nästa</button></div></div></div>\`;
     }
 
     function standardForm() {
       const rows = [1, 2, 3, 4, 5].map((weekday) => \`<div class="weekly-schedule-row"><label>Lämning<input type="time" name="dropoff_\${weekday}" value="08:00"></label><label>Hämtning<input type="time" name="pickup_\${weekday}" value="16:30"></label></div>\`).join("");
-      return \`<form id="pickup-editor" class="card form-stack" data-form="pickup-standard"><p class="kicker">Standardvecka</p><h2>Samma tider varje vecka</h2><button class="secondary" type="button" data-action="parse-weekly-schedule">Tolka och fyll i</button><fieldset class="weekly-schedule"><legend>Måndag till fredag</legend>\${rows}</fieldset><button class="primary" type="submit">Spara standardvecka</button></form>\`;
+      return \`<form class="week-sheet" data-form="pickup-standard"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1>Standardvecka</h1><button class="week-save" type="submit">Spara</button></header><div class="week-sheet-body"><button class="secondary" type="button" data-action="parse-weekly-schedule">Tolka och fyll i</button><fieldset class="weekly-schedule"><legend>Måndag till fredag</legend>\${rows}</fieldset></div></form>\`;
     }
 
     function render() {
       const grid = ArtanPickup.renderTermGrid(input, { editable: true });
       const readonly = ArtanPickup.renderTermGrid(input);
-      const extra = editor?.mode === "day" ? dayEditor(editor.date) : editor?.mode === "menu" ? menu() : editor?.mode === "standard" ? standardForm() : "";
-      screen.innerHTML = \`<p id="notice">\${escapeHtml(notice)}</p><section class="hero-card"><p class="kicker">Hämtning</p><h1 class="h1">Tyra</h1></section><section class="card term-card" id="pickup-schedule"><h2>Terminen</h2>\${extra}\${grid}<button class="term-add no-print" type="button" data-action="pickup-add" aria-label="Planera vecka">+</button></section><section class="pass-sheet guardian-pass"><p class="kicker">Hämtpass</p><h1>Visa för personalen</h1><p class="pass-child">Tyra</p><p>22 okt. 2026</p><div class="pass-qr" data-pass-qr="\${token}" role="img" aria-label="QR-kod för hämtpasset"></div><p class="pass-code">\${code}</p><p class="pass-privacy">Passet visar bara förnamn. Visa det för personalen och dela inte länken.</p><div class="share-actions pass-share no-print"><button class="primary" type="button" data-action="share-pass" data-token="\${token}" data-code="\${code}" data-label="Hämtpass för Tyra">Dela</button><button class="secondary" type="button" data-action="print-pass">Skriv ut/Spara</button></div></section><section class="card" id="term-overview"><h2>Öppettider och schema</h2>\${readonly}</section>\`;
+      let extra = "";
+      if (editor?.mode === "week") {
+        extra = ArtanPickup.renderWeekEditor(weekModel(editor.monday));
+        if (editor.pickerIso) {
+          extra += ArtanPickup.renderPickerSheet({
+            weekdayName: ArtanPickup.weekdayName(editor.pickerIso, "full"),
+            people: people.map((person) => ({ ...person, selected: person.token === editor.draftToken })),
+          });
+        }
+      } else if (editor?.mode === "menu") extra = menu();
+      else if (editor?.mode === "standard") extra = standardForm();
+      screen.innerHTML = \`<p id="notice">\${escapeHtml(notice)}</p><section class="hero-card"><p class="kicker">Hämtning</p><h1 class="h1">Tyra</h1></section><section class="card term-card" id="pickup-schedule"><h2>Terminen</h2>\${grid}<button class="term-add no-print" type="button" data-action="pickup-add" aria-label="Planera vecka">+</button></section>\${extra}<section class="pass-sheet guardian-pass"><p class="kicker">Hämtpass</p><h1>Visa för personalen</h1><p class="pass-child">Tyra</p><p>22 okt. 2026</p><div class="pass-qr" data-pass-qr="\${token}" role="img" aria-label="QR-kod för hämtpasset"></div><p class="pass-code">\${code}</p><p class="pass-privacy">Passet visar bara förnamn. Visa det för personalen och dela inte länken.</p><div class="share-actions pass-share no-print"><button class="primary" type="button" data-action="share-pass" data-token="\${token}" data-code="\${code}" data-label="Hämtpass för Tyra">Dela</button><button class="secondary" type="button" data-action="print-pass">Skriv ut/Spara</button></div></section><section class="card" id="term-overview"><h2>Öppettider och schema</h2>\${readonly}</section>\`;
       paintQr();
+      if (!editor) window.scrollTo(0, keptScroll);
     }
 
     document.addEventListener("click", (event) => {
       const target = event.target.closest("[data-action]");
       if (!target) return;
       const action = target.dataset.action;
-      if (action === "edit-pickup-day") {
-        editor = { mode: "day", date: target.dataset.date };
+      if (action === "edit-pickup-week") {
+        keptScroll = window.scrollY;
+        editor = { mode: "week", monday: target.dataset.monday, days: {}, pickerIso: null, draftToken: "" };
         notice = "";
         render();
-        document.getElementById("pickup-editor")?.scrollIntoView({ block: "start" });
+      }
+      if (action === "open-picker") {
+        editor.pickerIso = target.dataset.date;
+        editor.draftToken = editor.days[target.dataset.date]?.pickerKind === "contact" ? "contact:c1" : "guardian:g1";
+        render();
+      }
+      if (action === "choose-picker") {
+        editor.draftToken = target.dataset.token;
+        document.querySelectorAll("[data-action='choose-picker']").forEach((button) => {
+          const selected = button === target;
+          button.classList.toggle("is-selected", selected);
+          button.setAttribute("aria-pressed", selected ? "true" : "false");
+        });
+      }
+      if (action === "confirm-picker") {
+        editor.days[editor.pickerIso] = { ...(editor.days[editor.pickerIso] || {}), pickerKind: editor.draftToken.startsWith("contact") ? "contact" : "guardian" };
+        editor.pickerIso = null;
+        render();
+      }
+      if (action === "save-pickup-week") {
+        const byDate = {};
+        document.querySelectorAll("[data-week-time]").forEach((inputField) => {
+          const slot = byDate[inputField.dataset.date] || {};
+          slot[inputField.dataset.weekTime === "pickup" ? "pickup" : "dropoff"] = inputField.value;
+          byDate[inputField.dataset.date] = slot;
+        });
+        input.dayPlans = Object.entries(byDate).filter(([, times]) => times.dropoff && times.pickup).map(([plan_date, times]) => {
+          const pickerKind = editor.days[plan_date]?.pickerKind || (plan_date.endsWith("22") ? "guardian" : "guardian");
+          return { plan_date, dropoff_at: times.dropoff, pickup_at: times.pickup, picker_kind: pickerKind, picker_id: pickerKind === "contact" ? "c1" : "g1" };
+        });
+        notice = "Veckan är sparad.";
+        editor = null;
+        render();
       }
       if (action === "pickup-add") {
         editor = editor?.mode === "menu" ? null : { mode: "menu" };
@@ -159,22 +225,7 @@ const preview = `<!doctype html>
     });
 
     document.addEventListener("submit", (event) => {
-      const form = event.target;
-      if (form.dataset.form !== "pickup-day") return;
-      event.preventDefault();
-      const data = new FormData(form);
-      const [kind, id] = String(data.get("picker") || "").split(":");
-      input.dayPlans = input.dayPlans.filter((plan) => plan.plan_date !== form.dataset.date);
-      input.dayPlans.push({
-        plan_date: form.dataset.date,
-        dropoff_at: data.get("dropoff_at"),
-        pickup_at: data.get("pickup_at"),
-        picker_kind: kind,
-        picker_id: id,
-      });
-      editor = null;
-      notice = "Dagen är sparad.";
-      render();
+      if (event.target.dataset.form === "pickup-standard") event.preventDefault();
     });
 
     render();
@@ -301,7 +352,7 @@ try {
   await waitForSelector(".pass-code");
   const opened = await evaluate("document.body.innerText");
   assert(opened.includes("19 okt–23 okt") && opened.includes("v.43"), "veckoraden saknas");
-  assert(opened.includes("08:00–16:30"), "tiderna saknas");
+  assert(opened.includes("08:00") && opened.includes("16:30"), "tiderna saknas");
   const closedText = await evaluate(`document.querySelector(".term-cell.is-closed").textContent`);
   assert(closedText.includes("Stängt") && closedText.includes("Planering"), `stängd dag saknas (${closedText})`);
   const colors = await evaluate(`(() => {
@@ -334,34 +385,66 @@ try {
     return add.right > bot.left && add.left < bot.right && add.bottom > bot.top && add.top < bot.bottom;
   })()`);
   assert(!overlap, "plusknappen täcker Ärtan-botten");
+  const pos = await evaluate(`(() => {
+    const week = document.getElementById("pickup-current-week");
+    week.scrollIntoView({ block: "start" });
+    const box = week.getBoundingClientRect();
+    const first = document.querySelector(".term-grid-week").getBoundingClientRect();
+    return { weekTop: box.top, firstTop: first.top, scroll: window.scrollY, text: week.innerText };
+  })()`);
+  assert(pos.scroll > 200 && pos.firstTop < 0 && pos.weekTop < 140, `kalendern öppnas inte vid aktuell vecka (${JSON.stringify(pos)})`);
+  assert(pos.text.includes("19 okt") && pos.text.includes("v.43"), `fel vecka ligger överst (${pos.text})`);
   await shot("pickup-hub-grid-mobile.png");
 
   await click("#pickup-today");
-  await waitForSelector("#pickup-editor");
+  await waitForSelector("#week-sheet");
   const editor = await evaluate(`(() => {
-    const form = document.getElementById("pickup-editor");
-    return { date: form.querySelector("h2").textContent, dropoff: form.dropoff_at.value, pickup: form.pickup_at.value };
+    const sheet = document.getElementById("week-sheet");
+    const dropoff = sheet.querySelector('[data-date="2026-10-22"][data-week-time="dropoff"]');
+    const pickup = sheet.querySelector('[data-date="2026-10-22"][data-week-time="pickup"]');
+    return {
+      title: sheet.querySelector("h1").textContent,
+      position: getComputedStyle(sheet).position,
+      date: sheet.innerText.includes("22 okt"),
+      dropoff: dropoff.value,
+      pickup: pickup.value,
+      inline: document.body.innerText.includes("Spara dagen"),
+    };
   })()`);
-  assert(editor.date === "22 okt" && editor.dropoff === "08:00" && editor.pickup === "16:30", `dagredigeraren fylldes inte (${JSON.stringify(editor)})`);
+  assert(editor.title === "Vecka 43" && editor.position === "fixed" && editor.date && editor.dropoff === "08:00" && editor.pickup === "16:30" && !editor.inline, `veckovyn fylldes inte (${JSON.stringify(editor)})`);
+  await shot("pickup-hub-week-mobile.png");
+  await click('#week-sheet [data-action="open-picker"][data-date="2026-10-22"]');
+  await waitForSelector("#picker-sheet");
+  const picker = await evaluate(`(() => {
+    const sheet = document.getElementById("picker-sheet");
+    const contact = sheet.querySelector(".picker-avatar.is-contact");
+    return { title: sheet.querySelector("h2").textContent, contact: getComputedStyle(contact).backgroundColor, names: sheet.innerText };
+  })()`);
+  assert(picker.title === "Hämtar torsdag" && picker.names.includes("Anna Berg") && picker.names.includes("Mormor Karin") && picker.contact === "rgb(237, 245, 237)", `hämtarlistan är fel (${JSON.stringify(picker)})`);
+  await shot("pickup-hub-picker-mobile.png");
+  await click('[data-token="contact:c1"]');
+  await click('[data-action="confirm-picker"]');
+  await delay(30);
+  const avatar = await evaluate(`document.querySelector('#week-sheet [data-action="open-picker"][data-date="2026-10-22"]').textContent`);
+  assert(avatar === "MK", `initialerna uppdaterades inte (${avatar})`);
   await evaluate(`(() => {
-    const form = document.getElementById("pickup-editor");
-    form.dropoff_at.value = "07:45";
-    form.pickup_at.value = "15:15";
-    form.picker.value = "contact:c1";
-    form.requestSubmit();
+    document.querySelector('[data-week-time="dropoff"][data-date="2026-10-22"]').value = "07:45";
+    document.querySelector('[data-week-time="pickup"][data-date="2026-10-22"]').value = "15:15";
+    document.querySelector('[data-action="save-pickup-week"]').click();
   })()`);
   await delay(50);
   const saved = await evaluate(`(() => {
     const cell = document.querySelector('#pickup-today');
-    return { text: cell.textContent, person: Boolean(cell.querySelector(".term-person")), notice: document.getElementById("notice").textContent };
+    return { text: cell.textContent, person: Boolean(cell.querySelector(".term-person")), notice: document.getElementById("notice").textContent, scroll: window.scrollY, sheet: Boolean(document.getElementById("week-sheet")) };
   })()`);
-  assert(saved.text.includes("07:45–15:15") && saved.person && saved.notice.includes("Dagen är sparad"), `sparad dag syns inte (${JSON.stringify(saved)})`);
+  assert(saved.text.includes("07:45") && saved.text.includes("15:15") && saved.person && saved.notice.includes("Veckan är sparad") && !saved.sheet, `sparad vecka syns inte (${JSON.stringify(saved)})`);
+  assert(Math.abs(saved.scroll - pos.scroll) < 80, `scrollen hoppade (${saved.scroll} mot ${pos.scroll})`);
 
   await click('[data-action="pickup-add"]');
   await waitForSelector('[data-action="copy-pickup-week"]');
   await click('[data-action="pickup-standard"]');
   await waitForSelector('[data-action="parse-weekly-schedule"]');
-  const standardCount = await evaluate(`document.querySelectorAll('#pickup-editor input[type="time"]').length`);
+  const standardCount = await evaluate(`document.querySelectorAll('.week-sheet input[type="time"]').length`);
   assert(standardCount === 10, `standardveckan har ${standardCount} tidsfält`);
   await click('[data-action="pickup-add"]');
   await click('[data-action="copy-pickup-week"]');
@@ -397,5 +480,8 @@ try {
 } finally {
   chrome.kill("SIGKILL");
   server.close();
-  fs.rmSync(userDir, { recursive: true, force: true });
+  await delay(200);
+  try {
+    fs.rmSync(userDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
+  } catch { /* Chrome can still be releasing the profile after the checks have passed. */ }
 }

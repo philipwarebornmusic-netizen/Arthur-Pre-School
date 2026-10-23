@@ -510,7 +510,7 @@ function parentReminders(child) {
     reminders.unshift({ text: "Bekräfta att du har läst informationen från förskolan.", view: "child", target: "incident-copies" });
   }
   if (state.pickupWeekReady && typeof ArtanPickup !== "undefined" && ArtanPickup.buildTermGrid(pickupGridInput(child)).unfilled) {
-    reminders.unshift({ text: "Fyll i vem som hämtar den närmaste veckan.", view: "pickup", target: "pickup-today" });
+    reminders.unshift({ text: "Fyll i vem som hämtar den närmaste veckan.", view: "pickup", target: "pickup-current-week" });
   }
   return reminders.slice(0, 3);
 }
@@ -626,11 +626,10 @@ function showView(view, { section = "", scrollTarget = "", push = true } = {}) {
   }
   render();
   if (scrollTarget) {
-    requestAnimationFrame(() => {
-      const destination = document.getElementById(scrollTarget);
-      if (destination) destination.scrollIntoView({ behavior: "smooth", block: "start" });
-      else scrollTo({ top: 0, behavior: "smooth" });
-    });
+    const destination = document.getElementById(scrollTarget);
+    const behavior = scrollTarget === "pickup-current-week" ? "auto" : "smooth";
+    if (destination) destination.scrollIntoView({ behavior, block: "start" });
+    else scrollTo({ top: 0, behavior });
     return;
   }
   scrollTo({ top: 0, behavior: "smooth" });
@@ -694,7 +693,8 @@ function syncHubFromHistory() {
     if (!allowed.includes(state.view) || HUB_SLUG[state.view]) state.view = allowed[0];
   }
   render();
-  scrollTo({ top: 0 });
+  if (state.view === "pickup") scrollPickupWeekIntoView();
+  else scrollTo({ top: 0 });
 }
 
 function saveSession(session) {
@@ -2299,6 +2299,7 @@ function pickupGridInput(child) {
     dayPlans: calendar.day_plans || [],
     standardPickers: calendar.standard_pickers || [],
     markUnfilled: state.pickupWeekReady !== false,
+    viewerId: state.profile?.id || "",
   };
 }
 
@@ -2359,13 +2360,139 @@ function renderVisiblePasses(childId) {
   return faces.join("");
 }
 
-function renderPickupDayEditor(child) {
-  const date = state.pickupEditor?.date;
-  if (!date || typeof ArtanPickup === "undefined") return "";
-  const day = ArtanPickup.buildTermGrid(pickupGridInput(child)).weeks.flatMap((week) => week.days).find((item) => item.iso === date);
-  if (!day?.open) return "";
-  const calendar = state.pickupCalendars[child.id] || {};
-  return `<form id="pickup-editor" class="card form-stack" data-form="pickup-day" data-child-id="${esc(child.id)}" data-date="${esc(date)}"><p class="kicker">Ändra dag</p><h2>${esc(ArtanPickup.shortDate(date))}</h2><div class="form-grid">${field("Lämning", "dropoff_at", day.dropoff || "", { type: "time", required: true })}${field("Hämtning", "pickup_at", day.pickup || "", { type: "time", required: true })}</div>${pickerSelect("picker", calendar, date, pickerToken(day.picker))}<div class="stack-actions"><button class="primary" type="submit">Spara dagen</button><button class="secondary" type="button" data-action="close-pickup-editor">Avbryt</button></div></form>`;
+function pickupPeople(child) {
+  const calendar = state.pickupCalendars[child?.id] || {};
+  const guardians = Array.isArray(calendar.guardians) && calendar.guardians.length
+    ? calendar.guardians
+    : (state.profile?.id ? [{ id: state.profile.id, name: state.profile.name || "Jag" }] : []);
+  const contacts = Array.isArray(calendar.contacts)
+    ? calendar.contacts
+    : state.pickupContacts
+      .filter((contact) => contact.child_id === child?.id && !contact.blocked)
+      .map((contact) => ({ id: contact.contact_id, name: contact.name, relation: contact.relation }));
+  return { guardians, contacts, calendar };
+}
+
+function pickupPersonName(child, picker) {
+  if (!picker) return "";
+  const { guardians, contacts, calendar } = pickupPeople(child);
+  if (picker.kind === "guardian") return guardians.find((person) => person.id === picker.id)?.name || "";
+  if (picker.kind === "contact") return contacts.find((person) => person.id === picker.id)?.name || "";
+  if (picker.kind === "pass" && picker.passKind === "day") return (calendar.day_passes || []).find((pass) => pass.id === picker.id)?.label || "";
+  if (picker.kind === "pass") return (calendar.permanent_passes || []).find((pass) => pass.id === picker.id)?.label || "";
+  return "";
+}
+
+function weekEditorModel(child, editor) {
+  const week = ArtanPickup.buildTermGrid(pickupGridInput(child)).weeks.find((item) => item.monday === editor.monday);
+  const byIso = new Map((week?.days || []).map((day) => [day.iso, day]));
+  return {
+    weekNumber: ArtanPickup.isoWeekNumber(editor.monday),
+    error: editor.error || "",
+    days: editor.days.map((day) => {
+      const source = byIso.get(day.iso) || {};
+      const name = pickupPersonName(child, day.picker);
+      const initials = name
+        ? ArtanPickup.personInitials(name)
+        : day.picker?.kind === "pass" ? "P" : ArtanPickup.personInitials(state.profile?.name);
+      return {
+        iso: day.iso,
+        weekday: source.weekday,
+        dropoff: day.dropoff,
+        pickup: day.pickup,
+        ledig: day.ledig,
+        open: Boolean(source.open),
+        closed: Boolean(source.closed),
+        outside: Boolean(source.outside),
+        initials,
+        avatarKind: day.picker?.kind || "guardian",
+      };
+    }),
+  };
+}
+
+function renderPickupWeekSheet(child) {
+  const editor = state.pickupEditor;
+  if (!editor || editor.mode !== "week" || typeof ArtanPickup === "undefined") return "";
+  const sheet = ArtanPickup.renderWeekEditor(weekEditorModel(child, editor));
+  if (!editor.pickerIso) return sheet;
+  const day = editor.days.find((item) => item.iso === editor.pickerIso);
+  const { guardians, contacts } = pickupPeople(child);
+  const selected = editor.draftToken || pickerToken(day?.picker);
+  const people = [
+    ...guardians.map((person) => ({
+      token: `guardian:${person.id}`,
+      name: person.name,
+      initials: ArtanPickup.personInitials(person.name),
+      kind: "guardian",
+      selected: selected === `guardian:${person.id}`,
+    })),
+    ...contacts.map((person) => ({
+      token: `contact:${person.id}`,
+      name: person.relation ? `${person.relation} ${person.name}` : person.name,
+      initials: ArtanPickup.personInitials(person.name),
+      kind: "contact",
+      selected: selected === `contact:${person.id}`,
+    })),
+  ];
+  return `${sheet}${ArtanPickup.renderPickerSheet({ weekdayName: ArtanPickup.weekdayName(editor.pickerIso, "full"), people })}`;
+}
+
+function openPickupWeek(monday) {
+  const child = selectedChild();
+  if (!child || typeof ArtanPickup === "undefined") return;
+  const week = ArtanPickup.buildTermGrid(pickupGridInput(child)).weeks.find((item) => item.monday === monday);
+  if (!week) return;
+  const me = state.profile?.id || "";
+  const scrollY = window.scrollY;
+  state.pickupEditor = {
+    mode: "week",
+    monday,
+    childId: child.id,
+    scrollY,
+    sheetScroll: 0,
+    pickerIso: null,
+    draftToken: "",
+    error: "",
+    days: week.days.map((day) => ({
+      iso: day.iso,
+      dropoff: day.dropoff || "",
+      pickup: day.pickup || "",
+      ledig: Boolean(day.open && !day.times),
+      picker: day.picker || (day.open && me ? { kind: "guardian", id: me, passKind: "" } : null),
+    })),
+  };
+  state.pickupScrollRestore = scrollY;
+  render();
+}
+
+function syncWeekEditorFromDom() {
+  const editor = state.pickupEditor;
+  if (!editor || editor.mode !== "week") return;
+  editor.sheetScroll = document.querySelector(".week-sheet-body")?.scrollTop || 0;
+  document.querySelectorAll("[data-week-time]").forEach((input) => {
+    const day = editor.days.find((item) => item.iso === input.dataset.date);
+    if (!day) return;
+    day[input.dataset.weekTime === "pickup" ? "pickup" : "dropoff"] = input.value;
+  });
+  document.querySelectorAll("[data-week-ledig]").forEach((input) => {
+    const day = editor.days.find((item) => item.iso === input.dataset.date);
+    if (day) day.ledig = input.checked;
+  });
+}
+
+function scrollPickupWeekIntoView() {
+  document.getElementById("pickup-current-week")?.scrollIntoView({ behavior: "auto", block: "start" });
+}
+
+function restorePickupScroll() {
+  const top = state.pickupScrollRestore;
+  const sheetTop = state.pickupEditor?.mode === "week" ? state.pickupEditor.sheetScroll || 0 : null;
+  if (top == null && sheetTop == null) return;
+  state.pickupScrollRestore = null;
+  if (top != null) scrollTo({ top, behavior: "auto" });
+  const body = document.querySelector(".week-sheet-body");
+  if (body && sheetTop) body.scrollTop = sheetTop;
 }
 
 function renderPickupStandardEditor(child) {
@@ -2378,14 +2505,19 @@ function renderPickupStandardEditor(child) {
     const picker = (calendar.standard_pickers || []).find((row) => Number(row.weekday) === weekday);
     return `<div class="weekly-schedule-row" data-weekday="${weekday}"><label class="check"><input type="checkbox" name="attending_${weekday}" data-schedule-attending ${attending ? "checked" : ""}> ${esc(WEEKDAYS[weekday - 1])}</label><label>Lämning<input type="time" name="dropoff_${weekday}" value="${esc(String(saved?.dropoff_at || "").slice(0, 5))}" ${attending ? "" : "disabled"}></label><label>Hämtning<input type="time" name="pickup_${weekday}" value="${esc(String(saved?.pickup_at || "").slice(0, 5))}" ${attending ? "" : "disabled"}></label>${pickerSelect(`picker_${weekday}`, calendar, "", pickerToken(picker), false)}</div>`;
   }).join("");
-  return `<form id="pickup-editor" class="card form-stack" data-form="pickup-standard" data-child-id="${esc(child.id)}"><p class="kicker">Standardvecka</p><h2>Samma tider varje vecka</h2><div class="assistant-form"><label>Berätta för Ärtan<textarea name="schedule_text" placeholder="08.00–16.30 alla dagar utom torsdagar, då 08.00–15.00"></textarea></label><button class="secondary" type="button" data-action="parse-weekly-schedule">Tolka och fyll i</button><p class="form-hint" data-parse-status aria-live="polite">Ärtan fyller bara i tiderna. Välj vem som hämtar och spara.</p></div><fieldset class="weekly-schedule"><legend>Måndag till fredag</legend>${rows}</fieldset><div class="stack-actions"><button class="primary" type="submit">Spara standardvecka</button><button class="secondary" type="button" data-action="close-pickup-editor">Avbryt</button></div></form>`;
+  return `<form class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="standard-sheet-title" data-form="pickup-standard" data-child-id="${esc(child.id)}"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="standard-sheet-title">Standardvecka</h1><button class="week-save" type="submit">Spara</button></header><div class="week-sheet-body"><p class="form-hint">Samma tider varje vecka i terminen.</p><div class="assistant-form"><label>Berätta för Ärtan<textarea name="schedule_text" placeholder="08.00–16.30 alla dagar utom torsdagar, då 08.00–15.00"></textarea></label><button class="secondary" type="button" data-action="parse-weekly-schedule">Tolka och fyll i</button><p class="form-hint" data-parse-status aria-live="polite">Ärtan fyller bara i tiderna. Välj vem som hämtar och spara.</p></div><fieldset class="weekly-schedule"><legend>Måndag till fredag</legend>${rows}</fieldset></div></form>`;
 }
 
-function renderPickupPlanner(child) {
+function renderPickupMenu() {
+  return `<div class="plan-sheet" role="dialog" aria-label="Planera"><button type="button" class="plan-sheet-backdrop" data-action="close-pickup-editor" aria-label="Stäng"></button><div class="plan-sheet-panel"><h2>Planera</h2><div class="stack-actions"><button class="primary" type="button" data-action="pickup-standard">Standardvecka</button><button class="secondary" type="button" data-action="copy-pickup-week">Kopiera den här veckan till nästa</button></div><p class="form-hint">Standardveckan fyller terminen. Kopiera lägger den här veckans tider och hämtare på nästa vecka. Ett engångspass följer inte med.</p></div></div>`;
+}
+
+function renderPickupOverlay(child) {
   if (!state.pickupEditor) return "";
-  if (state.pickupEditor.mode === "day") return renderPickupDayEditor(child);
+  if (state.pickupEditor.mode === "week") return renderPickupWeekSheet(child);
   if (state.pickupEditor.mode === "standard") return renderPickupStandardEditor(child);
-  return `<section id="pickup-editor" class="card"><p class="kicker">Hämtning</p><h2>Planera</h2><div class="stack-actions"><button class="primary" type="button" data-action="pickup-standard">Standardvecka</button><button class="secondary" type="button" data-action="copy-pickup-week">Kopiera den här veckan till nästa</button><button class="secondary" type="button" data-action="close-pickup-editor">Stäng</button></div><p class="form-hint">Standardveckan fyller terminen. Kopiera lägger den här veckans tider och hämtare på nästa vecka. Ett engångspass följer inte med.</p></section>`;
+  if (state.pickupEditor.mode === "menu") return renderPickupMenu();
+  return "";
 }
 
 function renderCreatedPass(childId) {
@@ -2437,10 +2569,10 @@ function renderPickupHub() {
   if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Hämtning</p><h1 class="h1">Inget barn ännu</h1></section>`;
   const grid = typeof ArtanPickup === "undefined" ? "" : ArtanPickup.renderTermGrid(pickupGridInput(child), { editable: state.pickupWeekReady });
   const schedule = state.pickupWeekReady
-    ? `${renderPickupPlanner(child)}${grid || `<p class="form-hint">Ingen publicerad termin att visa ännu.</p>`}<button class="term-add no-print" type="button" data-action="pickup-add" aria-label="Planera vecka">+</button>`
+    ? `${grid || `<p class="form-hint">Ingen publicerad termin att visa ännu.</p>`}<button class="term-add no-print" type="button" data-action="pickup-add" aria-label="Planera vecka">+</button>${renderPickupOverlay(child)}`
     : `<section class="card"><h2>Veckoschema</h2><p class="form-hint">Veckoschemat för hämtning är inte aktiverat i databasen ännu.</p>${grid}</section>`;
   return `${noticeHtml()}${childTabs()}<section class="hero-card"><p class="kicker">Hämtning</p><h1 class="h1">${esc(childFirstName(child) || child.name)}</h1><p class="sub">Schema, hämtpass och hämtlista för ${esc(departmentName(child.department_id))}.</p></section>
-    <section class="card term-card" id="pickup-schedule"><div class="section-head"><div><p class="kicker">Schema</p><h2>Terminen</h2></div></div>${schedule}<p class="form-hint">Tryck på en dag för att ändra tider och vem som hämtar. En personikon betyder att någon annan än en vårdnadshavare hämtar. Veckor som saknar plan den närmaste veckan är markerade.</p></section>
+    <section class="card term-card" id="pickup-schedule"><div class="section-head"><div><p class="kicker">Schema</p><h2>Terminen</h2></div></div>${schedule}<p class="form-hint">Tryck på en vecka för att ändra tider och vem som hämtar. Rutan visar lämning och hämtning. En personikon betyder att någon annan än du hämtar. Veckor som saknar plan den närmaste veckan är markerade.</p></section>
     ${renderPickupSection(child)}`;
 }
 
@@ -4144,6 +4276,7 @@ function render() {
   renderAssistant();
   prefetchGuardianAttachments();
   paintPassQr();
+  restorePickupScroll();
 }
 
 async function runMutation(work, successText = "Sparat.") {
@@ -4282,28 +4415,6 @@ document.body.addEventListener("submit", (event) => {
     }, "Personen är sparad på hämtlistan.");
     return;
   }
-  if (type === "pickup-day") {
-    const parsed = parsePickerToken(values.picker);
-    if (!parsed) {
-      state.notice = { type: "error", text: "Välj vem som hämtar." };
-      render();
-      return;
-    }
-    runMutation(async () => {
-      await rpc("save_pickup_day", {
-        target_child_id: form.dataset.childId,
-        plan_date: form.dataset.date,
-        dropoff_at: values.dropoff_at,
-        pickup_at: values.pickup_at,
-        picker_kind: parsed.picker_kind,
-        picker_id: parsed.picker_id,
-        pass_kind: parsed.pass_kind,
-      });
-      state.pickupEditor = null;
-      await loadData();
-    }, "Dagen är sparad.");
-    return;
-  }
   if (type === "pickup-standard") {
     const weekly = [];
     for (const weekday of [1, 2, 3, 4, 5]) {
@@ -4325,10 +4436,12 @@ document.body.addEventListener("submit", (event) => {
         pass_kind: parsed?.pass_kind || null,
       });
     }
+    const scrollY = state.pickupEditor?.scrollY ?? window.scrollY;
     runMutation(async () => {
       await rpc("save_pickup_standard_week", { target_child_id: form.dataset.childId, weekly_schedule: weekly });
       state.pickupEditor = null;
       await loadData();
+      state.pickupScrollRestore = scrollY;
     }, "Standardveckan är sparad.");
     return;
   }
@@ -4736,6 +4849,19 @@ document.body.addEventListener("change", (event) => {
   if (input.name === "incident_kind" && input.form?.dataset.form === "incident-draft") {
     input.form.dataset.incidentType = input.value;
   }
+  if (state.pickupEditor?.mode === "week" && input.matches("[data-week-ledig]")) {
+    const day = state.pickupEditor.days.find((item) => item.iso === input.dataset.date);
+    if (day) day.ledig = input.checked;
+    const row = input.closest(".week-row");
+    row?.classList.toggle("is-ledig", input.checked);
+    row?.querySelectorAll("[data-week-time], [data-action='open-picker']").forEach((node) => {
+      node.disabled = input.checked;
+    });
+  }
+  if (state.pickupEditor?.mode === "week" && input.matches("[data-week-time]")) {
+    const day = state.pickupEditor.days.find((item) => item.iso === input.dataset.date);
+    if (day) day[input.dataset.weekTime === "pickup" ? "pickup" : "dropoff"] = input.value;
+  }
   if (input.matches("[data-schedule-attending]")) {
     const row = input.closest("[data-weekday]");
     row.querySelectorAll('input[type="time"]').forEach((timeInput) => {
@@ -4901,7 +5027,7 @@ document.body.addEventListener("click", (event) => {
       state.incidentId = null;
       state.incidentDetail = null;
     }
-    showView(view, view === "pickup" ? { scrollTarget: "pickup-today" } : {});
+    showView(view, view === "pickup" ? { scrollTarget: "pickup-current-week" } : {});
     return;
   }
   if (action === "hub-open") {
@@ -5121,38 +5247,150 @@ document.body.addEventListener("click", (event) => {
     openPrint(clone.outerHTML);
     return;
   }
-  if (action === "edit-pickup-day") {
-    state.pickupEditor = { mode: "day", date: target.dataset.date };
-    state.notice = null;
-    render();
-    requestAnimationFrame(() => document.getElementById("pickup-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  if (action === "edit-pickup-week") {
+    openPickupWeek(target.dataset.monday);
+    requestAnimationFrame(() => document.querySelector(".week-back")?.focus({ preventScroll: true }));
     return;
   }
   if (action === "pickup-add") {
-    state.pickupEditor = state.pickupEditor?.mode === "menu" ? null : { mode: "menu" };
+    const scrollY = state.pickupEditor?.scrollY ?? window.scrollY;
+    if (state.pickupEditor?.mode === "menu") {
+      state.pickupEditor = null;
+    } else {
+      state.pickupEditor = { mode: "menu", scrollY };
+    }
     state.notice = null;
+    state.pickupScrollRestore = scrollY;
     render();
     return;
   }
   if (action === "pickup-standard") {
-    state.pickupEditor = { mode: "standard" };
+    const scrollY = state.pickupEditor?.scrollY ?? window.scrollY;
+    state.pickupEditor = { mode: "standard", scrollY };
     state.notice = null;
+    state.pickupScrollRestore = scrollY;
     render();
-    requestAnimationFrame(() => document.getElementById("pickup-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    requestAnimationFrame(() => document.querySelector(".week-back")?.focus({ preventScroll: true }));
+    return;
+  }
+  if (action === "close-picker" && state.pickupEditor?.mode === "week") {
+    syncWeekEditorFromDom();
+    state.pickupEditor.pickerIso = null;
+    state.pickupEditor.draftToken = "";
+    state.pickupScrollRestore = state.pickupEditor.scrollY;
+    render();
     return;
   }
   if (action === "close-pickup-editor") {
+    const scrollY = state.pickupEditor?.scrollY ?? window.scrollY;
     state.pickupEditor = null;
+    state.pickupScrollRestore = scrollY;
     render();
+    return;
+  }
+  if (action === "open-picker") {
+    const editor = state.pickupEditor;
+    if (editor?.mode !== "week" || target.disabled) return;
+    syncWeekEditorFromDom();
+    const day = editor.days.find((item) => item.iso === target.dataset.date);
+    editor.pickerIso = target.dataset.date;
+    editor.draftToken = pickerToken(day?.picker);
+    editor.error = "";
+    state.pickupScrollRestore = editor.scrollY;
+    render();
+    return;
+  }
+  if (action === "choose-picker") {
+    const editor = state.pickupEditor;
+    if (editor?.mode !== "week") return;
+    editor.draftToken = target.dataset.token;
+    document.querySelectorAll("[data-action='choose-picker']").forEach((button) => {
+      const selected = button === target;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+    return;
+  }
+  if (action === "confirm-picker") {
+    const editor = state.pickupEditor;
+    if (editor?.mode !== "week") return;
+    syncWeekEditorFromDom();
+    const parsed = parsePickerToken(editor.draftToken);
+    const day = editor.days.find((item) => item.iso === editor.pickerIso);
+    if (!parsed || !day) {
+      editor.error = "Välj vem som hämtar.";
+      state.pickupScrollRestore = editor.scrollY;
+      render();
+      return;
+    }
+    day.picker = { kind: parsed.picker_kind, id: parsed.picker_id, passKind: parsed.pass_kind || "" };
+    editor.pickerIso = null;
+    editor.draftToken = "";
+    editor.error = "";
+    state.pickupScrollRestore = editor.scrollY;
+    render();
+    return;
+  }
+  if (action === "save-pickup-week") {
+    const editor = state.pickupEditor;
+    const child = selectedChild();
+    if (!editor || editor.mode !== "week" || !child || typeof ArtanPickup === "undefined") return;
+    syncWeekEditorFromDom();
+    const week = ArtanPickup.buildTermGrid(pickupGridInput(child)).weeks.find((item) => item.monday === editor.monday);
+    const byIso = new Map((week?.days || []).map((day) => [day.iso, day]));
+    const saving = [];
+    for (const day of editor.days) {
+      const source = byIso.get(day.iso);
+      if (!source?.open || day.ledig) continue;
+      if (!day.dropoff || !day.pickup || day.dropoff >= day.pickup) {
+        editor.error = "Fyll i lämning och hämtning, eller markera dagen som ledig.";
+        state.pickupScrollRestore = editor.scrollY;
+        render();
+        return;
+      }
+      if (!day.picker?.kind || !day.picker.id) {
+        editor.error = `Välj vem som hämtar ${ArtanPickup.weekdayName(day.iso, "full")}.`;
+        state.pickupScrollRestore = editor.scrollY;
+        render();
+        return;
+      }
+      saving.push(day);
+    }
+    const scrollY = editor.scrollY;
+    if (!saving.length) {
+      state.pickupEditor = null;
+      state.notice = { type: "success", text: "Inga dagar sparades. Ledig lämnar en redan ifylld vecka som den är." };
+      state.pickupScrollRestore = scrollY;
+      render();
+      return;
+    }
+    runMutation(async () => {
+      for (const day of saving) {
+        await rpc("save_pickup_day", {
+          target_child_id: child.id,
+          plan_date: day.iso,
+          dropoff_at: day.dropoff,
+          pickup_at: day.pickup,
+          picker_kind: day.picker.kind,
+          picker_id: day.picker.id,
+          pass_kind: day.picker.passKind || null,
+        });
+      }
+      state.pickupEditor = null;
+      await loadData();
+      state.pickupScrollRestore = scrollY;
+    }, "Veckan är sparad.");
     return;
   }
   if (action === "copy-pickup-week") {
     const child = selectedChild();
     if (!child || typeof ArtanPickup === "undefined") return;
+    const scrollY = state.pickupEditor?.scrollY ?? window.scrollY;
     runMutation(async () => {
       await rpc("copy_pickup_week", { target_child_id: child.id, source_monday: ArtanPickup.weekMonday(todayIso()) });
       state.pickupEditor = null;
       await loadData();
+      state.pickupScrollRestore = scrollY;
     }, "Veckan är kopierad till nästa.");
     return;
   }
@@ -5527,4 +5765,5 @@ document.addEventListener("keydown", (event) => {
   }
   applyInitialHub();
   render();
+  if (state.view === "pickup") scrollPickupWeekIntoView();
 })();

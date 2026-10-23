@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 2026-10-23 — Veckoschemat öppnas på den här veckan
+
+- Hämtningens kalender öppnas vid den aktuella veckan. Äldre veckor ligger kvar ovanför och nås genom att skrolla upp.
+- Varje ruta visar lämning och hämtning, till exempel 08:00 och 16:30. Tomma dagar är nedtonade. Dagen är markerad, stängda dagar är rosa med en stängd-symbol, och en personikon betyder att någon annan än du hämtar.
+- Ett tryck på veckan öppnar en egen vy, Vecka N, med en rad per vardag. Där syns datum, tider, Ledig och vem som hämtar. Tiderna öppnar telefonens tidväljare. Datumet ligger kvar medan man fyller i.
+- Hämtaren väljs i en lista, Hämtar och veckodagen, med vårdnadshavare och hämtlista. Kontaktpersoner har en annan färg. Bekräfta med bocken, så visas initialerna på raden.
+- Spara skriver veckans ifyllda dagar via de befintliga funktionerna och återvänder till samma vecka. Ledig hoppar över dagen, så en redan sparad dag eller standardvecka ligger kvar tills nya tider sparas. Tomma dagar fylls i förväg från standardveckan.
+- Formuläret som låg över kalendern är borta. Plusknappen för standardvecka och kopiera vecka ligger kvar.
+
 ## 2026-10-22 — Hämtning samlad, med pass och terminskalender
 
 - Vårdnadshavare har en egen plats, Hämtning, i menyn. Där ligger veckoschemat, engångspass, permanenta pass och hämtlistan. Kontaktpersoner ligger kvar under Barnet och länkar dit. Kortet Hämtlista under Barnet är borttaget.
