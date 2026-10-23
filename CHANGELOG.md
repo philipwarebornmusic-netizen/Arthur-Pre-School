@@ -1,5 +1,38 @@
 # Ändringslogg
 
+## 2026-10-23 — Kalendern visar bara sparade dagar
+
+- Terminskalendern räknar en dag som ifylld bara när den är sparad. Veckan efter en sparad vecka blir inte ifylld av sig själv. Osparade dagar är streckade. En sparad standardvecka kan synas som en svag, kursiv tid, och veckoraden säger Ej ifylld tills dagarna sparas.
+- Påminnelsen på Min dag använder samma regel och räknar bara sparade dagar. Personalens närvarotext hoppar över en rad som är märkt som förra veckan eller standardveckan. Databasfunktionen som skickar raderna är oförändrad.
+- Samma som förra veckan kopierar förra veckans sparade dagar. Finns inga, tas den senaste sparade veckan före den i stället, med texten Kopierade vecka N. Knappen döljs om ingen vecka är sparad. Förslagen används bara i veckoeditorn.
+
+## 2026-10-23 — Veckoschemat fylls i på några sekunder
+
+- Ledig är avmarkerad när veckan öppnas. En öppen dag som redan har tider, eller som får ett förslag, är inte ledig förrän man kryssar i den.
+- Tomma dagar fylls från standardveckan om den finns, annars från barnets senaste sparade vecka, samma veckodag och hämtare. Finns ingen standardvecka men någon dag i veckan redan är ifylld, får de andra tomma dagarna den tiderna. Förslagen syns direkt och sparas med Spara.
+- När man sätter lämning, hämtning eller hämtare på en dag följer de andra tomma dagarna med. Dagar man redan ändrat, lediga dagar och stängda dagar rörs inte. Avmarkerar man Ledig fylls dagen med veckans vanliga tider och hämtare.
+- Samma som förra veckan, överst i veckovyn, lägger in förra veckans sparade dagar och hoppar över stängda dagar. En tom tidväljare öppnas på den vanliga tiden, 08:00 eller 16:30 om veckan saknar tid. Saknas hämtare blir det den inloggade vårdnadshavaren.
+- En redan sparad dag kan fortfarande inte tömmas. Ledig hoppar över dagen vid sparning, utan att ta bort det som redan ligger i databasen.
+
+## 2026-10-23 — Veckoschemat öppnas på den här veckan
+
+- Hämtningens kalender öppnas vid den aktuella veckan. Äldre veckor ligger kvar ovanför och nås genom att skrolla upp.
+- Varje ruta visar lämning och hämtning, till exempel 08:00 och 16:30. Tomma dagar är nedtonade. Dagen är markerad, stängda dagar är rosa med en stängd-symbol, och en personikon betyder att någon annan än du hämtar.
+- Ett tryck på veckan öppnar en egen vy, Vecka N, med en rad per vardag. Där syns datum, tider, Ledig och vem som hämtar. Tiderna öppnar telefonens tidväljare. Datumet ligger kvar medan man fyller i.
+- Hämtaren väljs i en lista, Hämtar och veckodagen, med vårdnadshavare och hämtlista. Kontaktpersoner har en annan färg. Bekräfta med bocken, så visas initialerna på raden.
+- Spara skriver veckans ifyllda dagar via de befintliga funktionerna och återvänder till samma vecka. Ledig hoppar över dagen, så en redan sparad dag eller standardvecka ligger kvar tills nya tider sparas. Tomma dagar fylls i förväg från standardveckan.
+- Formuläret som låg över kalendern är borta. Plusknappen för standardvecka och kopiera vecka ligger kvar.
+
+## 2026-10-22 — Hämtning samlad, med pass och terminskalender
+
+- Vårdnadshavare har en egen plats, Hämtning, i menyn. Där ligger veckoschemat, engångspass, permanenta pass och hämtlistan. Kontaktpersoner ligger kvar under Barnet och länkar dit. Kortet Hämtlista under Barnet är borttaget.
+- Ett nyskapat pass visas som på den publika sidan: förnamn, datum eller giltighet, QR-kod och den sexsiffriga koden. Dela öppnar delningsytan, eller kopierar texten. Skriv ut/Spara skriver ut passet utan knapparna.
+- Ett pass som fortfarande gäller kan öppnas igen. Den råa koden sparas i `pickup_pass_secrets`, som bara `reveal_pickup_pass` läser, och bara för en vårdnadshavare till barnet. Personal och anonyma får den inte. De gamla kontrollsummorna är oförändrade. Pass som skapades innan den här ändringen kan inte öppnas igen. Då står det att passet ska skapas på nytt, eller Ny kod för ett permanent pass.
+- Schemat är en kalender för hela den publicerade terminen. Varje rad är en vecka, måndag till fredag, med datum och veckonummer. Rutan visar lämning och hämtning. Dagen är markerad, stängda dagar är rosa med en stängd-symbol, och dagar utanför terminen är grå. En personikon betyder att någon annan än en vårdnadshavare hämtar. Ett tryck ändrar den dagen. Plusknappen sätter en standardvecka eller kopierar veckan framåt.
+- Tider hämtas från dagen, annars från samma dag förra veckan, annars från standardveckan. Ett engångspass följer inte med till en annan dag. Veckor de närmaste sju dagarna som saknar tid eller hämtare markeras, och Min dag påminner. Samma kalender visas skrivskyddad på Min dag. Personal ser dagens och veckans planerade tider per barn i närvaron.
+- Båda vårdnadshavarna kan ändra. Ändringarna loggas. Migrationen `supabase/018_pickup_hub.sql` är inte körd. Innan den är applicerad ligger det gamla veckoschemat kvar på Min dag, och påminnelsen visas inte.
+- `purge_expired_pickup_details` tar också bort sparade länkar när passet inte längre kan öppnas. Namn och telefon rensas som tidigare, sju dagar efter att engångspasset gått ut.
+
 ## 2026-10-22 — Engångspass hittar pgcrypto
 
 - `supabase/017_fix_pickup_pass_random_bytes.sql` innehåller bara `alter function public.create_pickup_pass(uuid, date, time, time, text, text, text) set search_path = public, extensions;`. Funktionen skrivs inte om. Samma sats appliceras mot databasen separat. Kör inte filen igen.
