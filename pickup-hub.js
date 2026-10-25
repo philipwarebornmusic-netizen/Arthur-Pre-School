@@ -571,6 +571,66 @@
     return { todayText, weekText };
   }
 
+  function isoDay(value) {
+    return String(value || "").slice(0, 10);
+  }
+
+  function termRows(terms) {
+    return (terms || [])
+      .map((term) => ({ starts_on: isoDay(term?.starts_on), ends_on: isoDay(term?.ends_on) }))
+      .filter((term) => term.starts_on && term.ends_on);
+  }
+
+  function calendarPassEnd(today) {
+    const year = Number(isoDay(today).slice(0, 4));
+    const june = `${year}-06-30`;
+    const december = `${year}-12-31`;
+    if (today <= june) return june;
+    if (today <= december) return december;
+    return `${year + 1}-06-30`;
+  }
+
+  function nextCalendarPassEnd(anchor) {
+    const year = Number(isoDay(anchor).slice(0, 4));
+    const candidates = [`${year}-06-30`, `${year}-12-31`, `${year + 1}-06-30`, `${year + 1}-12-31`, `${year + 2}-06-30`];
+    const horizon = addDays(anchor, 14);
+    return candidates.find((date) => date > horizon) || candidates.find((date) => date > anchor) || `${year + 2}-06-30`;
+  }
+
+  function defaultPassEnd(today, terms) {
+    const day = isoDay(today);
+    const rows = termRows(terms);
+    const current = rows.filter((term) => term.starts_on <= day && day <= term.ends_on);
+    if (current.length) return current.map((term) => term.ends_on).sort().at(-1);
+    const upcoming = rows.filter((term) => term.starts_on > day).sort((left, right) => left.starts_on.localeCompare(right.starts_on) || left.ends_on.localeCompare(right.ends_on));
+    if (upcoming.length) return upcoming[0].ends_on;
+    return calendarPassEnd(day);
+  }
+
+  function nextPassEnd(today, afterDate, terms) {
+    const day = isoDay(today);
+    const anchor = afterDate && isoDay(afterDate) > day ? isoDay(afterDate) : day;
+    const later = termRows(terms).map((term) => term.ends_on).filter((endsOn) => endsOn > anchor).sort();
+    if (later.length) return later[0];
+    return nextCalendarPassEnd(anchor);
+  }
+
+  function passRenewalDue(today, endsOn, dismissed) {
+    const end = isoDay(endsOn);
+    if (!end || dismissed) return false;
+    const day = isoDay(today);
+    if (end < day) return false;
+    return end <= addDays(day, 14);
+  }
+
+  function swedishGenitive(name) {
+    const cleaned = String(name || "").trim();
+    if (!cleaned) return "Personens";
+    const last = cleaned.slice(-1).toLocaleLowerCase("sv-SE");
+    if (last === "s" || last === "x" || last === "z") return cleaned;
+    return `${cleaned}s`;
+  }
+
   root.ArtanPickup = {
     addDays,
     buildTermGrid,
@@ -592,5 +652,9 @@
     weekMonday,
     weekdayName,
     weekdayNumber,
+    defaultPassEnd,
+    nextPassEnd,
+    passRenewalDue,
+    swedishGenitive,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

@@ -23,7 +23,7 @@ def postgres_bin():
     configured = shutil.which("pg_config")
     if configured:
         candidates.insert(0, Path(configured).parent)
-    return next((path for path in candidates if path and (path / "psql").is_file()), Path("/usr/lib/postgresql/16/bin"))
+    return next((path for path in candidates if path and (path / "psql").is_file() and (path / "initdb").is_file()), Path("/usr/lib/postgresql/16/bin"))
 
 
 PG_BIN = postgres_bin()

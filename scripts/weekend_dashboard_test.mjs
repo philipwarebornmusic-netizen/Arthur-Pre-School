@@ -75,6 +75,7 @@ function dashboard(iso) {
     renderIncidentCopies: () => "",
     renderNoticeList: () => "",
     renderPickupWeekNudge: () => "",
+    renderPassRenewalCards: () => "",
     renderParentTermSchedules: () => "",
     renderSiblingRequestForm: () => "",
     renderPost: () => "",

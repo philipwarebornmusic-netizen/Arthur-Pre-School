@@ -441,4 +441,34 @@ assert(app.includes('data.personRole === "dropoff"') || app.includes('personRole
 assert(!app.includes("edit-pickup-day") && !app.includes('data-form="pickup-day"'), "dagformuläret är borta");
 assert(app.includes("pass.pass_status === \"active\" || pass.pass_status === \"scheduled\""), "ett pass som inte har börjat kan öppnas");
 
+const renewalTerms = [
+  { starts_on: "2026-08-17", ends_on: "2026-12-18" },
+  { starts_on: "2027-01-07", ends_on: "2027-06-16" },
+];
+eq(ArtanPickup.defaultPassEnd("2026-10-25", renewalTerms), "2026-12-18", "pågående termin ger sitt slutdatum");
+eq(ArtanPickup.defaultPassEnd("2026-12-20", renewalTerms), "2027-06-16", "nästa termin används mellan terminerna");
+eq(ArtanPickup.defaultPassEnd("2026-10-25", []), "2026-12-31", "utan termin blir det 31 december");
+eq(ArtanPickup.defaultPassEnd("2026-03-01", []), "2026-06-30", "före midsommar blir det 30 juni");
+eq(ArtanPickup.defaultPassEnd("2026-10-25", [
+  { starts_on: "2026-08-17", ends_on: "2026-12-18" },
+  { starts_on: "2026-08-17", ends_on: "2026-12-20" },
+]), "2026-12-20", "överlappande terminer tar det senaste slutet");
+eq(ArtanPickup.nextPassEnd("2026-10-25", "2026-12-18", renewalTerms), "2027-06-16", "förlängning hoppar till nästa termins slut");
+eq(ArtanPickup.nextPassEnd("2026-10-25", "2026-12-18", [{ starts_on: "2026-08-17", ends_on: "2026-12-18" }]), "2027-06-30", "utan senare termin blir det 30 juni");
+eq(ArtanPickup.nextPassEnd("2026-10-25", "2026-10-20", []), "2026-12-31", "en höst utan termin slutar 31 december");
+eq(ArtanPickup.nextPassEnd("2026-10-25", "2026-10-01", renewalTerms), "2026-12-18", "ett utgånget pass räknas från idag");
+assert(ArtanPickup.passRenewalDue("2026-10-25", "2026-11-08", false), "14 dagar är dags att påminna");
+assert(!ArtanPickup.passRenewalDue("2026-10-25", "2026-11-09", false), "15 dagar är för tidigt");
+assert(!ArtanPickup.passRenewalDue("2026-10-25", "2026-10-24", false), "ett utgånget pass är inget kort på Min dag");
+assert(!ArtanPickup.passRenewalDue("2026-10-25", "2026-11-01", true), "Låt gå ut döljer kortet");
+assert(!ArtanPickup.passRenewalDue("2026-10-25", "", false), "utan slutdatum finns ingen påminnelse");
+eq(ArtanPickup.swedishGenitive("Karin"), "Karins", "Karin får genitiv-s");
+eq(ArtanPickup.swedishGenitive("Andreas"), "Andreas", "namn på s får inget extra s");
+eq(ArtanPickup.swedishGenitive("Max"), "Max", "namn på x får inget extra s");
+eq(ArtanPickup.swedishGenitive("Liz"), "Liz", "namn på z får inget extra s");
+eq(ArtanPickup.swedishGenitive(""), "Personens", "tomt namn");
+for (const needle of ["Förläng", "Låt gå ut", "Förnya", "contact-photo", "defaultPassEnd", "Slutdatumet är terminens sista dag", "Bilder på hämtlistan", "extend_permanent_pickup_pass", "dismiss_permanent_pass_reminder", "set_pickup_contact_photo", "Förlängning är inte aktiverad i databasen ännu."]) {
+  assert(app.includes(needle), `appen saknar ${needle}`);
+}
+
 console.log("pickup hub checks passed");

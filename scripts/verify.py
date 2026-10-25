@@ -229,6 +229,17 @@ def check_weekend_dashboard(errors):
         errors.append(detail)
 
 
+def check_contact_photos(errors):
+    script = ROOT / "scripts" / "contact_photo_sql_test.py"
+    if not script.exists():
+        errors.append("scripts/contact_photo_sql_test.py is missing")
+        return
+    result = subprocess.run(["python3", str(script)], cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "contact photo sql test failed").strip()
+        errors.append(detail)
+
+
 def check_pickup_hub(errors):
     script = ROOT / "scripts" / "pickup_hub_test.mjs"
     if not script.exists():
@@ -261,6 +272,7 @@ def main():
     check_permanent_passes(errors)
     check_weekend_dashboard(errors)
     check_pickup_hub(errors)
+    check_contact_photos(errors)
 
     if errors:
         print("Arthur verification FAILED", file=sys.stderr)
