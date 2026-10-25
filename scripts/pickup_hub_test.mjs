@@ -4,6 +4,7 @@ import vm from "node:vm";
 const root = new URL("../", import.meta.url);
 const app = readFileSync(new URL("app.js", root), "utf8");
 const sql = readFileSync(new URL("supabase/018_pickup_hub.sql", root), "utf8");
+const handoffSql = readFileSync(new URL("supabase/019_handoff_people.sql", root), "utf8");
 const html = readFileSync(new URL("index.html", root), "utf8");
 
 const context = { globalThis: {} };
@@ -130,6 +131,7 @@ const explicit = ArtanPickup.buildTermGrid({
 eq(day(explicit, "2026-10-22").times, "08:15–16:00", "dagens egen tid vinner");
 eq(day(explicit, "2026-10-22").saved, true, "sparad dag är ifylld");
 eq(day(explicit, "2026-10-22").picker.passKind, "day", "dagens engångspass visas den dagen");
+eq(day(explicit, "2026-10-22").dropoffPerson, null, "äldre dagsplan utan lämnare kan fortfarande läsas");
 eq(day(explicit, "2026-10-29").saved, false, "veckan efter en sparad vecka är inte sparad");
 eq(day(explicit, "2026-10-29").times, "", "veckan efter visar inte den sparade tiden");
 
@@ -208,12 +210,12 @@ const sheet = ArtanPickup.renderWeekEditor({
   weekNumber: 43,
   canCopyPrevious: true,
   days: [
-    { iso: "2026-10-19", weekday: 1, dropoff: "08:00", pickup: "16:30", ledig: false, open: true, initials: "AB", avatarKind: "guardian" },
+    { iso: "2026-10-19", weekday: 1, dropoff: "08:00", pickup: "16:30", ledig: false, open: true, dropoffInitials: "AB", dropoffKind: "guardian", pickupInitials: "MK", pickupKind: "contact" },
     { iso: "2026-10-23", weekday: 5, closed: true, open: false },
   ],
 });
 assert(sheet.includes("Vecka 43") && sheet.includes("Mån 19 okt") && sheet.includes(">Ledig<") && sheet.includes('type="time"') && sheet.includes(">Spara<") && sheet.includes("is-closed"), "veckovyn visar datum, tider och stängt");
-assert(sheet.includes('data-action="save-pickup-week"') && sheet.includes('data-action="open-picker"'), "veckovyn sparar och väljer hämtare");
+assert(sheet.includes('data-person-role="dropoff"') && sheet.includes('data-person-role="pickup"'), "veckovyn väljer lämnare och hämtare var för sig");
 assert(sheet.includes('data-action="same-as-previous-week"') && sheet.includes("Samma som förra veckan"), "veckovyn kan fyllas från förra veckan");
 assert(!ArtanPickup.renderWeekEditor({ weekNumber: 43, canCopyPrevious: false, days: [] }).includes("same-as-previous-week"), "knappen döljs utan sparad vecka");
 assert(ArtanPickup.renderWeekEditor({ weekNumber: 47, canCopyPrevious: true, note: "Kopierade vecka 45", days: [] }).includes("Kopierade vecka 45"), "äldre vecka förklaras neutralt");
@@ -244,6 +246,7 @@ eq(editorDay(mondayOnly, "2026-10-20").dropoff, "08:00", "tom tisdag får månda
 eq(editorDay(mondayOnly, "2026-10-20").pickup, "16:30", "tom tisdag får måndagens hämtning");
 eq(editorDay(mondayOnly, "2026-10-20").origin, "copied", "den kopierade dagen är ett förslag");
 eq(editorDay(mondayOnly, "2026-10-20").picker.id, "g1", "hämtaren följer med");
+eq(editorDay(mondayOnly, "2026-10-20").dropoffPerson.id, "me", "saknad lämnare får den inloggade som förslag");
 eq(editorDay(mondayOnly, "2026-10-20").ledig, false, "Ledig är inte ikryssad");
 assert(editorDay(mondayOnly, "2026-10-23").closed && !editorDay(mondayOnly, "2026-10-23").dropoff, "stängd fredag fylls inte");
 assert(mondayOnly.filter((day) => day.open).every((day) => !day.ledig), "öppna dagar börjar utan Ledig");
@@ -307,6 +310,9 @@ eq(editorDay(both, "2026-10-22").pickerDefault, true, "standardhämtaren kan byt
 const chosen = ArtanPickup.smartFillWeek(both, "2026-10-22", "picker", { kind: "contact", id: "c1", passKind: "" });
 eq(editorDay(chosen, "2026-10-20").picker.id, "c1", "vald hämtare följer med till förslag");
 eq(editorDay(chosen, "2026-10-22").manual, true, "dagen man valde hämtare på är manuell");
+const dropoffChosen = ArtanPickup.smartFillWeek(chosen, "2026-10-22", "dropoffPerson", { kind: "contact", id: "c2", passKind: "" });
+eq(editorDay(dropoffChosen, "2026-10-20").dropoffPerson.id, "c2", "vald lämnare följer med oberoende av hämtaren");
+eq(editorDay(dropoffChosen, "2026-10-20").picker.id, "c1", "ett lämnarval skriver inte över hämtaren");
 
 const closedLedig = mondayOnly.map((day) => (day.iso === "2026-10-20" ? { ...day, ledig: true, dropoff: "", pickup: "", picker: null, pickerDefault: false } : day));
 const reopened = ArtanPickup.reopenWeekDay(closedLedig, "2026-10-20", "me");
@@ -352,6 +358,12 @@ const pickerSheet = ArtanPickup.renderPickerSheet({
   ],
 });
 assert(pickerSheet.includes("Hämtar torsdag") && pickerSheet.includes("is-contact") && pickerSheet.includes("Anna Berg") && pickerSheet.includes("Bekräfta"), "hämtarlistan skiljer kontaktpersoner");
+const dropoffSheet = ArtanPickup.renderPickerSheet({
+  role: "dropoff",
+  weekdayName: "torsdag",
+  people: [{ token: "guardian:g1", name: "Anna Berg", initials: "AB", kind: "guardian", selected: true }],
+});
+assert(dropoffSheet.includes("Lämnar torsdag"), "lämnarlistan har ett eget tydligt verb");
 eq(ArtanPickup.personInitials("Anna Berg"), "AB", "initialer");
 eq(ArtanPickup.weekdayName("2026-10-22", "full"), "torsdag", "veckodag i klartext");
 
@@ -378,6 +390,14 @@ const departmentSql = sliceFunction(sql, "list_department_pickup_plans");
 const revealSql = sliceFunction(sql, "reveal_pickup_pass");
 const rememberSql = sliceFunction(sql, "remember_pickup_pass_token");
 const copySql = sliceFunction(sql, "copy_pickup_week");
+const saveHandoffsSql = sliceFunction(handoffSql, "save_pickup_day_handoffs");
+const handoffCalendarSql = sliceFunction(handoffSql, "list_pickup_calendar");
+assert(saveHandoffsSql.includes("dropoff_person_kind") && saveHandoffsSql.includes("picker_kind"), "dagsplanen sparar lämnare och hämtare separat");
+assert(saveHandoffsSql.includes("pickup_picker_problem") && saveHandoffsSql.includes("Ogiltig lämnare"), "båda personvalen valideras");
+assert(handoffCalendarSql.includes("'dropoff_person_kind'") && handoffCalendarSql.includes("'picker_kind'"), "kalendern returnerar båda personvalen");
+assert(sliceFunction(handoffSql, "copy_pickup_week").includes("pickup_effective_dropoff_person"), "veckokopiering tar med lämnaren");
+assert(handoffSql.includes("dropoff_person_kind in ('guardian', 'contact')"), "hämtpass kan inte användas för lämning");
+assert(handoffSql.includes("grant execute on function public.save_pickup_day_handoffs") && !/grant execute[^\n]+ to anon/.test(handoffSql), "bara inloggade får spara överlämningar");
 assert(!calendarSql.includes("pickup_pass_secrets"), "kalendern läser inte den råa koden");
 assert(!departmentSql.includes("pickup_pass_secrets") && !/\btoken\b/.test(departmentSql), "personalens lista saknar koder");
 assert(revealSql.includes("pickup_pass_secrets.pass_kind") && revealSql.includes("pickup_pass_secrets.pass_id"), "öppna pass kvalificerar kolumnerna");
@@ -416,6 +436,8 @@ assert(app.includes("Öppna Hämtning") && app.includes("Hämtlistan, hämtpasse
 for (const needle of ["share-pass", "print-pass", "open-pass", "remember_pickup_pass_token", "reveal_pickup_pass", "renderTermGrid", "edit-pickup-week", "save-pickup-week", "open-picker", "same-as-previous-week", "weekEditorSeed", "smartFillWeek", "reopenWeekDay", "hasEarlierSavedWeek", "Kopierade vecka", "Ej ifylld", "pickup-current-week", "pickup-add", "copy-pickup-week", "Ändra i Hämtning", "list_department_pickup_plans"]) {
   assert(app.includes(needle), `appen saknar ${needle}`);
 }
+assert(app.includes("save_pickup_day_handoffs") && app.includes("dropoff_person_kind"), "appen skickar separata lämnar- och hämtarval");
+assert(app.includes('data.personRole === "dropoff"') || app.includes('personRole === "dropoff"'), "appen håller reda på vilket personval som ändras");
 assert(!app.includes("edit-pickup-day") && !app.includes('data-form="pickup-day"'), "dagformuläret är borta");
 assert(app.includes("pass.pass_status === \"active\" || pass.pass_status === \"scheduled\""), "ett pass som inte har börjat kan öppnas");
 

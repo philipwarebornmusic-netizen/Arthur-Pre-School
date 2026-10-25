@@ -78,9 +78,16 @@ Term managers
 Class list and profile photos
 - supabase/migrations/015_class_list_photos.sql is already applied in production. Do not run it again.
 - The file creates the private Storage bucket child-photos (not public, 2 MB, JPEG only) and the consent tables. No separate bucket step is required when that insert succeeds. If the storage schema rejects the insert, create a private bucket with that id, the same size limit and image/jpeg, then run the file again.
-- Guardians upload, replace and delete <child_id>/profile.jpg. Replacement upserts that same path, so the previous file is overwritten. The app deletes the object through the Storage API. clear_child_photo only checks that the object is gone and then clears photo_path. The SQL does not DELETE from storage.objects, because protect_objects_delete rejects every such statement. Staff and administrators of the child's department can read the photo. Other guardians can read it only when every linked guardian has opted in and the child is still named in the class list.
-- Answers are per guardian. A null answer is unanswered, not a no. Any explicit no hides the name immediately. The photo requires yes from every linked guardian. Changes are appended to class_list_consent_events.
+- Guardians upload, replace and delete <child_id>/profile.jpg. Replacement upserts that same path, so the previous file is overwritten. The app deletes the object through the Storage API. clear_child_photo only checks that the object is gone and then clears photo_path. The SQL does not DELETE from storage.objects, because protect_objects_delete rejects every such statement. A guardian always sees their own child's photo. Staff and administrators of the child's department can read it. Other guardians can read it only when every linked guardian has opted in and the child is still named in the class list.
+- Answers are per guardian. A null answer is unanswered, not a no. Any explicit no hides the name immediately. The photo requires yes from every linked guardian before other families see it. Changes are appended to class_list_consent_events.
 - This opt-in is separate from app_images, group_images and social_media. Do not reuse those rows.
+- Existing installations must also apply supabase/migrations/019_class_list_own_photo.sql. It changes only list_class_list(); it does not broaden another family's photo access. This migration is applied in production.
+
+Pickup handoff people
+- supabase/019_handoff_people.sql requires supabase/018_pickup_hub.sql first. Both files are applied in production.
+- A saved attending day has separate guardian/contact fields for the person leaving the child and the person picking the child up. Pickup passes remain pickup-only.
+- Existing guardian/contact pickup choices are copied to the drop-off choice during migration. Existing pickup-pass rows keep an empty drop-off choice until a guardian reviews and saves them.
+- The calendar, standard week, week copy, audit log and staff caption carry both choices. Direct table access remains revoked; guardians write through security-definer RPCs.
 
 Incident reports
 - supabase/012_incident_reports.sql is not applied in production. Do not run it until incident reports should go live.
@@ -97,7 +104,7 @@ Fake Test organization and PreSchool Test preschool
 3. Set SUPABASE_SERVICE_ROLE_KEY and ARTHUR_TEST_PASSWORD in the local shell. Never write either value to a file or task note.
 4. Apply the idempotent plan:
    python3 scripts/provision_test_school.py --apply
-5. The command verifies one admin, six parent profiles, and no automatically created child. Each parent registers their own child after login.
+5. The command verifies one admin, eight parent profiles, and no automatically created child. Each parent registers their own child after login.
 
 Deployment
 Serve the repository root as a static site. index.html loads supabase-config.js before app.js. Apply schema.sql and then every unapplied numbered migration before deploying dependent application code.

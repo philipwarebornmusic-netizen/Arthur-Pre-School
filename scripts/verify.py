@@ -218,6 +218,17 @@ def check_permanent_passes(errors):
         errors.append(detail)
 
 
+def check_weekend_dashboard(errors):
+    script = ROOT / "scripts" / "weekend_dashboard_test.mjs"
+    if not script.exists():
+        errors.append("scripts/weekend_dashboard_test.mjs is missing")
+        return
+    result = subprocess.run(["node", str(script)], cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "weekend dashboard test failed").strip()
+        errors.append(detail)
+
+
 def check_pickup_hub(errors):
     script = ROOT / "scripts" / "pickup_hub_test.mjs"
     if not script.exists():
@@ -248,6 +259,7 @@ def main():
     check_term_parser(errors)
     check_people_directory(errors)
     check_permanent_passes(errors)
+    check_weekend_dashboard(errors)
     check_pickup_hub(errors)
 
     if errors:

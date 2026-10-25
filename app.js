@@ -110,6 +110,12 @@ function todayIso() {
   return new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" });
 }
 
+function isWeekend(value = todayIso()) {
+  const [year, month, day] = String(value).split("-").map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return weekday === 0 || weekday === 6;
+}
+
 function formatDate(value) {
   if (!value) return "–";
   return new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium" }).format(new Date(`${value}T12:00:00`));
@@ -498,9 +504,9 @@ function childInfoChecklist(child) {
 function parentReminders(child) {
   const reminders = [];
   const attendance = attendanceFor(child.id);
-  if (!attendance) {
+  if (!isWeekend() && !attendance) {
     reminders.push({ text: "Fyll i dagens plan med lämning och hämtning.", view: "home", target: "daily-plan" });
-  } else if (attendance.status === "in" && !attendance.pickup_at) {
+  } else if (!isWeekend() && attendance.status === "in" && !attendance.pickup_at) {
     reminders.push({ text: "Komplettera dagens plan med hämtningstid.", view: "home", target: "daily-plan" });
   }
   childInfoChecklist(child)
@@ -510,7 +516,7 @@ function parentReminders(child) {
     reminders.unshift({ text: "Bekräfta att du har läst informationen från förskolan.", view: "child", target: "incident-copies" });
   }
   if (state.pickupWeekReady && typeof ArtanPickup !== "undefined" && ArtanPickup.buildTermGrid(pickupGridInput(child)).unfilled) {
-    reminders.unshift({ text: "Fyll i vem som hämtar den närmaste veckan.", view: "pickup", target: "pickup-current-week" });
+    reminders.unshift({ text: "Fyll i lämning och hämtning för den närmaste veckan.", view: "pickup", target: "pickup-current-week" });
   }
   return reminders.slice(0, 3);
 }
@@ -1607,6 +1613,12 @@ function parentAssistantAnswer(intent) {
     );
   }
   if (intent === "day") {
+    if (isWeekend()) {
+      return assistantResult(
+        `Det är helg idag. ${child.name} behöver ingen incheckning eller dagsplan.`,
+        "Dagens datum i ärtan",
+      );
+    }
     const attendance = attendanceFor(child.id);
     if (!attendance) {
       return assistantResult(
@@ -2306,7 +2318,7 @@ function pickupGridInput(child) {
 function renderPickupWeekNudge(child) {
   if (!child || !state.pickupWeekReady || typeof ArtanPickup === "undefined") return "";
   if (!ArtanPickup.buildTermGrid(pickupGridInput(child)).unfilled) return "";
-  return `<section class="card pickup-nudge"><p class="kicker">Hämtning</p><h2>Nästa vecka är inte ifylld</h2><p>Fyll i tider och vem som hämtar för de närmaste vardagarna. Bara sparade dagar räknas.</p><button class="primary" type="button" data-action="navigate" data-view="pickup">Öppna hämtningen</button></section>`;
+  return `<section class="card pickup-nudge"><p class="kicker">Lämning och hämtning</p><h2>Nästa vecka är inte ifylld</h2><p>Fyll i tider, vem som lämnar och vem som hämtar för de närmaste vardagarna. Bara sparade dagar räknas.</p><button class="primary" type="button" data-action="navigate" data-view="pickup">Öppna schemat</button></section>`;
 }
 
 function pickerToken(picker) {
@@ -2326,19 +2338,21 @@ function parsePickerToken(value) {
   return null;
 }
 
-function pickerSelect(name, calendar, date, selected, required = true) {
+function pickerSelect(name, calendar, date, selected, required = true, label = "Vem hämtar?", allowPasses = true) {
   const groups = [
     ["Vårdnadshavare", (calendar.guardians || []).map((person) => [`guardian:${person.id}`, person.name])],
     ["Hämtlista", (calendar.contacts || []).map((person) => [`contact:${person.id}`, `${person.relation} ${person.name}`])],
   ];
-  if (date) {
+  if (allowPasses && date) {
     const passes = (calendar.day_passes || []).filter((pass) => pass.pickup_date === date).map((pass) => [`pass:day:${pass.id}`, pass.label]);
     if (passes.length) groups.push(["Hämtpass", passes]);
   }
-  const permanent = (calendar.permanent_passes || []).map((pass) => [`pass:permanent:${pass.id}`, `${pass.label} · permanent`]);
-  if (permanent.length) groups.push(["Permanent pass", permanent]);
-  const options = groups.filter(([, items]) => items.length).map(([label, items]) => `<optgroup label="${esc(label)}">${items.map(([value, text]) => `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(text)}</option>`).join("")}</optgroup>`).join("");
-  return `<label>Vem hämtar?<select name="${esc(name)}" ${required ? "required" : ""}><option value="">Välj</option>${options}</select></label>`;
+  if (allowPasses) {
+    const permanent = (calendar.permanent_passes || []).map((pass) => [`pass:permanent:${pass.id}`, `${pass.label} · permanent`]);
+    if (permanent.length) groups.push(["Permanent pass", permanent]);
+  }
+  const options = groups.filter(([, items]) => items.length).map(([groupLabel, items]) => `<optgroup label="${esc(groupLabel)}">${items.map(([value, text]) => `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(text)}</option>`).join("")}</optgroup>`).join("");
+  return `<label>${esc(label)}<select name="${esc(name)}" ${required ? "required" : ""}><option value="">Välj</option>${options}</select></label>`;
 }
 
 function renderGuardianPassFace(pass) {
@@ -2383,6 +2397,18 @@ function pickupPersonName(child, picker) {
   return "";
 }
 
+function personPresentation(child, person) {
+  const name = pickupPersonName(child, person);
+  return {
+    initials: name
+      ? ArtanPickup.personInitials(name)
+      : person?.kind === "pass"
+        ? "P"
+        : ArtanPickup.personInitials(state.profile?.name),
+    kind: person?.kind || "guardian",
+  };
+}
+
 function weekEditorModel(child, editor) {
   const week = ArtanPickup.buildTermGrid(pickupGridInput(child)).weeks.find((item) => item.monday === editor.monday);
   const byIso = new Map((week?.days || []).map((day) => [day.iso, day]));
@@ -2393,10 +2419,8 @@ function weekEditorModel(child, editor) {
     canCopyPrevious: ArtanPickup.hasEarlierSavedWeek(pickupGridInput(child), editor.monday),
     days: editor.days.map((day) => {
       const source = byIso.get(day.iso) || {};
-      const name = pickupPersonName(child, day.picker);
-      const initials = name
-        ? ArtanPickup.personInitials(name)
-        : day.picker?.kind === "pass" ? "P" : ArtanPickup.personInitials(state.profile?.name);
+      const dropoff = personPresentation(child, day.dropoffPerson);
+      const pickup = personPresentation(child, day.picker);
       return {
         iso: day.iso,
         weekday: source.weekday,
@@ -2406,8 +2430,10 @@ function weekEditorModel(child, editor) {
         open: Boolean(source.open),
         closed: Boolean(source.closed),
         outside: Boolean(source.outside),
-        initials,
-        avatarKind: day.picker?.kind || "guardian",
+        dropoffInitials: dropoff.initials,
+        dropoffKind: dropoff.kind,
+        pickupInitials: pickup.initials,
+        pickupKind: pickup.kind,
       };
     }),
   };
@@ -2417,27 +2443,32 @@ function renderPickupWeekSheet(child) {
   const editor = state.pickupEditor;
   if (!editor || editor.mode !== "week" || typeof ArtanPickup === "undefined") return "";
   const sheet = ArtanPickup.renderWeekEditor(weekEditorModel(child, editor));
-  if (!editor.pickerIso) return sheet;
-  const day = editor.days.find((item) => item.iso === editor.pickerIso);
+  if (!editor.personIso) return sheet;
+  const day = editor.days.find((item) => item.iso === editor.personIso);
+  const person = editor.personRole === "dropoff" ? day?.dropoffPerson : day?.picker;
   const { guardians, contacts } = pickupPeople(child);
-  const selected = editor.draftToken || pickerToken(day?.picker);
+  const selected = editor.draftToken || pickerToken(person);
   const people = [
-    ...guardians.map((person) => ({
-      token: `guardian:${person.id}`,
-      name: person.name,
-      initials: ArtanPickup.personInitials(person.name),
+    ...guardians.map((item) => ({
+      token: `guardian:${item.id}`,
+      name: item.name,
+      initials: ArtanPickup.personInitials(item.name),
       kind: "guardian",
-      selected: selected === `guardian:${person.id}`,
+      selected: selected === `guardian:${item.id}`,
     })),
-    ...contacts.map((person) => ({
-      token: `contact:${person.id}`,
-      name: person.relation ? `${person.relation} ${person.name}` : person.name,
-      initials: ArtanPickup.personInitials(person.name),
+    ...contacts.map((item) => ({
+      token: `contact:${item.id}`,
+      name: item.relation ? `${item.relation} ${item.name}` : item.name,
+      initials: ArtanPickup.personInitials(item.name),
       kind: "contact",
-      selected: selected === `contact:${person.id}`,
+      selected: selected === `contact:${item.id}`,
     })),
   ];
-  return `${sheet}${ArtanPickup.renderPickerSheet({ weekdayName: ArtanPickup.weekdayName(editor.pickerIso, "full"), people })}`;
+  return `${sheet}${ArtanPickup.renderPickerSheet({
+    role: editor.personRole,
+    weekdayName: ArtanPickup.weekdayName(editor.personIso, "full"),
+    people,
+  })}`;
 }
 
 function openPickupWeek(monday) {
@@ -2454,7 +2485,8 @@ function openPickupWeek(monday) {
     viewerId,
     scrollY,
     sheetScroll: 0,
-    pickerIso: null,
+    personIso: null,
+    personRole: "",
     draftToken: "",
     error: "",
     note: "",
@@ -2529,14 +2561,15 @@ function renderPickupStandardEditor(child) {
   const rows = [1, 2, 3, 4, 5].map((weekday) => {
     const saved = (term?.standard || []).find((row) => Number(row.weekday) === weekday);
     const attending = Boolean(saved?.attending);
-    const picker = (calendar.standard_pickers || []).find((row) => Number(row.weekday) === weekday);
-    return `<div class="weekly-schedule-row" data-weekday="${weekday}"><label class="check"><input type="checkbox" name="attending_${weekday}" data-schedule-attending ${attending ? "checked" : ""}> ${esc(WEEKDAYS[weekday - 1])}</label><label>Lämning<input type="time" name="dropoff_${weekday}" value="${esc(String(saved?.dropoff_at || "").slice(0, 5))}" ${attending ? "" : "disabled"}></label><label>Hämtning<input type="time" name="pickup_${weekday}" value="${esc(String(saved?.pickup_at || "").slice(0, 5))}" ${attending ? "" : "disabled"}></label>${pickerSelect(`picker_${weekday}`, calendar, "", pickerToken(picker), false)}</div>`;
+    const people = (calendar.standard_pickers || []).find((row) => Number(row.weekday) === weekday);
+    const dropoffPerson = people ? { kind: people.dropoff_person_kind, id: people.dropoff_person_id } : null;
+    return `<div class="weekly-schedule-row" data-weekday="${weekday}"><label class="check"><input type="checkbox" name="attending_${weekday}" data-schedule-attending ${attending ? "checked" : ""}> ${esc(WEEKDAYS[weekday - 1])}</label><label>Lämning<input type="time" name="dropoff_${weekday}" value="${esc(String(saved?.dropoff_at || "").slice(0, 5))}" ${attending ? "" : "disabled"}></label>${pickerSelect(`dropoff_person_${weekday}`, calendar, "", pickerToken(dropoffPerson), false, "Vem lämnar?", false)}<label>Hämtning<input type="time" name="pickup_${weekday}" value="${esc(String(saved?.pickup_at || "").slice(0, 5))}" ${attending ? "" : "disabled"}></label>${pickerSelect(`picker_${weekday}`, calendar, "", pickerToken(people), false)}</div>`;
   }).join("");
-  return `<form class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="standard-sheet-title" data-form="pickup-standard" data-child-id="${esc(child.id)}"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="standard-sheet-title">Standardvecka</h1><button class="week-save" type="submit">Spara</button></header><div class="week-sheet-body"><p class="form-hint">Samma tider varje vecka i terminen.</p><div class="assistant-form"><label>Berätta för Ärtan<textarea name="schedule_text" placeholder="08.00–16.30 alla dagar utom torsdagar, då 08.00–15.00"></textarea></label><button class="secondary" type="button" data-action="parse-weekly-schedule">Tolka och fyll i</button><p class="form-hint" data-parse-status aria-live="polite">Ärtan fyller bara i tiderna. Välj vem som hämtar och spara.</p></div><fieldset class="weekly-schedule"><legend>Måndag till fredag</legend>${rows}</fieldset></div></form>`;
+  return `<form class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="standard-sheet-title" data-form="pickup-standard" data-child-id="${esc(child.id)}"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="standard-sheet-title">Standardvecka</h1><button class="week-save" type="submit">Spara</button></header><div class="week-sheet-body"><p class="form-hint">Samma tider och personer varje vecka i terminen. Lämnare och hämtare väljs var för sig.</p><div class="assistant-form"><label>Berätta för Ärtan<textarea name="schedule_text" placeholder="08.00–16.30 alla dagar utom torsdagar, då 08.00–15.00"></textarea></label><button class="secondary" type="button" data-action="parse-weekly-schedule">Tolka och fyll i</button><p class="form-hint" data-parse-status aria-live="polite">Ärtan fyller bara i tiderna. Välj vem som lämnar och hämtar, och spara.</p></div><fieldset class="weekly-schedule"><legend>Måndag till fredag</legend>${rows}</fieldset></div></form>`;
 }
 
 function renderPickupMenu() {
-  return `<div class="plan-sheet" role="dialog" aria-label="Planera"><button type="button" class="plan-sheet-backdrop" data-action="close-pickup-editor" aria-label="Stäng"></button><div class="plan-sheet-panel"><h2>Planera</h2><div class="stack-actions"><button class="primary" type="button" data-action="pickup-standard">Standardvecka</button><button class="secondary" type="button" data-action="copy-pickup-week">Kopiera den här veckan till nästa</button></div><p class="form-hint">Standardveckan fyller terminen. Kopiera lägger den här veckans tider och hämtare på nästa vecka. Ett engångspass följer inte med.</p></div></div>`;
+  return `<div class="plan-sheet" role="dialog" aria-label="Planera"><button type="button" class="plan-sheet-backdrop" data-action="close-pickup-editor" aria-label="Stäng"></button><div class="plan-sheet-panel"><h2>Planera</h2><div class="stack-actions"><button class="primary" type="button" data-action="pickup-standard">Standardvecka</button><button class="secondary" type="button" data-action="copy-pickup-week">Kopiera den här veckan till nästa</button></div><p class="form-hint">Standardveckan fyller terminen. Kopiera lägger den här veckans tider, lämnare och hämtare på nästa vecka. Ett engångspass följer inte med.</p></div></div>`;
 }
 
 function renderPickupOverlay(child) {
@@ -2776,25 +2809,38 @@ function renderParentHome() {
   const child = selectedChild();
   if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Min dag</p><h1 class="h1">Välkommen</h1><p class="sub">När personalen har kopplat ett barn hjälper Ärtan-botten dig med vardagsplanen. Du kan också be om en koppling här.</p></section>${renderSiblingRequestForm()}`;
   const attendance = attendanceFor(child.id);
+  const weekend = isWeekend();
   const pickupContacts = contactsFor(child.id).filter((contact) => contact.can_pickup);
   const messages = state.posts.filter((post) => !post.child_id || post.child_id === child.id).slice(0, 3);
   const reminders = parentReminders(child);
   const nextReminder = reminders[0];
-  return `${noticeHtml()}${childTabs()}<section class="hero-card home-hero"><div><p class="kicker">${esc(new Intl.DateTimeFormat("sv-SE", { dateStyle: "full" }).format(new Date()))}</p><h1 class="h1">${esc(child.name)}</h1><p class="big-status">${esc(attendanceLabel(attendanceState(attendance)))}</p><p class="sub">${esc(departmentName(child.department_id))}${attendance?.pickup_at ? ` · planerad hämtning ${esc(attendance.pickup_at.slice(0, 5))}` : ""}</p></div>${botMascot()}</section>
-    ${renderPickupNotices()}
-    ${renderIncidentCopies()}
-    ${renderNoticeList("Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}
-    <section class="card bot-card"><div class="bot-card-mascot">${botMascot()}</div><div><p class="kicker">Ärtan-botten</p><h2>${reminders.length ? "Jag hjälper dig komma ihåg" : "Allt är uppdaterat"}</h2>${reminders.length ? `<ul class="bot-reminders">${reminders.map((reminder) => `<li>${esc(reminder.text)}</li>`).join("")}</ul>` : `<p class="bot-done">Dagens plan och barnets uppgifter ser kompletta ut.</p>`}${nextReminder ? `<button class="primary bot-next" type="button" data-action="bot-reminder" data-view="${esc(nextReminder.view)}" data-target="${esc(nextReminder.target)}">Ta hand om nästa sak</button>` : ""}</div></section>
-    ${renderPickupWeekNudge(child)}
-    ${renderParentTermSchedules(child)}
-    <form id="daily-plan" class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><p class="kicker">Idag</p><h2>Dagens plan</h2>
+  const status = weekend ? "Helg" : attendanceLabel(attendanceState(attendance));
+  const statusDetail = weekend
+    ? " · ingen incheckning idag"
+    : attendance?.pickup_at
+      ? ` · planerad hämtning ${esc(attendance.pickup_at.slice(0, 5))}`
+      : "";
+  const doneText = weekend
+    ? "Ingen dagsplan eller incheckning behövs under helgen."
+    : "Dagens plan och barnets uppgifter ser kompletta ut.";
+  const dailyPlan = weekend
+    ? ""
+    : `<form id="daily-plan" class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><p class="kicker">Idag</p><h2>Dagens plan</h2>
       ${selectField("Planerad status", "status", [["in", "Kommer"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]], ["absent_sick", "absent_leave"].includes(attendance?.status) ? attendance.status : "in", true)}
       <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
       <label>Vem hämtar?<input name="pickup_by" type="text" value="${esc(attendance?.pickup_by || "")}" list="pickup-contact-options" placeholder="Exempelvis mormor eller farfar"></label>
       ${pickupContacts.length ? `<datalist id="pickup-contact-options">${pickupContacts.map((contact) => `<option value="${esc(contact.name)}"></option>`).join("")}</datalist>` : ""}
       <p class="form-hint">Skriv vem som hämtar. Kontaktpersoner markerade med ”får hämta” visas som förslag.</p>
       <button class="primary" type="submit">Spara dagens plan</button>
-    </form>
+    </form>`;
+  return `${noticeHtml()}${childTabs()}<section class="hero-card home-hero"><div><p class="kicker">${esc(new Intl.DateTimeFormat("sv-SE", { dateStyle: "full" }).format(new Date()))}</p><h1 class="h1">${esc(child.name)}</h1><p class="big-status">${esc(status)}</p><p class="sub">${esc(departmentName(child.department_id))}${statusDetail}</p></div>${botMascot()}</section>
+    ${renderPickupNotices()}
+    ${renderIncidentCopies()}
+    ${renderNoticeList("Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}
+    <section class="card bot-card"><div class="bot-card-mascot">${botMascot()}</div><div><p class="kicker">Ärtan-botten</p><h2>${reminders.length ? "Jag hjälper dig komma ihåg" : "Allt är uppdaterat"}</h2>${reminders.length ? `<ul class="bot-reminders">${reminders.map((reminder) => `<li>${esc(reminder.text)}</li>`).join("")}</ul>` : `<p class="bot-done">${doneText}</p>`}${nextReminder ? `<button class="primary bot-next" type="button" data-action="bot-reminder" data-view="${esc(nextReminder.view)}" data-target="${esc(nextReminder.target)}">Ta hand om nästa sak</button>` : ""}</div></section>
+    ${renderPickupWeekNudge(child)}
+    ${renderParentTermSchedules(child)}
+    ${dailyPlan}
     <section><div class="section-head"><div><p class="kicker">Från skolan</p><h2>Meddelanden</h2></div><button class="link" data-action="navigate" data-view="messages">Visa alla</button></div>${messages.map(renderPost).join("") || emptyState("Inga meddelanden", "Nya meddelanden från personalen visas här.")}</section>`;
 }
 
@@ -4447,9 +4493,10 @@ document.body.addEventListener("submit", (event) => {
     for (const weekday of [1, 2, 3, 4, 5]) {
       const row = form.querySelector(`[data-weekday="${weekday}"]`);
       const attending = row.querySelector("[data-schedule-attending]").checked;
-      const parsed = attending ? parsePickerToken(row.querySelector(`[name="picker_${weekday}"]`).value) : null;
-      if (attending && !parsed) {
-        state.notice = { type: "error", text: `Välj vem som hämtar på ${WEEKDAYS[weekday - 1].toLowerCase()}.` };
+      const dropoffPerson = attending ? parsePickerToken(row.querySelector(`[name="dropoff_person_${weekday}"]`).value) : null;
+      const pickupPerson = attending ? parsePickerToken(row.querySelector(`[name="picker_${weekday}"]`).value) : null;
+      if (attending && (!dropoffPerson || !pickupPerson)) {
+        state.notice = { type: "error", text: `Välj vem som lämnar och vem som hämtar på ${WEEKDAYS[weekday - 1].toLowerCase()}.` };
         render();
         return;
       }
@@ -4458,9 +4505,11 @@ document.body.addEventListener("submit", (event) => {
         attending,
         dropoff_at: attending ? row.querySelector(`[name="dropoff_${weekday}"]`).value : null,
         pickup_at: attending ? row.querySelector(`[name="pickup_${weekday}"]`).value : null,
-        picker_kind: parsed?.picker_kind || null,
-        picker_id: parsed?.picker_id || null,
-        pass_kind: parsed?.pass_kind || null,
+        dropoff_person_kind: dropoffPerson?.picker_kind || null,
+        dropoff_person_id: dropoffPerson?.picker_id || null,
+        picker_kind: pickupPerson?.picker_kind || null,
+        picker_id: pickupPerson?.picker_id || null,
+        pass_kind: pickupPerson?.pass_kind || null,
       });
     }
     const scrollY = state.pickupEditor?.scrollY ?? window.scrollY;
@@ -5317,7 +5366,8 @@ document.body.addEventListener("click", (event) => {
   }
   if (action === "close-picker" && state.pickupEditor?.mode === "week") {
     syncWeekEditorFromDom();
-    state.pickupEditor.pickerIso = null;
+    state.pickupEditor.personIso = null;
+    state.pickupEditor.personRole = "";
     state.pickupEditor.draftToken = "";
     state.pickupScrollRestore = state.pickupEditor.scrollY;
     render();
@@ -5335,8 +5385,9 @@ document.body.addEventListener("click", (event) => {
     if (editor?.mode !== "week" || target.disabled) return;
     syncWeekEditorFromDom();
     const day = editor.days.find((item) => item.iso === target.dataset.date);
-    editor.pickerIso = target.dataset.date;
-    editor.draftToken = pickerToken(day?.picker);
+    editor.personIso = target.dataset.date;
+    editor.personRole = target.dataset.personRole === "dropoff" ? "dropoff" : "pickup";
+    editor.draftToken = pickerToken(editor.personRole === "dropoff" ? day?.dropoffPerson : day?.picker);
     editor.error = "";
     state.pickupScrollRestore = editor.scrollY;
     render();
@@ -5358,22 +5409,29 @@ document.body.addEventListener("click", (event) => {
     if (editor?.mode !== "week") return;
     syncWeekEditorFromDom();
     const parsed = parsePickerToken(editor.draftToken);
-    const day = editor.days.find((item) => item.iso === editor.pickerIso);
+    const day = editor.days.find((item) => item.iso === editor.personIso);
     if (!parsed || !day) {
-      editor.error = "Välj vem som hämtar.";
+      editor.error = `Välj vem som ${editor.personRole === "dropoff" ? "lämnar" : "hämtar"}.`;
+      state.pickupScrollRestore = editor.scrollY;
+      render();
+      return;
+    }
+    if (editor.personRole === "dropoff" && parsed.picker_kind === "pass") {
+      editor.error = "Ett hämtpass kan inte användas som lämnare.";
       state.pickupScrollRestore = editor.scrollY;
       render();
       return;
     }
     editor.days = ArtanPickup.assignDefaultPicker(
-      ArtanPickup.smartFillWeek(editor.days, editor.pickerIso, "picker", {
+      ArtanPickup.smartFillWeek(editor.days, editor.personIso, editor.personRole === "dropoff" ? "dropoffPerson" : "picker", {
         kind: parsed.picker_kind,
         id: parsed.picker_id,
         passKind: parsed.pass_kind || "",
       }),
       editor.viewerId,
     );
-    editor.pickerIso = null;
+    editor.personIso = null;
+    editor.personRole = "";
     editor.draftToken = "";
     editor.error = "";
     state.pickupScrollRestore = editor.scrollY;
@@ -5413,6 +5471,12 @@ document.body.addEventListener("click", (event) => {
         render();
         return;
       }
+      if (!day.dropoffPerson?.kind || !day.dropoffPerson.id) {
+        editor.error = `Välj vem som lämnar ${ArtanPickup.weekdayName(day.iso, "full")}.`;
+        state.pickupScrollRestore = editor.scrollY;
+        render();
+        return;
+      }
       if (!day.picker?.kind || !day.picker.id) {
         editor.error = `Välj vem som hämtar ${ArtanPickup.weekdayName(day.iso, "full")}.`;
         state.pickupScrollRestore = editor.scrollY;
@@ -5431,11 +5495,13 @@ document.body.addEventListener("click", (event) => {
     }
     runMutation(async () => {
       for (const day of saving) {
-        await rpc("save_pickup_day", {
+        await rpc("save_pickup_day_handoffs", {
           target_child_id: child.id,
           plan_date: day.iso,
           dropoff_at: day.dropoff,
           pickup_at: day.pickup,
+          dropoff_person_kind: day.dropoffPerson.kind,
+          dropoff_person_id: day.dropoffPerson.id,
           picker_kind: day.picker.kind,
           picker_id: day.picker.id,
           pass_kind: day.picker.passKind || null,

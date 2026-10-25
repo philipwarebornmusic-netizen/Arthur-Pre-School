@@ -71,15 +71,29 @@
     return `${match[1].padStart(2, "0")}:${match[2]}`;
   }
 
+  function personFrom(plan, prefix, allowDayPass = true) {
+    const kind = plan?.[`${prefix}_kind`];
+    const id = plan?.[`${prefix}_id`];
+    const passKind = plan?.[`${prefix === "picker" ? "pass_kind" : `${prefix}_pass_kind`}`] || "";
+    if (!kind || !id) return null;
+    if (kind === "pass" && !allowDayPass && passKind !== "permanent") return null;
+    return { kind, id: String(id), passKind };
+  }
+
   function carriedPicker(plan) {
-    if (!plan?.picker_kind || !plan.picker_id) return null;
-    if (plan.picker_kind === "pass" && plan.pass_kind !== "permanent") return null;
-    return { kind: plan.picker_kind, id: String(plan.picker_id), passKind: plan.pass_kind || "" };
+    return personFrom(plan, "picker", false);
   }
 
   function explicitPicker(plan) {
-    if (!plan?.picker_kind || !plan.picker_id) return null;
-    return { kind: plan.picker_kind, id: String(plan.picker_id), passKind: plan.pass_kind || "" };
+    return personFrom(plan, "picker");
+  }
+
+  function carriedDropoffPerson(plan) {
+    return personFrom(plan, "dropoff_person", false);
+  }
+
+  function explicitDropoffPerson(plan) {
+    return personFrom(plan, "dropoff_person");
   }
 
   function buildPickupCell(iso, input, plansByDate) {
@@ -95,6 +109,7 @@
     const savedPickup = clock(plan?.pickup_at);
     const saved = Boolean(savedDropoff && savedPickup);
     const picker = saved ? explicitPicker(plan) : null;
+    const dropoffPerson = saved ? explicitDropoffPerson(plan) : null;
     const standardRow = (term?.standard || []).find((row) => Number(row.weekday) === weekday && row.attending);
     const suggestionDropoff = !saved && open ? clock(standardRow?.dropoff_at) : "";
     const suggestionPickup = !saved && open ? clock(standardRow?.pickup_at) : "";
@@ -117,6 +132,7 @@
       suggestionDropoff: suggestion ? suggestionDropoff : "",
       suggestionPickup: suggestion ? suggestionPickup : "",
       picker,
+      dropoffPerson,
       otherPerson: someoneElse(open, picker, input.viewerId),
       filled: Boolean(open && saved && picker),
       closureReason: term?.closureReasons?.[iso] || "",
@@ -233,7 +249,12 @@
     const dropoff = clock(plan?.dropoff_at);
     const pickup = clock(plan?.pickup_at);
     if (!dropoff || !pickup) return null;
-    return { dropoff, pickup, picker: explicitPicker(plan) };
+    return {
+      dropoff,
+      pickup,
+      dropoffPerson: explicitDropoffPerson(plan),
+      picker: explicitPicker(plan),
+    };
   }
 
   function standardEntry(input, iso) {
@@ -245,7 +266,12 @@
     const pickup = clock(row?.pickup_at);
     if (!dropoff || !pickup) return null;
     const pickerRow = (input.standardPickers || []).find((item) => Number(item.weekday) === weekday);
-    return { dropoff, pickup, picker: carriedPicker(pickerRow) };
+    return {
+      dropoff,
+      pickup,
+      dropoffPerson: carriedDropoffPerson(pickerRow),
+      picker: carriedPicker(pickerRow),
+    };
   }
 
   function latestSavedWeek(input, monday) {
@@ -278,11 +304,14 @@
     if (!donor) return days;
     return days.map((day) => {
       if (day.iso === donor.iso || !day.open || day.closed || day.ledig || day.manual || day.dropoff || day.pickup) return day;
+      const dropoffPerson = day.dropoffPerson && !day.dropoffPersonDefault ? clonePicker(day.dropoffPerson) : clonePicker(donor.dropoffPerson);
       const picker = day.picker && !day.pickerDefault ? clonePicker(day.picker) : clonePicker(donor.picker);
       return {
         ...day,
         dropoff: donor.dropoff,
         pickup: donor.pickup,
+        dropoffPerson,
+        dropoffPersonDefault: Boolean(dropoffPerson) && !(day.dropoffPerson && !day.dropoffPersonDefault) && Boolean(donor.dropoffPersonDefault),
         picker,
         pickerDefault: Boolean(picker) && !(day.picker && !day.pickerDefault) && Boolean(donor.pickerDefault),
         origin: "copied",
@@ -303,25 +332,31 @@
       const saved = !standardWeek ? recent?.get(day.weekday) : null;
       let dropoff = "";
       let pickup = "";
+      let dropoffPerson = null;
       let picker = null;
       let origin = "empty";
       if (own) {
         dropoff = own.dropoff;
         pickup = own.pickup;
+        dropoffPerson = own.dropoffPerson;
         picker = own.picker;
         origin = "own";
       } else if (standard) {
         dropoff = standard.dropoff;
         pickup = standard.pickup;
+        dropoffPerson = standard.dropoffPerson;
         picker = standard.picker;
         origin = "standard";
       } else if (saved) {
         dropoff = saved.dropoff;
         pickup = saved.pickup;
+        dropoffPerson = saved.dropoffPerson;
         picker = saved.picker;
         origin = "recent";
       }
+      const dropoffPersonDefault = Boolean(day.open && dropoff && pickup && !dropoffPerson && viewerId);
       const pickerDefault = Boolean(day.open && dropoff && pickup && !picker && viewerId);
+      if (dropoffPersonDefault) dropoffPerson = { kind: "guardian", id: String(viewerId), passKind: "" };
       if (pickerDefault) picker = { kind: "guardian", id: String(viewerId), passKind: "" };
       return {
         iso: day.iso,
@@ -332,6 +367,8 @@
         dropoff,
         pickup,
         ledig: false,
+        dropoffPerson: clonePicker(dropoffPerson),
+        dropoffPersonDefault,
         picker: clonePicker(picker),
         pickerDefault,
         manual: false,
@@ -346,6 +383,8 @@
       if (!day.open || day.closed || day.ledig) continue;
       if (field === "picker") {
         if (day.picker && !day.pickerDefault) return clonePicker(day.picker);
+      } else if (field === "dropoffPerson") {
+        if (day.dropoffPerson && !day.dropoffPersonDefault) return clonePicker(day.dropoffPerson);
       } else if (day[field]) return day[field];
     }
     if (field === "dropoff") return "08:00";
@@ -354,30 +393,39 @@
   }
 
   function smartFillWeek(days, sourceIso, field, value) {
-    if (field !== "picker" && !value) {
+    const personField = field === "picker" || field === "dropoffPerson";
+    if (!personField && !value) {
       return (days || []).map((day) => (day.iso === sourceIso ? { ...day, manual: true, origin: "user", [field]: "" } : day));
     }
     return (days || []).map((day) => {
       if (day.iso === sourceIso) {
         if (!day.open || day.closed) return day;
-        const next = { ...day, manual: true, origin: "user", picker: clonePicker(day.picker) };
-        if (field === "picker") {
-          next.picker = clonePicker(value) || next.picker;
-          next.pickerDefault = false;
+        const next = {
+          ...day,
+          manual: true,
+          origin: "user",
+          dropoffPerson: clonePicker(day.dropoffPerson),
+          picker: clonePicker(day.picker),
+        };
+        if (personField) {
+          next[field] = clonePicker(value) || next[field];
+          next[field === "picker" ? "pickerDefault" : "dropoffPersonDefault"] = false;
         } else next[field] = value;
         return next;
       }
       if (!day.open || day.closed || day.ledig || day.manual) return day;
-      if (field === "picker") {
-        const picker = clonePicker(value);
-        if (!picker) return day;
-        if (day.origin !== "copied" && day.picker && !day.pickerDefault) return day;
-        return { ...day, picker, pickerDefault: false, origin: day.origin === "empty" || !day.origin ? "copied" : day.origin };
+      if (personField) {
+        const person = clonePicker(value);
+        if (!person) return day;
+        const defaultField = field === "picker" ? "pickerDefault" : "dropoffPersonDefault";
+        if (day.origin !== "copied" && day[field] && !day[defaultField]) return day;
+        return { ...day, [field]: person, [defaultField]: false, origin: day.origin === "empty" || !day.origin ? "copied" : day.origin };
       }
       if (day[field] && day.origin !== "copied") return day;
       return {
         ...day,
         [field]: value,
+        dropoffPerson: clonePicker(day.dropoffPerson),
         picker: clonePicker(day.picker),
         origin: day.origin === "empty" || !day.origin ? "copied" : day.origin,
       };
@@ -387,8 +435,15 @@
   function assignDefaultPicker(days, viewerId) {
     if (!viewerId) return days || [];
     return (days || []).map((day) => {
-      if (!day.open || day.closed || day.ledig || !day.dropoff || !day.pickup || day.picker) return day;
-      return { ...day, picker: { kind: "guardian", id: String(viewerId), passKind: "" }, pickerDefault: true };
+      if (!day.open || day.closed || day.ledig || !day.dropoff || !day.pickup) return day;
+      const defaultPerson = { kind: "guardian", id: String(viewerId), passKind: "" };
+      return {
+        ...day,
+        dropoffPerson: day.dropoffPerson || defaultPerson,
+        dropoffPersonDefault: day.dropoffPerson ? Boolean(day.dropoffPersonDefault) : true,
+        picker: day.picker || defaultPerson,
+        pickerDefault: day.picker ? Boolean(day.pickerDefault) : true,
+      };
     });
   }
 
@@ -396,17 +451,25 @@
     const others = (days || []).filter((day) => day.iso !== iso);
     return (days || []).map((day) => {
       if (day.iso !== iso || !day.open || day.closed) return day;
-      const next = { ...day, ledig: false, manual: true, origin: "user", picker: clonePicker(day.picker) };
+      const next = {
+        ...day,
+        ledig: false,
+        manual: true,
+        origin: "user",
+        dropoffPerson: clonePicker(day.dropoffPerson),
+        picker: clonePicker(day.picker),
+      };
       if (!next.dropoff) next.dropoff = usualWeekValue(others, "dropoff");
       if (!next.pickup) next.pickup = usualWeekValue(others, "pickup");
-      if (!next.picker || next.pickerDefault) {
-        const usual = usualWeekValue(others, "picker");
+      for (const [field, defaultField] of [["dropoffPerson", "dropoffPersonDefault"], ["picker", "pickerDefault"]]) {
+        if (next[field] && !next[defaultField]) continue;
+        const usual = usualWeekValue(others, field);
         if (usual) {
-          next.picker = usual;
-          next.pickerDefault = false;
+          next[field] = usual;
+          next[defaultField] = false;
         } else if (viewerId) {
-          next.picker = { kind: "guardian", id: String(viewerId), passKind: "" };
-          next.pickerDefault = true;
+          next[field] = { kind: "guardian", id: String(viewerId), passKind: "" };
+          next[defaultField] = true;
         }
       }
       return next;
@@ -422,12 +485,15 @@
         const saved = lookup(day);
         if (!saved) return day;
         copied += 1;
+        const dropoffPerson = clonePicker(saved.dropoffPerson) || clonePicker(day.dropoffPerson);
         const picker = clonePicker(saved.picker) || clonePicker(day.picker);
         return {
           ...day,
           dropoff: saved.dropoff,
           pickup: saved.pickup,
           ledig: false,
+          dropoffPerson,
+          dropoffPersonDefault: !saved.dropoffPerson && Boolean(day.dropoffPersonDefault),
           picker,
           pickerDefault: !saved.picker && Boolean(day.pickerDefault),
           manual: false,
@@ -461,13 +527,16 @@
         return `<div class="${classes.join(" ")}" data-weekday="${weekday}">${circle}<span class="week-closed">${note}</span></div>`;
       }
       const disabled = day.ledig ? "disabled" : "";
-      const avatarKind = day.avatarKind === "contact" ? "is-contact" : day.avatarKind === "pass" ? "is-pass" : "is-guardian";
-      return `<div class="${classes.join(" ")}" data-weekday="${weekday}">${circle}<label class="week-time"><span class="visually-hidden">Lämning ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="dropoff" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.dropoff || "")}" ${disabled}></label><span class="week-dash" aria-hidden="true">–</span><label class="week-time"><span class="visually-hidden">Hämtning ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="pickup" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.pickup || "")}" ${disabled}></label><label class="week-ledig"><input type="checkbox" data-week-ledig data-date="${escapeHtml(day.iso)}" ${day.ledig ? "checked" : ""}><span>Ledig</span></label><button class="week-avatar ${avatarKind}" type="button" data-action="open-picker" data-date="${escapeHtml(day.iso)}" aria-label="Vem hämtar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(day.initials || "?")}</button></div>`;
+      const dropoffKind = day.dropoffKind === "contact" ? "is-contact" : "is-guardian";
+      const pickupKind = day.pickupKind === "contact" ? "is-contact" : day.pickupKind === "pass" ? "is-pass" : "is-guardian";
+      const dropoffInitials = day.dropoffInitials || day.initials || "?";
+      const pickupInitials = day.pickupInitials || day.initials || "?";
+      return `<div class="${classes.join(" ")}" data-weekday="${weekday}">${circle}<div class="week-handoffs"><div class="week-handoff"><span class="week-handoff-label">Lämning</span><label class="week-time"><span class="visually-hidden">Lämningstid ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="dropoff" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.dropoff || "")}" ${disabled}></label><button class="week-avatar ${dropoffKind}" type="button" data-action="open-picker" data-person-role="dropoff" data-date="${escapeHtml(day.iso)}" aria-label="Vem lämnar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(dropoffInitials)}</button></div><div class="week-handoff"><span class="week-handoff-label">Hämtning</span><label class="week-time"><span class="visually-hidden">Hämtningstid ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="pickup" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.pickup || "")}" ${disabled}></label><button class="week-avatar ${pickupKind}" type="button" data-action="open-picker" data-person-role="pickup" data-date="${escapeHtml(day.iso)}" aria-label="Vem hämtar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(pickupInitials)}</button></div></div><label class="week-ledig"><input type="checkbox" data-week-ledig data-date="${escapeHtml(day.iso)}" ${day.ledig ? "checked" : ""}><span>Ledig</span></label></div>`;
     }).join("");
     const error = model?.error ? `<p class="notice error">${escapeHtml(model.error)}</p>` : "";
     const note = model?.note ? `<p class="form-hint" data-week-note>${escapeHtml(model.note)}</p>` : "";
     const copyButton = model?.canCopyPrevious ? `<button class="secondary week-copy" type="button" data-action="same-as-previous-week">Samma som förra veckan</button>` : "";
-    return `<section id="week-sheet" class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="week-sheet-title"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="week-sheet-title">Vecka ${escapeHtml(model?.weekNumber || "")}</h1><button class="week-save" type="button" data-action="save-pickup-week">Spara</button></header><div class="week-sheet-body">${error}${note}${copyButton}${rows}<p class="form-hint">Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen.</p></div></section>`;
+    return `<section id="week-sheet" class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="week-sheet-title"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="week-sheet-title">Vecka ${escapeHtml(model?.weekNumber || "")}</h1><button class="week-save" type="button" data-action="save-pickup-week">Spara</button></header><div class="week-sheet-body">${error}${note}${copyButton}${rows}<p class="form-hint">Lämnare och hämtare väljs var för sig. Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen.</p></div></section>`;
   }
 
   function renderPickerSheet(model) {
@@ -476,7 +545,8 @@
       return `<li><button type="button" class="picker-person${person.selected ? " is-selected" : ""}" data-action="choose-picker" data-token="${escapeHtml(person.token)}" aria-pressed="${person.selected ? "true" : "false"}"><span class="picker-avatar ${kind}">${escapeHtml(person.initials)}</span><span>${escapeHtml(person.name)}</span></button></li>`;
     }).join("");
     const list = people || `<li class="form-hint">Ingen person att välja.</li>`;
-    return `<section id="picker-sheet" class="picker-sheet" role="dialog" aria-modal="true" aria-labelledby="picker-sheet-title"><button type="button" class="picker-sheet-backdrop" data-action="close-picker" aria-label="Stäng"></button><div class="picker-sheet-panel"><header class="picker-sheet-bar"><h2 id="picker-sheet-title">Hämtar ${escapeHtml(model?.weekdayName || "")}</h2><button class="picker-confirm" type="button" data-action="confirm-picker" aria-label="Bekräfta">✓</button></header><ul class="picker-list">${list}</ul></div></section>`;
+    const verb = model?.role === "dropoff" ? "Lämnar" : "Hämtar";
+    return `<section id="picker-sheet" class="picker-sheet" role="dialog" aria-modal="true" aria-labelledby="picker-sheet-title"><button type="button" class="picker-sheet-backdrop" data-action="close-picker" aria-label="Stäng"></button><div class="picker-sheet-panel"><header class="picker-sheet-bar"><h2 id="picker-sheet-title">${verb} ${escapeHtml(model?.weekdayName || "")}</h2><button class="picker-confirm" type="button" data-action="confirm-picker" aria-label="Bekräfta">✓</button></header><ul class="picker-list">${list}</ul></div></section>`;
   }
 
   function staffPickupCaption(rows, today) {

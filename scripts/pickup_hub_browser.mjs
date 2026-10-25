@@ -3,8 +3,9 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -72,10 +73,12 @@ const preview = `<!doctype html>
         plan_date: ArtanPickup.addDays("2026-10-12", offset),
         dropoff_at: "08:00",
         pickup_at: "16:30",
+        dropoff_person_kind: "guardian",
+        dropoff_person_id: "g1",
         picker_kind: "guardian",
         picker_id: "g1",
       })),
-      standardPickers: [{ weekday: 4, picker_kind: "guardian", picker_id: "g1" }],
+      standardPickers: [{ weekday: 4, dropoff_person_kind: "guardian", dropoff_person_id: "g1", picker_kind: "guardian", picker_id: "g1" }],
     };
     let editor = null;
     let notice = "";
@@ -116,8 +119,10 @@ const preview = `<!doctype html>
           open: day.open,
           closed: day.closed,
           outside: day.outside,
-          initials: day.picker?.kind === "contact" ? "MK" : "AB",
-          avatarKind: day.picker?.kind === "contact" ? "contact" : "guardian",
+          dropoffInitials: day.dropoffPerson?.kind === "contact" ? "MK" : "AB",
+          dropoffKind: day.dropoffPerson?.kind === "contact" ? "contact" : "guardian",
+          pickupInitials: day.picker?.kind === "contact" ? "MK" : "AB",
+          pickupKind: day.picker?.kind === "contact" ? "contact" : "guardian",
         })),
       };
     }
@@ -137,9 +142,10 @@ const preview = `<!doctype html>
       let extra = "";
       if (editor?.mode === "week") {
         extra = ArtanPickup.renderWeekEditor(weekModel());
-        if (editor.pickerIso) {
+        if (editor.personIso) {
           extra += ArtanPickup.renderPickerSheet({
-            weekdayName: ArtanPickup.weekdayName(editor.pickerIso, "full"),
+            role: editor.personRole,
+            weekdayName: ArtanPickup.weekdayName(editor.personIso, "full"),
             people: people.map((person) => ({ ...person, selected: person.token === editor.draftToken })),
           });
         }
@@ -160,7 +166,8 @@ const preview = `<!doctype html>
           mode: "week",
           monday: target.dataset.monday,
           days: ArtanPickup.weekEditorSeed(input, target.dataset.monday, "g1"),
-          pickerIso: null,
+          personIso: null,
+          personRole: "",
           draftToken: "",
           error: "",
           note: "",
@@ -170,8 +177,10 @@ const preview = `<!doctype html>
       }
       if (action === "open-picker") {
         const day = editor.days.find((item) => item.iso === target.dataset.date);
-        editor.pickerIso = target.dataset.date;
-        editor.draftToken = day?.picker?.kind === "contact" ? "contact:c1" : "guardian:g1";
+        editor.personIso = target.dataset.date;
+        editor.personRole = target.dataset.personRole === "dropoff" ? "dropoff" : "pickup";
+        const selected = editor.personRole === "dropoff" ? day?.dropoffPerson : day?.picker;
+        editor.draftToken = selected?.kind === "contact" ? "contact:c1" : "guardian:g1";
         editor.error = "";
         render();
       }
@@ -185,12 +194,14 @@ const preview = `<!doctype html>
       }
       if (action === "confirm-picker") {
         const kind = editor.draftToken.startsWith("contact") ? "contact" : "guardian";
-        editor.days = ArtanPickup.smartFillWeek(editor.days, editor.pickerIso, "picker", {
-          kind,
-          id: kind === "contact" ? "c1" : "g1",
-          passKind: "",
-        });
-        editor.pickerIso = null;
+        editor.days = ArtanPickup.smartFillWeek(
+          editor.days,
+          editor.personIso,
+          editor.personRole === "dropoff" ? "dropoffPerson" : "picker",
+          { kind, id: kind === "contact" ? "c1" : "g1", passKind: "" },
+        );
+        editor.personIso = null;
+        editor.personRole = "";
         editor.error = "";
         render();
       }
@@ -212,8 +223,17 @@ const preview = `<!doctype html>
         });
         input.dayPlans = Object.entries(byDate).filter(([, times]) => times.dropoff && times.pickup).map(([plan_date, times]) => {
           const day = editor.days.find((item) => item.iso === plan_date);
+          const dropoffKind = day?.dropoffPerson?.kind || "guardian";
           const pickerKind = day?.picker?.kind || "guardian";
-          return { plan_date, dropoff_at: times.dropoff, pickup_at: times.pickup, picker_kind: pickerKind, picker_id: day?.picker?.id || "g1" };
+          return {
+            plan_date,
+            dropoff_at: times.dropoff,
+            pickup_at: times.pickup,
+            dropoff_person_kind: dropoffKind,
+            dropoff_person_id: day?.dropoffPerson?.id || "g1",
+            picker_kind: pickerKind,
+            picker_id: day?.picker?.id || "g1",
+          };
         });
         notice = "Veckan är sparad.";
         editor = null;
@@ -261,7 +281,8 @@ const preview = `<!doctype html>
     window.__showDays = (days, errorText = "") => {
       editor.days = days;
       editor.error = errorText;
-      editor.pickerIso = null;
+      editor.personIso = null;
+      editor.personRole = "";
       render();
     };
 
@@ -291,7 +312,10 @@ const server = http.createServer((request, response) => {
 
 const port = await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
 const userDir = fs.mkdtempSync(path.join(os.tmpdir(), "artan-pickup-"));
-const chrome = spawn("/usr/local/bin/google-chrome", [
+const chromePath = process.platform === "darwin"
+  ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  : "/usr/local/bin/google-chrome";
+const chrome = spawn(chromePath, [
   "--headless=new",
   "--disable-gpu",
   "--no-sandbox",
@@ -365,7 +389,7 @@ try {
   async function overflow() {
     return evaluate(`({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth })`);
   }
-  const shotDir = "/opt/cursor/artifacts/screenshots";
+  const shotDir = path.join(os.tmpdir(), "artan-screenshots");
   fs.mkdirSync(shotDir, { recursive: true });
   async function shot(filename) {
     const image = await send("Page.captureScreenshot", { format: "png" }, sessionId);
@@ -478,10 +502,12 @@ try {
       date: sheet.innerText.includes("22 okt"),
       dropoff: dropoff.value,
       pickup: pickup.value,
+      labels: sheet.innerText.includes("Lämning") && sheet.innerText.includes("Hämtning"),
+      people: sheet.querySelectorAll('[data-action="open-picker"]').length,
       inline: document.body.innerText.includes("Spara dagen"),
     };
   })()`);
-  assert(editor.title === "Vecka 43" && editor.position === "fixed" && editor.date && editor.dropoff === "08:00" && editor.pickup === "16:30" && !editor.inline, `veckovyn fylldes inte (${JSON.stringify(editor)})`);
+  assert(editor.title === "Vecka 43" && editor.position === "fixed" && editor.date && editor.dropoff === "08:00" && editor.pickup === "16:30" && editor.labels && editor.people >= 2 && !editor.inline, `veckovyn fylldes inte (${JSON.stringify(editor)})`);
   const weekFill = await evaluate(`(() => {
     const sheet = document.getElementById("week-sheet");
     const boxes = [...sheet.querySelectorAll("[data-week-ledig]")];
@@ -537,7 +563,7 @@ try {
   })()`);
   assert(copyProbe.copied === 5 && copyProbe.fallback && copyProbe.weekNumber === 45 && !copyProbe.hidden, `äldre vecka kopierades inte (${JSON.stringify(copyProbe)})`);
   await evaluate(`window.__showDays(ArtanPickup.weekEditorSeed(input, "2026-10-19", "g1"))`);
-  await click('#week-sheet [data-action="open-picker"][data-date="2026-10-22"]');
+  await click('#week-sheet [data-action="open-picker"][data-person-role="pickup"][data-date="2026-10-22"]');
   await waitForSelector("#picker-sheet");
   const picker = await evaluate(`(() => {
     const sheet = document.getElementById("picker-sheet");
@@ -549,8 +575,12 @@ try {
   await click('[data-token="contact:c1"]');
   await click('[data-action="confirm-picker"]');
   await delay(30);
-  const avatar = await evaluate(`document.querySelector('#week-sheet [data-action="open-picker"][data-date="2026-10-22"]').textContent`);
-  assert(avatar === "MK", `initialerna uppdaterades inte (${avatar})`);
+  const avatars = await evaluate(`({
+    dropoff: document.querySelector('#week-sheet [data-action="open-picker"][data-person-role="dropoff"][data-date="2026-10-22"]').textContent,
+    pickup: document.querySelector('#week-sheet [data-action="open-picker"][data-person-role="pickup"][data-date="2026-10-22"]').textContent
+  })`);
+  assert(avatars.dropoff === "AB" && avatars.pickup === "MK", `lämnare och hämtare uppdaterades inte oberoende (${JSON.stringify(avatars)})`);
+  await shot("pickup-hub-separate-people-mobile.png");
   await evaluate(`(() => {
     document.querySelector('[data-week-time="dropoff"][data-date="2026-10-22"]').value = "07:45";
     document.querySelector('[data-week-time="pickup"][data-date="2026-10-22"]').value = "15:15";

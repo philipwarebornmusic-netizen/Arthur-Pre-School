@@ -1,5 +1,13 @@
 # Ändringslogg
 
+## 2026-10-23 — Helg, separata lämnarval och synlig egen profilbild
+
+- Min dag visar Helg i stället för Inte incheckad på lördagar och söndagar. Dagens plan och påminnelsen om incheckning eller hämtningstid döljs då. Ärtan förklarar att ingen dagsplan eller incheckning behövs under helgen.
+- Veckoschemat har nu två tydliga personval per dag: Lämning och Hämtning. De kan vara olika personer, fylls oberoende, följer med i standardveckan och vid veckokopiering och visas tillsammans för personalen. Hämtpass gäller fortfarande bara hämtning.
+- `supabase/019_handoff_people.sql` lägger till de separata personfälten och den nya RPC:n `save_pickup_day_handoffs`. Den kräver att `018_pickup_hub.sql` redan är applicerad. Båda migrationerna är nu körda mot produktion.
+- En vårdnadshavare får nu alltid tillbaka sökvägen till sitt eget barns profilbild i klasslistan. Andra familjer ser fortfarande bilden bara när alla kopplade vårdnadshavare har samtyckt. `supabase/migrations/019_class_list_own_photo.sql` är nu körd mot produktion.
+- Testprovisionern omfattar även `evelina@artanpreschool.test` och `oscar@artanpreschool.test` som vårdnadshavare i Testavdelningen. Provisionern läser det gemensamma lösenordet och service-role-nyckeln enbart från miljövariabler.
+
 ## 2026-10-23 — Kalendern visar bara sparade dagar
 
 - Terminskalendern räknar en dag som ifylld bara när den är sparad. Veckan efter en sparad vecka blir inte ifylld av sig själv. Osparade dagar är streckade. En sparad standardvecka kan synas som en svag, kursiv tid, och veckoraden säger Ej ifylld tills dagarna sparas.

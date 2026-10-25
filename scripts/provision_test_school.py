@@ -28,6 +28,8 @@ ACCOUNTS = (
     ("Philip", f"philip@{TEST_DOMAIN}", "parent"),
     ("Therese", f"therese@{TEST_DOMAIN}", "parent"),
     ("Andre", f"andre@{TEST_DOMAIN}", "parent"),
+    ("Evelina", f"evelina@{TEST_DOMAIN}", "parent"),
+    ("Oscar", f"oscar@{TEST_DOMAIN}", "parent"),
 )
 REQUESTED_EMAILS = {email for _, email, _ in ACCOUNTS}
 
@@ -206,7 +208,7 @@ def verify_result(admin):
     ) or []
     if legacy_children:
         raise ProvisioningError("legacy shared child invariant failed")
-    print(f"Provisioned {ORGANIZATION_NAME} / {PRESCHOOL_NAME}: 1 administrator, 6 parents, no automatically created children.")
+    print(f"Provisioned {ORGANIZATION_NAME} / {PRESCHOOL_NAME}: 1 administrator, 8 parents, no automatically created children.")
 
 
 def main():

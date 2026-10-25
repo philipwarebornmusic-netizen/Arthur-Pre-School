@@ -340,7 +340,7 @@ begin
         else split_part(btrim(child.name), ' ', 1)
       end as display_name,
       case
-        when public.class_list_photo_allowed(child.id) then child.photo_path
+        when public.is_guardian(child.id) or public.class_list_photo_allowed(child.id) then child.photo_path
         else null
       end as photo_path,
       child.department_id,
