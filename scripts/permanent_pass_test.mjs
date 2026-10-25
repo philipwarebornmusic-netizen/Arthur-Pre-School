@@ -15,6 +15,12 @@ function formatDate(value) {
 const context = {
   formatDate,
   state: { permanentPasses: [], pickupContacts: [], children: [] },
+  childAvatarHtml(name) {
+    return `<span class="child-avatar">${name}</span>`;
+  },
+  contactPhotoUrl() {
+    return "";
+  },
   esc(value) {
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({
       "&": "&amp;",

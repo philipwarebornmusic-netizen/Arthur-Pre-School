@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 2026-10-25 — Bild på hämtlistan och förlängning av permanent pass
+
+- En vårdnadshavare kan lägga en valfri bild på varje person i hämtlistan, både under Hämtning och under Barnet > Kontaktpersoner. Bilden beskärs och förminskas till 512 pixlar i webbläsaren. Personalen ser den vid utcheckning och när ett hämtpass skannas. Själva passet visar fortfarande bara namn, datum och kod.
+- Bilderna ligger i en privat bucket. Bara barnets vårdnadshavare kan ladda upp och ta bort. Vårdnadshavare, personal på barnets avdelning och en organisationsadministratör kan läsa. Bilden tas bort när personen tas bort eller när bilden byts ut. `supabase/020_contact_photos_pass_renewal.sql` är körd mot produktion som version 20261025143236. `permanent_pickup_verify` är fortsatt spärrad för inloggade användare, så ett permanent pass inte kan verifieras med bara sitt id.
+- Ett nytt permanent pass får terminens sista dag som slutdatum. Finns ingen publicerad termin används 30 juni eller 31 december, det som kommer härnäst. Datumet kan ändras eller tömmas, och det syns på passet.
+- När ett permanent pass går ut inom 14 dagar visas ett kort på Min dag för båda vårdnadshavarna: Förläng eller Låt gå ut. Låt gå ut gäller bara den som trycker. Ett utgånget pass får Förnya under Hämtning. Förlängningen räknas ut i databasen till nästa termins slut.
+
 ## 2026-10-23 — Helg, separata lämnarval och synlig egen profilbild
 
 - Min dag visar Helg i stället för Inte incheckad på lördagar och söndagar. Dagens plan och påminnelsen om incheckning eller hämtningstid döljs då. Ärtan förklarar att ingen dagsplan eller incheckning behövs under helgen.

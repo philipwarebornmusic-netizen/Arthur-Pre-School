@@ -110,6 +110,17 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .rows small, .contact-list span, .invite-list span { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 800; }
 .status { color: var(--muted); font-size: 13px; text-align: right; }
 .contact-list a { flex: 0 0 auto; font-weight: 900; }
+.contact-photo-row { align-items: flex-start; }
+.contact-photo-row .attendance-identity { flex: 1 1 auto; min-width: 0; }
+.contact-photo-actions { margin-top: 8px; }
+.contact-photo-actions .file-button { min-height: 40px; padding: 0 12px; border-radius: 14px; font-size: 14px; }
+#pickup-contact-photos { margin-top: 16px; }
+#pickup-contact-photos h3 { margin-bottom: 6px; }
+.checkout-person, .scan-person { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 4px 0 8px; }
+.checkout-person .child-avatar, .scan-person .child-avatar { width: 64px; height: 64px; font-size: 20px; }
+.checkout-person strong, .scan-person strong, .scan-person h2 { display: block; margin: 0; overflow-wrap: anywhere; }
+.checkout-person span, .scan-person span { display: block; margin-top: 3px; color: var(--muted); font-size: 13px; font-weight: 800; }
+.pass-renewal h2 { font-size: 22px; line-height: 1.3; }
 .contact-editors { display: grid; gap: 16px; }
 .contact-editor { min-width: 0; padding-top: 14px; border-top: 1px solid var(--line); }
 .contact-editor h3 { margin-bottom: 0; }
