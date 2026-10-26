@@ -55,6 +55,8 @@ const state = {
   pickupWeekReady: true,
   departmentPickup: [],
   pickupEditor: null,
+  showEarlierWeeks: false,
+  pendingWeekFocus: "",
   checkout: null,
   scan: null,
   publicPass: null,
@@ -1115,6 +1117,8 @@ async function logout() {
       pickupWeekReady: true,
       departmentPickup: [],
       pickupEditor: null,
+      showEarlierWeeks: false,
+      pendingWeekFocus: "",
       checkout: null,
       scan: null,
       publicPass: null,
@@ -1376,6 +1380,8 @@ function clearLoadedData() {
     pickupWeekReady: true,
     departmentPickup: [],
     pickupEditor: null,
+    showEarlierWeeks: false,
+    pendingWeekFocus: "",
     checkout: null,
     scan: null,
     calendarFeed: null,
@@ -2134,12 +2140,19 @@ function renderParentTermSchedules(child) {
   const preschoolId = childSchoolId(child);
   const terms = state.schoolTerms.filter((term) => term.preschool_id === preschoolId && term.term_status === "published");
   if (!terms.length) return `<section><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${emptyState("Ingen publicerad termin", "När förskolan publicerar terminen visas öppettider, stängningsdagar och veckoschema här.")}</section>`;
-  const grid = typeof ArtanPickup === "undefined" ? "" : ArtanPickup.renderTermGrid(pickupGridInput(child));
+  const grid = typeof ArtanPickup === "undefined" ? "" : ArtanPickup.renderTermGrid(pickupGridInput(child), {
+    editable: state.pickupWeekReady,
+    fromCurrent: !state.showEarlierWeeks,
+  });
   const cards = terms.map((term) => `<article class="card term-card" data-term-id="${esc(term.term_id)}"><p class="kicker">Publicerad</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p>${renderShareActions("term", term.term_id, term.term_name)}<p class="form-hint">Dela skickar terminen och stängningsdagarna. Barnets schema och kalenderlänken följer inte med.</p></article>`).join("");
+  const hint = state.pickupWeekReady
+    ? "Tryck på en vecka för att ändra. Bara sparade dagar är ifyllda. Rosa dagar är stängda, grå dagar ligger utanför terminen, och dagens ruta är markerad."
+    : "Varje rad är en vecka. Bara sparade dagar är ifyllda. Rosa dagar är stängda, grå dagar ligger utanför terminen, och dagens ruta är markerad.";
   const edit = state.pickupWeekReady
     ? `<button class="secondary" type="button" data-action="navigate" data-view="pickup">Ändra i Hämtning</button>`
     : terms.map((term) => renderWeeklyScheduleForm(term, child)).join("");
-  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${cards}${grid ? `<article class="card term-card">${grid}<p class="form-hint">Varje rad är en vecka. Bara sparade dagar är ifyllda. Rosa dagar är stängda, grå dagar ligger utanför terminen, och dagens ruta är markerad.</p></article>` : ""}${edit}</section>`;
+  const overlay = state.pickupWeekReady ? renderPickupOverlay(child) : "";
+  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${cards}${grid ? `<article class="card term-card">${grid}<p class="form-hint">${hint}</p></article>` : ""}${edit}${overlay}</section>`;
 }
 
 function parseClosureLines(value) {
@@ -2532,9 +2545,9 @@ function renderPickupWeekSheet(child) {
   })}`;
 }
 
-function openPickupWeek(monday) {
+function openPickupWeek(monday, focusIso = "") {
   const child = selectedChild();
-  if (!child || typeof ArtanPickup === "undefined") return;
+  if (!child || !state.pickupWeekReady || typeof ArtanPickup === "undefined") return;
   const week = ArtanPickup.buildTermGrid(pickupGridInput(child)).weeks.find((item) => item.monday === monday);
   if (!week) return;
   const scrollY = window.scrollY;
@@ -2553,6 +2566,7 @@ function openPickupWeek(monday) {
     note: "",
     days: ArtanPickup.weekEditorSeed(pickupGridInput(child), monday, viewerId),
   };
+  state.pendingWeekFocus = focusIso || "";
   state.pickupScrollRestore = scrollY;
   render();
 }
@@ -2607,12 +2621,23 @@ function scrollPickupWeekIntoView() {
 
 function restorePickupScroll() {
   const top = state.pickupScrollRestore;
+  const focusing = state.pendingWeekFocus || "";
   const sheetTop = state.pickupEditor?.mode === "week" ? state.pickupEditor.sheetScroll || 0 : null;
-  if (top == null && sheetTop == null) return;
+  if (top == null && sheetTop == null && !focusing) return;
   state.pickupScrollRestore = null;
+  state.pendingWeekFocus = "";
   if (top != null) scrollTo({ top, behavior: "auto" });
   const body = document.querySelector(".week-sheet-body");
   if (body && sheetTop) body.scrollTop = sheetTop;
+  if (focusing && body && !sheetTop) {
+    const row = [...body.querySelectorAll("[data-week-day]")].find((node) => node.dataset.weekDay === focusing);
+    if (!row) return;
+    const rowTop = row.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
+    const rowBottom = rowTop + row.offsetHeight;
+    if (rowBottom > body.scrollTop + body.clientHeight) body.scrollTop = Math.max(0, rowBottom - body.clientHeight);
+    else if (rowTop < body.scrollTop) body.scrollTop = Math.max(0, rowTop);
+    if (state.pickupEditor?.mode === "week") state.pickupEditor.sheetScroll = body.scrollTop;
+  }
 }
 
 function renderPickupStandardEditor(child) {
@@ -5333,6 +5358,7 @@ document.body.addEventListener("click", (event) => {
   }
   if (action === "select-child") {
     state.selectedChildId = target.dataset.id;
+    state.showEarlierWeeks = false;
     render();
     return;
   }
@@ -5534,8 +5560,15 @@ document.body.addEventListener("click", (event) => {
     openPrint(clone.outerHTML);
     return;
   }
+  if (action === "show-earlier-weeks") {
+    state.showEarlierWeeks = true;
+    state.pickupScrollRestore = window.scrollY;
+    render();
+    return;
+  }
   if (action === "edit-pickup-week") {
-    openPickupWeek(target.dataset.monday);
+    if (!state.pickupWeekReady) return;
+    openPickupWeek(target.dataset.monday, target.dataset.date || "");
     requestAnimationFrame(() => document.querySelector(".week-back")?.focus({ preventScroll: true }));
     return;
   }

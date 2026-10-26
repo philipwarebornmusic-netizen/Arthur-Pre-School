@@ -206,7 +206,7 @@
     ].filter(Boolean).join(", ");
     const todayId = day.today ? 'id="pickup-today"' : "";
     if (editable) {
-      return `<button type="button" class="${classes.join(" ")}" data-action="edit-pickup-week" data-monday="${escapeHtml(monday)}" ${todayId} aria-label="${escapeHtml(label)}">${body}${person}</button>`;
+      return `<button type="button" class="${classes.join(" ")}" data-action="edit-pickup-week" data-monday="${escapeHtml(monday)}" data-date="${escapeHtml(day.iso)}" ${todayId} aria-label="${escapeHtml(label)}">${body}${person}</button>`;
     }
     return `<div class="${classes.join(" ")}" ${todayId} aria-label="${escapeHtml(label)}">${body}${person}</div>`;
   }
@@ -216,9 +216,21 @@
     if (!grid.weeks.length) return "";
     const editable = Boolean(options.editable);
     const currentMonday = anchorMonday(grid.weeks, input?.today || "");
-    const year = String(input?.today || grid.weeks[0].monday || "").slice(0, 4);
+    let weeks = grid.weeks;
+    let hidden = 0;
+    if (options.fromCurrent && !options.showPast && currentMonday) {
+      const start = weeks.findIndex((week) => week.monday >= currentMonday);
+      if (start > 0) {
+        hidden = start;
+        weeks = weeks.slice(start);
+      }
+    }
+    const year = String(input?.today || weeks[0].monday || "").slice(0, 4);
     const head = [year, "Mån", "Tis", "Ons", "Tor", "Fre"].map((label) => `<span>${label}</span>`).join("");
-    const weeks = grid.weeks.map((week) => {
+    const earlier = hidden
+      ? `<button type="button" class="link earlier-weeks" data-action="show-earlier-weeks">Visa tidigare veckor</button>`
+      : "";
+    const rows = weeks.map((week) => {
       const range = week.label.replace(/ v\.\d+$/, "");
       const number = week.label.match(/v\.\d+$/)?.[0] || "";
       const unsaved = week.days.some((day) => day.open && !day.saved);
@@ -229,7 +241,7 @@
       const current = week.monday === currentMonday ? 'id="pickup-current-week"' : "";
       return `<div class="term-grid-week${week.needsPlan ? " is-unfilled" : ""}" role="row" ${current}>${label}${week.days.map((day) => renderCell(day, editable, week.monday)).join("")}</div>`;
     }).join("");
-    return `<div class="term-grid" role="grid" aria-label="Schema måndag till fredag"><div class="term-grid-head" role="row">${head}</div>${weeks}</div>`;
+    return `${earlier}<div class="term-grid" role="grid" aria-label="Schema måndag till fredag"><div class="term-grid-head" role="row">${head}</div>${rows}</div>`;
   }
 
   function weekdayName(iso, form = "short") {
@@ -524,14 +536,14 @@
         const note = day.closed
           ? `${closedIcon()}<span>Stängt</span>`
           : "<span>Utanför</span>";
-        return `<div class="${classes.join(" ")}" data-weekday="${weekday}">${circle}<span class="week-closed">${note}</span></div>`;
+        return `<div class="${classes.join(" ")}" data-week-day="${escapeHtml(day.iso)}" data-weekday="${weekday}">${circle}<span class="week-closed">${note}</span></div>`;
       }
       const disabled = day.ledig ? "disabled" : "";
       const dropoffKind = day.dropoffKind === "contact" ? "is-contact" : "is-guardian";
       const pickupKind = day.pickupKind === "contact" ? "is-contact" : day.pickupKind === "pass" ? "is-pass" : "is-guardian";
       const dropoffInitials = day.dropoffInitials || day.initials || "?";
       const pickupInitials = day.pickupInitials || day.initials || "?";
-      return `<div class="${classes.join(" ")}" data-weekday="${weekday}">${circle}<div class="week-handoffs"><div class="week-handoff"><span class="week-handoff-label">Lämning</span><label class="week-time"><span class="visually-hidden">Lämningstid ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="dropoff" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.dropoff || "")}" ${disabled}></label><button class="week-avatar ${dropoffKind}" type="button" data-action="open-picker" data-person-role="dropoff" data-date="${escapeHtml(day.iso)}" aria-label="Vem lämnar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(dropoffInitials)}</button></div><div class="week-handoff"><span class="week-handoff-label">Hämtning</span><label class="week-time"><span class="visually-hidden">Hämtningstid ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="pickup" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.pickup || "")}" ${disabled}></label><button class="week-avatar ${pickupKind}" type="button" data-action="open-picker" data-person-role="pickup" data-date="${escapeHtml(day.iso)}" aria-label="Vem hämtar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(pickupInitials)}</button></div></div><label class="week-ledig"><input type="checkbox" data-week-ledig data-date="${escapeHtml(day.iso)}" ${day.ledig ? "checked" : ""}><span>Ledig</span></label></div>`;
+      return `<div class="${classes.join(" ")}" data-week-day="${escapeHtml(day.iso)}" data-weekday="${weekday}">${circle}<div class="week-handoffs"><div class="week-handoff"><span class="week-handoff-label">Lämning</span><label class="week-time"><span class="visually-hidden">Lämningstid ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="dropoff" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.dropoff || "")}" ${disabled}></label><button class="week-avatar ${dropoffKind}" type="button" data-action="open-picker" data-person-role="dropoff" data-date="${escapeHtml(day.iso)}" aria-label="Vem lämnar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(dropoffInitials)}</button></div><div class="week-handoff"><span class="week-handoff-label">Hämtning</span><label class="week-time"><span class="visually-hidden">Hämtningstid ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="pickup" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.pickup || "")}" ${disabled}></label><button class="week-avatar ${pickupKind}" type="button" data-action="open-picker" data-person-role="pickup" data-date="${escapeHtml(day.iso)}" aria-label="Vem hämtar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(pickupInitials)}</button></div></div><label class="week-ledig"><input type="checkbox" data-week-ledig data-date="${escapeHtml(day.iso)}" ${day.ledig ? "checked" : ""}><span>Ledig</span></label></div>`;
     }).join("");
     const error = model?.error ? `<p class="notice error">${escapeHtml(model.error)}</p>` : "";
     const note = model?.note ? `<p class="form-hint" data-week-note>${escapeHtml(model.note)}</p>` : "";

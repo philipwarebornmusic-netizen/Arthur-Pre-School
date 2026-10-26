@@ -206,6 +206,36 @@ const readonly = ArtanPickup.renderTermGrid(base);
 assert(!readonly.includes("<button") && !readonly.includes("edit-pickup-week"), "terminsöversikten är skrivskyddad");
 assert(readonly.includes("08:00–16:30") && readonly.includes("is-closed"), "samma kalender visar tider och stängt");
 
+const longTerm = {
+  today: "2026-10-26",
+  terms: [{
+    starts_on: "2026-07-27",
+    ends_on: "2026-12-18",
+    closures: ["2026-10-30"],
+    closureReasons: { "2026-10-30": "Planering" },
+    standard: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, attending: true, dropoff_at: "08:00", pickup_at: "16:30" })),
+  }],
+  dayPlans: [{ plan_date: "2026-10-26", dropoff_at: "08:00", pickup_at: "16:30", picker_kind: "guardian", picker_id: "g1" }],
+  standardPickers: [],
+  viewerId: "g1",
+};
+const currentOnly = ArtanPickup.renderTermGrid(longTerm, { editable: true, fromCurrent: true });
+assert(!currentOnly.includes("27 jul") && !currentOnly.includes("v.31"), "Min dag döljer veckor som redan passerat");
+assert(currentOnly.includes("26 okt") && currentOnly.includes("v.44"), "aktuell vecka visas");
+assert(currentOnly.indexOf("v.44") < currentOnly.indexOf("v.45"), "aktuell vecka kommer först");
+assert(currentOnly.includes("Visa tidigare veckor") && currentOnly.includes('data-action="show-earlier-weeks"'), "äldre veckor kan visas");
+assert(currentOnly.indexOf("earlier-weeks") < currentOnly.indexOf('role="grid"'), "länken ligger utanför rutnätet");
+assert(currentOnly.includes('data-date="2026-10-26"') && currentOnly.includes('data-date="2026-10-28"'), "en dag bär sitt datum");
+assert(currentOnly.includes("is-closed") && currentOnly.includes("is-suggestion"), "stängt och förslag finns kvar i den synliga veckan");
+const mondayAt = currentOnly.indexOf('data-date="2026-10-26"');
+const mondayCell = currentOnly.slice(mondayAt, currentOnly.indexOf("</button>", mondayAt));
+assert(mondayCell.includes("term-cell-times") && !mondayCell.includes("is-suggestion"), "bara den sparade dagen ser ifylld ut");
+const withPast = ArtanPickup.renderTermGrid(longTerm, { editable: true, fromCurrent: true, showPast: true });
+assert(withPast.includes("27 jul") && withPast.includes("v.31"), "Visa tidigare veckor visar juli");
+assert(!withPast.includes("Visa tidigare veckor"), "länken försvinner när äldre veckor syns");
+const fullTerm = ArtanPickup.renderTermGrid(longTerm, { editable: true });
+assert(fullTerm.includes("27 jul") && fullTerm.includes("v.31") && !fullTerm.includes("Visa tidigare veckor"), "Hämtning visar hela terminen utan länk");
+
 const sheet = ArtanPickup.renderWeekEditor({
   weekNumber: 43,
   canCopyPrevious: true,
@@ -215,6 +245,7 @@ const sheet = ArtanPickup.renderWeekEditor({
   ],
 });
 assert(sheet.includes("Vecka 43") && sheet.includes("Mån 19 okt") && sheet.includes(">Ledig<") && sheet.includes('type="time"') && sheet.includes(">Spara<") && sheet.includes("is-closed"), "veckovyn visar datum, tider och stängt");
+assert(sheet.includes('data-week-day="2026-10-19"') && sheet.includes('data-week-day="2026-10-23"'), "varje veckorad kan scrollas fram");
 assert(sheet.includes('data-person-role="dropoff"') && sheet.includes('data-person-role="pickup"'), "veckovyn väljer lämnare och hämtare var för sig");
 assert(sheet.includes('data-action="same-as-previous-week"') && sheet.includes("Samma som förra veckan"), "veckovyn kan fyllas från förra veckan");
 assert(!ArtanPickup.renderWeekEditor({ weekNumber: 43, canCopyPrevious: false, days: [] }).includes("same-as-previous-week"), "knappen döljs utan sparad vecka");
@@ -440,6 +471,19 @@ assert(app.includes("save_pickup_day_handoffs") && app.includes("dropoff_person_
 assert(app.includes('data.personRole === "dropoff"') || app.includes('personRole === "dropoff"'), "appen håller reda på vilket personval som ändras");
 assert(!app.includes("edit-pickup-day") && !app.includes('data-form="pickup-day"'), "dagformuläret är borta");
 assert(app.includes("pass.pass_status === \"active\" || pass.pass_status === \"scheduled\""), "ett pass som inte har börjat kan öppnas");
+const homeGrid = app.slice(app.indexOf("function renderParentTermSchedules"), app.indexOf("function parseClosureLines"));
+assert(homeGrid.includes("fromCurrent: !state.showEarlierWeeks"), "Min dag börjar på aktuell vecka");
+assert(homeGrid.includes("editable: state.pickupWeekReady"), "Min dag öppnar veckoeditorn när schemat är aktivt");
+assert(homeGrid.includes("renderPickupOverlay(child)"), "veckoeditorn ritas på Min dag");
+assert(homeGrid.includes("Tryck på en vecka för att ändra"), "Min dag säger att veckan går att ändra");
+assert(homeGrid.includes("Ändra i Hämtning"), "Hämtning finns kvar som väg");
+const pickupHub = app.slice(app.indexOf("function renderPickupHub"), app.indexOf("function renderNoticeList"));
+assert(pickupHub.includes("editable: state.pickupWeekReady") && !pickupHub.includes("fromCurrent"), "Hämtning visar hela terminen och scrollar som tidigare");
+const staffGrid = app.slice(app.indexOf("function termClosureGrid"), app.indexOf("function renderPublishedTermReadOnly"));
+assert(!staffGrid.includes("fromCurrent") && !staffGrid.includes("editable"), "personalens kalender är oförändrad");
+assert(app.includes('action === "show-earlier-weeks"') && app.includes("state.showEarlierWeeks = false"), "appen kan visa och nollställa tidigare veckor");
+assert(app.includes("openPickupWeek(target.dataset.monday, target.dataset.date || \"\")"), "ett tryck på dagen öppnar veckan vid den dagen");
+assert(app.includes("pendingWeekFocus") && app.includes("data-week-day"), "veckovyn kan scrolla till dagen");
 
 const renewalTerms = [
   { starts_on: "2026-08-17", ends_on: "2026-12-18" },

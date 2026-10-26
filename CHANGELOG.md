@@ -1,5 +1,11 @@
 # Ändringslogg
 
+## 2026-10-26 — Min dag börjar på den här veckan
+
+- Veckoschemat på Min dag börjar på den aktuella veckan. Veckor som redan passerat visas inte från start. En liten länk, Visa tidigare veckor, tar fram dem utan att hoppa högst upp på sidan.
+- Ett tryck på en dag eller på veckoraden öppnar samma veckovy som under Hämtning, med Vecka N, Samma som förra veckan, Lämning, Hämtning, Ledig och Spara. Vyn scrollar till den dag man tryckte på. Spara och Tillbaka lämnar kvar Min dag på samma ställe.
+- Hämtning öppnas som tidigare vid den aktuella veckan, med äldre veckor kvar ovanför. Personalens terminsvy är oförändrad. Bara sparade dagar ser ifyllda ut, och stängda dagar är rosa.
+
 ## 2026-10-25 — Bild på hämtlistan och förlängning av permanent pass
 
 - En vårdnadshavare kan lägga en valfri bild på varje person i hämtlistan, både under Hämtning och under Barnet > Kontaktpersoner. Bilden beskärs och förminskas till 512 pixlar i webbläsaren. Personalen ser den vid utcheckning och när ett hämtpass skannas. Själva passet visar fortfarande bara namn, datum och kod.
