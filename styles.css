@@ -537,6 +537,7 @@ form[data-incident-type="mistreatment"] .incident-extra[data-incident-extra="mis
 .incident-admin > h2 { margin-bottom: 0; }
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.earlier-weeks { display: inline-flex; align-items: center; margin: 0 0 8px; min-height: 44px; font-size: 14px; }
 .term-grid { display: grid; gap: 6px; max-width: 100%; overflow-x: auto; }
 .term-grid-head, .term-grid-week { display: grid; grid-template-columns: minmax(68px, 92px) repeat(5, minmax(0, 1fr)); gap: 4px; align-items: stretch; }
 #pickup-current-week { scroll-margin-top: 88px; }
