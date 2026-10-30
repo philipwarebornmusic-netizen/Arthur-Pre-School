@@ -456,6 +456,32 @@ try {
   assert(pos.scroll > 200 && pos.firstTop < 0 && pos.weekTop < 140, `kalendern öppnas inte vid aktuell vecka (${JSON.stringify(pos)})`);
   assert(pos.text.includes("19 okt") && pos.text.includes("v.43"), `fel vecka ligger överst (${pos.text})`);
   await shot("pickup-hub-grid-mobile.png");
+  const dashboardWeek = await evaluate(`(() => {
+    const grid = document.querySelector(".term-grid");
+    window.__fullTermGrid = grid.outerHTML;
+    grid.outerHTML = ArtanPickup.renderTermGrid(input, { currentWeekOnly: true });
+    const card = document.getElementById("pickup-schedule");
+    card.scrollIntoView({ block: "start" });
+    const today = card.querySelector(".term-cell.is-today");
+    const style = getComputedStyle(today);
+    return {
+      weeks: card.querySelectorAll(".term-grid-week").length,
+      today: today.innerText.replace(/\\s+/g, " ").trim(),
+      label: today.getAttribute("aria-label"),
+      border: style.borderTopWidth + " " + style.borderTopStyle,
+      scroll: card.scrollWidth,
+      client: card.clientWidth,
+    };
+  })()`);
+  assert(dashboardWeek.weeks === 1, `förstasidan visar ${dashboardWeek.weeks} veckor`);
+  assert(dashboardWeek.today.toLowerCase().includes("idag 22") && dashboardWeek.label.includes("22 okt, idag"), `dagens datum syns inte (${JSON.stringify(dashboardWeek)})`);
+  assert(dashboardWeek.border === "2px solid", `dagens ram är för svag (${dashboardWeek.border})`);
+  assert(dashboardWeek.scroll <= dashboardWeek.client + 1, `förstasideveckan flödar över (${dashboardWeek.scroll}/${dashboardWeek.client})`);
+  await shot("pickup-hub-dashboard-week-mobile.png");
+  await evaluate(`(() => {
+    document.querySelector("#pickup-schedule .term-grid").outerHTML = window.__fullTermGrid;
+    delete window.__fullTermGrid;
+  })()`);
   const savedLeak = await evaluate(`(() => {
     const plans = [0, 1, 2, 3, 4].map((offset) => ({
       plan_date: ArtanPickup.addDays("2026-10-19", offset),

@@ -1,5 +1,11 @@
 # Ändringslogg
 
+## 2026-10-30 — Kortare schema på Min dag
+
+- Min dag visar bara den aktuella schemaveckan i stället för hela terminen. Hela kalendern finns kvar under Hämtning via knappen Visa hela schemat.
+- Varje vardagsruta visar sitt datum. Dagens ruta har dessutom etiketten Idag och en tydligare markerad ram.
+- När administratörer och personal är klara med Kom igång öppnas Närvaro som första arbetsyta. Administratörens Översikt finns kvar som ett separat menyval för organisationsstatistik.
+
 ## 2026-10-25 — Bild på hämtlistan och förlängning av permanent pass
 
 - En vårdnadshavare kan lägga en valfri bild på varje person i hämtlistan, både under Hämtning och under Barnet > Kontaktpersoner. Bilden beskärs och förminskas till 512 pixlar i webbläsaren. Personalen ser den vid utcheckning och när ett hämtpass skannas. Själva passet visar fortfarande bara namn, datum och kod.

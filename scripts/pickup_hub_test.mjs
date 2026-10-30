@@ -142,15 +142,20 @@ const editable = ArtanPickup.renderTermGrid(base, { editable: true });
 assert(editable.includes("19 okt–23 okt") && editable.includes("v.43"), "kalendern visar datum och vecka");
 assert(editable.includes(">Mån<") && editable.includes(">Fre<") && !editable.includes(">Lör<") && !editable.includes(">Sön<"), "kolumnerna är måndag till fredag");
 assert(editable.includes('id="pickup-today"') && editable.includes("is-today"), "idag är markerad");
+assert(editable.includes('<strong>Idag</strong><span>22</span>') && editable.includes("22 okt, idag"), "dagens datum och etikett visas tydligt");
 assert(editable.includes('id="pickup-current-week"'), "aktuell vecka kan scrollas fram");
 assert(editable.includes("is-closed") && editable.includes("term-closed-icon") && editable.includes("Stängt") && editable.includes("Planering &lt;dag&gt;"), "stängd dag är rosa i texten och ikonen");
 assert(!editable.includes("Planering <dag>"), "anledningen escapas");
 assert(editable.includes("is-outside"), "dagar utanför terminen är grå");
 assert(editable.includes('data-action="edit-pickup-week"') && editable.includes('data-monday="2026-10-19"'), "en vecka går att öppna");
-assert(!editable.includes("edit-pickup-day") && !editable.includes("term-cell-day"), "dagen redigeras inte inline och datumet är inte rubrik");
+assert(!editable.includes("edit-pickup-day"), "dagen redigeras inte inline");
 assert(editable.includes(">08:00<") && editable.includes(">16:30<"), "rutan visar lämning och hämtning");
 assert(editable.includes("is-unfilled") && editable.includes("Ej ifylld") && editable.includes("is-suggestion"), "ofylld vecka syns, och standardveckan är ett svagt förslag");
 assert(editable.includes("term-person") === false || editable.includes('aria-label="Någon annan hämtar"'), "personikonen har ett namn");
+
+const currentWeekOnly = ArtanPickup.renderTermGrid(base, { currentWeekOnly: true });
+eq((currentWeekOnly.match(/class="term-grid-week/g) || []).length, 1, "förstasidan visar bara en schemavecka");
+assert(currentWeekOnly.includes("19 okt–23 okt") && !currentWeekOnly.includes("26 okt–30 okt"), "förstasidan visar veckan som innehåller idag");
 
 const savedContact = ArtanPickup.buildTermGrid({
   ...base,
@@ -433,7 +438,7 @@ assert(staffNav.startsWith('role === "staff"') && !staffNav.includes("Hämtning"
 assert(app.includes('staff: ["attendance", "messages", "people", "incidents", "account"]'), "personalens vyer är oförändrade");
 assert(!app.includes('registerHubCard("child", { id: "hamtlista"'), "Hämtlista-kortet är borta");
 assert(app.includes("Öppna Hämtning") && app.includes("Hämtlistan, hämtpassen och veckoschemat finns under Hämtning"), "Kontaktpersoner länkar till Hämtning");
-for (const needle of ["share-pass", "print-pass", "open-pass", "remember_pickup_pass_token", "reveal_pickup_pass", "renderTermGrid", "edit-pickup-week", "save-pickup-week", "open-picker", "same-as-previous-week", "weekEditorSeed", "smartFillWeek", "reopenWeekDay", "hasEarlierSavedWeek", "Kopierade vecka", "Ej ifylld", "pickup-current-week", "pickup-add", "copy-pickup-week", "Ändra i Hämtning", "list_department_pickup_plans"]) {
+for (const needle of ["share-pass", "print-pass", "open-pass", "remember_pickup_pass_token", "reveal_pickup_pass", "renderTermGrid", "edit-pickup-week", "save-pickup-week", "open-picker", "same-as-previous-week", "weekEditorSeed", "smartFillWeek", "reopenWeekDay", "hasEarlierSavedWeek", "Kopierade vecka", "Ej ifylld", "pickup-current-week", "pickup-add", "copy-pickup-week", "list_department_pickup_plans"]) {
   assert(app.includes(needle), `appen saknar ${needle}`);
 }
 assert(app.includes("save_pickup_day_handoffs") && app.includes("dropoff_person_kind"), "appen skickar separata lämnar- och hämtarval");

@@ -191,6 +191,7 @@
     if (day.open && !day.saved) classes.push("is-empty");
     if (day.open && !day.filled && day.inHorizon) classes.push("is-open");
     const person = day.otherPerson ? personIcon() : "";
+    const date = `<span class="term-cell-date" aria-hidden="true">${day.today ? "<strong>Idag</strong>" : ""}<span>${escapeHtml(day.dayNumber)}</span></span>`;
     const clocks = day.saved
       ? `<span class="term-cell-times"><span>${escapeHtml(day.dropoff)}</span><span class="term-cell-dash">–</span><span>${escapeHtml(day.pickup)}</span></span>`
       : day.suggestion
@@ -201,14 +202,15 @@
       : clocks || `<span class="term-cell-empty" aria-hidden="true"></span>`;
     const label = [
       shortDate(day.iso),
+      day.today ? "idag" : "",
       day.closed ? "stängt" : day.times || (day.suggestion ? `förslag ${day.suggestionDropoff}–${day.suggestionPickup}` : (day.open ? "ingen tid" : "")),
       day.otherPerson ? "någon annan hämtar" : "",
     ].filter(Boolean).join(", ");
     const todayId = day.today ? 'id="pickup-today"' : "";
     if (editable) {
-      return `<button type="button" class="${classes.join(" ")}" data-action="edit-pickup-week" data-monday="${escapeHtml(monday)}" ${todayId} aria-label="${escapeHtml(label)}">${body}${person}</button>`;
+      return `<button type="button" class="${classes.join(" ")}" data-action="edit-pickup-week" data-monday="${escapeHtml(monday)}" ${todayId} aria-label="${escapeHtml(label)}">${date}${body}${person}</button>`;
     }
-    return `<div class="${classes.join(" ")}" ${todayId} aria-label="${escapeHtml(label)}">${body}${person}</div>`;
+    return `<div class="${classes.join(" ")}" ${todayId} aria-label="${escapeHtml(label)}">${date}${body}${person}</div>`;
   }
 
   function renderTermGrid(input, options = {}) {
@@ -216,9 +218,12 @@
     if (!grid.weeks.length) return "";
     const editable = Boolean(options.editable);
     const currentMonday = anchorMonday(grid.weeks, input?.today || "");
-    const year = String(input?.today || grid.weeks[0].monday || "").slice(0, 4);
+    const visibleWeeks = options.currentWeekOnly
+      ? [grid.weeks.find((week) => week.monday === currentMonday) || grid.weeks[0]]
+      : grid.weeks;
+    const year = String(input?.today || visibleWeeks[0].monday || "").slice(0, 4);
     const head = [year, "Mån", "Tis", "Ons", "Tor", "Fre"].map((label) => `<span>${label}</span>`).join("");
-    const weeks = grid.weeks.map((week) => {
+    const weeks = visibleWeeks.map((week) => {
       const range = week.label.replace(/ v\.\d+$/, "");
       const number = week.label.match(/v\.\d+$/)?.[0] || "";
       const unsaved = week.days.some((day) => day.open && !day.saved);

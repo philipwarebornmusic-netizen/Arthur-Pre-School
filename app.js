@@ -548,10 +548,14 @@ function registerHubCard(hub, card) {
 
 function allowedViewsForRole(role) {
   return {
-    admin: ["overview", "attendance", "schools", "messages", "people", "incidents", "account"],
+    admin: ["attendance", "overview", "schools", "messages", "people", "incidents", "account"],
     staff: ["attendance", "messages", "people", "incidents", "account"],
     parent: ["home", "pickup", "child", "classlist", "messages", "account"],
   }[role] || ["home", "pickup", "child", "classlist", "messages", "account"];
+}
+
+function defaultViewForRole(role) {
+  return allowedViewsForRole(role)[0];
 }
 
 function cardsForHub(hub) {
@@ -697,7 +701,7 @@ function syncHubFromHistory() {
     state.hubSection = history.state.section || "";
   } else if (!location.hash) {
     state.hubSection = "";
-    if (!allowed.includes(state.view) || HUB_SLUG[state.view]) state.view = allowed[0];
+    if (!allowed.includes(state.view) || HUB_SLUG[state.view]) state.view = defaultViewForRole(state.profile.role);
   }
   render();
   if (state.view === "pickup") scrollPickupWeekIntoView();
@@ -1326,7 +1330,7 @@ async function loadData() {
   state.onboarding = { kind: "active" };
   if (!state.children.some((child) => child.id === state.selectedChildId)) state.selectedChildId = state.children[0]?.id || null;
   const roleViews = allowedViewsForRole(state.profile.role);
-  if (!roleViews.includes(state.view)) state.view = roleViews[0];
+  if (!roleViews.includes(state.view)) state.view = defaultViewForRole(state.profile.role);
   restoreHubFromHash();
 }
 
@@ -2134,12 +2138,12 @@ function renderParentTermSchedules(child) {
   const preschoolId = childSchoolId(child);
   const terms = state.schoolTerms.filter((term) => term.preschool_id === preschoolId && term.term_status === "published");
   if (!terms.length) return `<section><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${emptyState("Ingen publicerad termin", "När förskolan publicerar terminen visas öppettider, stängningsdagar och veckoschema här.")}</section>`;
-  const grid = typeof ArtanPickup === "undefined" ? "" : ArtanPickup.renderTermGrid(pickupGridInput(child));
+  const grid = typeof ArtanPickup === "undefined" ? "" : ArtanPickup.renderTermGrid(pickupGridInput(child), { currentWeekOnly: true });
   const cards = terms.map((term) => `<article class="card term-card" data-term-id="${esc(term.term_id)}"><p class="kicker">Publicerad</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p>${renderShareActions("term", term.term_id, term.term_name)}<p class="form-hint">Dela skickar terminen och stängningsdagarna. Barnets schema och kalenderlänken följer inte med.</p></article>`).join("");
   const edit = state.pickupWeekReady
-    ? `<button class="secondary" type="button" data-action="navigate" data-view="pickup">Ändra i Hämtning</button>`
+    ? `<button class="secondary" type="button" data-action="navigate" data-view="pickup">Visa hela schemat</button>`
     : terms.map((term) => renderWeeklyScheduleForm(term, child)).join("");
-  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${cards}${grid ? `<article class="card term-card">${grid}<p class="form-hint">Varje rad är en vecka. Bara sparade dagar är ifyllda. Rosa dagar är stängda, grå dagar ligger utanför terminen, och dagens ruta är markerad.</p></article>` : ""}${edit}</section>`;
+  return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${cards}${grid ? `<article class="card term-card">${grid}<p class="form-hint">Den aktuella veckan visas här och dagens datum är markerat. Öppna hela schemat för resten av terminen.</p></article>` : ""}${edit}</section>`;
 }
 
 function parseClosureLines(value) {
@@ -4482,7 +4486,7 @@ function renderIncidents() {
 function renderNav() {
   const role = state.profile?.role;
   const items = role === "admin"
-    ? [["overview", "▦", "Översikt"], ["attendance", "✓", "Närvaro"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["incidents", "⚑", "Avvikelse"], ["account", "⚙", "Konto"]]
+    ? [["attendance", "✓", "Närvaro"], ["overview", "▦", "Översikt"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["incidents", "⚑", "Avvikelse"], ["account", "⚙", "Konto"]]
     : role === "staff"
       ? [["attendance", "✓", "Närvaro"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Barn"], ["incidents", "⚑", "Avvikelse"], ["account", "⚙", "Konto"]]
       : [["home", "●", "Min dag"], ["pickup", "◎", "Hämtning"], ["child", "🌱", "Barnet"], ["classlist", "☰", "Klasslista"], ["messages", "✉", "Gemenskap"], ["account", "⚙", "Konto"]];
@@ -4529,7 +4533,7 @@ function render() {
     incidents: renderIncidents,
     account: renderAccount,
   };
-  const fallback = state.profile.role === "admin" ? renderOverview : state.profile.role === "staff" ? renderAttendance : renderParentHome;
+  const fallback = views[defaultViewForRole(state.profile.role)] || renderParentHome;
   screen.innerHTML = (views[state.view] || fallback)();
   renderNav();
   renderAssistant();
@@ -4844,7 +4848,7 @@ document.body.addEventListener("submit", (event) => {
         department_name: values.department_name.trim(),
       });
       await loadData();
-      state.view = "overview";
+      state.view = defaultViewForRole(state.profile.role);
       return;
     }
     if (type === "school-code-join") {

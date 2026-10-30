@@ -110,4 +110,15 @@ assert(monday.html.includes("Inte incheckad"), "vardagen ska behålla inchecknin
 assert(monday.html.includes('id="daily-plan"'), "vardagen ska behålla dagens plan");
 assert(monday.reminders.some((item) => item.target === "daily-plan"), "vardagen ska påminna om dagsplanen");
 
+const roleContext = {};
+vm.createContext(roleContext);
+vm.runInContext([
+  functionSource("allowedViewsForRole"),
+  functionSource("defaultViewForRole"),
+].join("\n"), roleContext);
+assert(roleContext.defaultViewForRole("admin") === "attendance", "administratörer ska börja på Närvaro");
+assert(roleContext.defaultViewForRole("staff") === "attendance", "personal ska börja på Närvaro");
+assert(roleContext.defaultViewForRole("parent") === "home", "vårdnadshavare ska behålla Min dag");
+assert(roleContext.allowedViewsForRole("admin").includes("overview"), "administratörer ska fortfarande kunna öppna Översikt");
+
 console.log("weekend dashboard checks passed");

@@ -547,13 +547,16 @@ button.term-grid-label { width: 100%; padding: 0; background: transparent; text-
 .term-grid-label small, .term-grid-label em { color: var(--muted); font-size: 10px; font-style: normal; font-weight: 800; }
 .term-grid-week.is-unfilled { padding: 4px; background: var(--coral-soft); border-radius: 12px; }
 .term-grid-week.is-unfilled .term-grid-label em { color: var(--coral-text); }
-.term-cell { position: relative; display: grid; align-content: center; justify-items: center; gap: 0; min-width: 0; min-height: 58px; padding: 4px 1px 12px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; font-size: 10px; font-weight: 800; line-height: 1.05; text-align: center; }
+.term-cell { position: relative; display: grid; align-content: center; justify-items: center; gap: 0; min-width: 0; min-height: 58px; padding: 16px 1px 8px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; font-size: 10px; font-weight: 800; line-height: 1.05; text-align: center; }
 button.term-cell { width: 100%; }
+.term-cell-date { position: absolute; top: 3px; right: 2px; left: 2px; display: flex; justify-content: center; align-items: baseline; gap: 2px; color: var(--muted); font-size: 9px; line-height: 1; }
+.term-cell-date strong { font-size: 8px; letter-spacing: .03em; text-transform: uppercase; }
 .term-cell-times { display: flex; flex-direction: column; align-items: center; max-width: 100%; color: var(--ink); font-size: 10px; font-weight: 900; letter-spacing: -.04em; }
 .term-cell-times.is-suggestion { color: var(--muted); font-weight: 700; font-style: italic; opacity: .72; }
 .term-cell-dash { color: var(--muted); font-size: 9px; line-height: 1; }
 .term-cell.is-empty { background: #fbf8f3; border-style: dashed; border-color: #e4dacb; }
-.term-cell.is-today { background: var(--sun-soft); border-color: var(--sun); border-style: dashed; box-shadow: inset 0 0 0 1px var(--sun); }
+.term-cell.is-today { background: var(--sun-soft); border: 2px solid var(--sun); box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--sun-soft); }
+.term-cell.is-today .term-cell-date { color: var(--ink); font-weight: 900; }
 .term-cell.is-closed { background: var(--coral-soft); border-color: #f3c2bb; border-style: solid; color: var(--coral-text); }
 .term-cell.is-outside { background: #efeae2; border-color: transparent; color: var(--muted); }
 .term-person, .term-closed-icon { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; }
