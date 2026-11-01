@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 2026-11-01 — Mjuka kort
+
+- Hela appen använder samma lugna yta: sandbakgrund, Inter i brödtext, Newsreader i stora rubriker, mjuka kort utan ram och utan skugga, och en solgul knapp per vy.
+- Menyn är fyra flikar på en rad: Min dag, Hämtning och Meddelanden, plus Mer. Barnet, klasslistan och kontot ligger i Mer. Personal och administratör landar på Närvaro, och övriga verktyg ligger i Mer.
+- Min dag öppnar med hälsning, barnets namn, dagens status och hämtningen. Bara den aktuella veckan visas, med datum i rutorna. Visa hela schemat öppnar Hämtning.
+- Veckovyn under Hämtning är en lista med hårfina linjer, Samma som förra veckan och en knapp, Spara veckan. Lämning, hämtning, person och Ledig är kvar.
+
 ## 2026-10-30 — Kortare schema på Min dag
 
 - Min dag visar bara den aktuella schemaveckan i stället för hela terminen. Hela kalendern finns kvar under Hämtning via knappen Visa hela schemat.

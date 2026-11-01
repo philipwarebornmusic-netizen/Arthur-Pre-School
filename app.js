@@ -548,10 +548,10 @@ function registerHubCard(hub, card) {
 
 function allowedViewsForRole(role) {
   return {
-    admin: ["attendance", "overview", "schools", "messages", "people", "incidents", "account"],
-    staff: ["attendance", "messages", "people", "incidents", "account"],
-    parent: ["home", "pickup", "child", "classlist", "messages", "account"],
-  }[role] || ["home", "pickup", "child", "classlist", "messages", "account"];
+    admin: ["attendance", "overview", "messages", "more", "schools", "people", "incidents", "account"],
+    staff: ["attendance", "messages", "people", "more", "incidents", "account"],
+    parent: ["home", "pickup", "messages", "more", "child", "classlist", "account"],
+  }[role] || ["home", "pickup", "messages", "more", "child", "classlist", "account"];
 }
 
 function defaultViewForRole(role) {
@@ -604,9 +604,9 @@ function hubClosedBanner(hub) {
 }
 
 function renderHubGrid(cards) {
-  return `<div class="card-hub" role="group" aria-label="Delar">${cards.map((card) => {
+  return `<div class="menu-group" role="group" aria-label="Delar">${cards.map((card) => {
     const status = typeof card.status === "function" ? card.status() : (card.status || "");
-    return `<button type="button" class="hub-card" data-action="hub-open" data-section="${esc(card.id)}"><span class="hub-card-icon" aria-hidden="true">${card.icon || ""}</span><span class="hub-card-title">${esc(card.title)}</span><span class="hub-card-status">${esc(status)}</span></button>`;
+    return `<button type="button" class="menu-row" data-action="hub-open" data-section="${esc(card.id)}"><span class="menu-row-title">${esc(card.title)}</span>${status ? `<span class="menu-row-status">${esc(status)}</span>` : ""}<span class="menu-chevron" aria-hidden="true">${navIcon("chevron")}</span></button>`;
   }).join("")}</div>`;
 }
 
@@ -1681,7 +1681,7 @@ function parentAssistantAnswer(intent) {
   }
   if (intent === "messages") {
     const latest = state.posts[0];
-    if (!latest) return assistantResult("Skolan har inte publicerat något ännu.", "Skolans flöde", { actionLabel: "Öppna Gemenskap", view: "messages" });
+    if (!latest) return assistantResult("Skolan har inte publicerat något ännu.", "Meddelanden", { actionLabel: "Öppna Meddelanden", view: "messages" });
     return assistantResult(
       `Du har ${state.posts.length} ${state.posts.length === 1 ? "officiellt inlägg" : "officiella inlägg"}. Senast publicerades ”${latest.title}” ${formatTimestamp(latest.created_at)}.`,
       "Skolans flöde",
@@ -1804,7 +1804,7 @@ function staffAssistantAnswer(intent) {
     return assistantResult(
       latest ? `${state.posts.length} officiella inlägg finns i flödet. Senast: ”${latest.title}” ${formatTimestamp(latest.created_at)}.` : "Det finns inga officiella inlägg ännu.",
       "Skolans flöde",
-      { actionLabel: "Öppna Gemenskap", view: "messages", target: "official-feed" },
+      { actionLabel: "Öppna Meddelanden", view: "messages", target: "official-feed" },
     );
   }
   if (intent === "overview") {
@@ -1932,8 +1932,7 @@ function renderAuth() {
     ? "Använd samma e-postadress som inbjudan gäller. Efteråt hamnar du hos rätt barn eller på rätt avdelning."
     : "Ett konto öppnar inte en förskola av sig själv. Du behöver en inbjudningslänk, eller en skolkod som en administratör godkänner.";
   return `${noticeHtml()}
-    <section class="hero-card auth-card">${botMascot()}<div><p class="kicker">${APP_NAME}</p><h1 class="h1">${registerMode ? "Skapa konto" : "Välkommen"}</h1><p class="sub">${registerMode ? registerIntro : "Logga in till en enklare förskolevardag med Ärtan-botten som påminnelsehjälp."}</p></div></section>
-    <article class="card bot-promise"><p class="kicker">En hjälpande bot</p><h2>Rätt sak i rätt tid</h2><p>Ärtan-botten ser vad som saknas i appen och påminner om tider, kontaktuppgifter, hälsa och samtycken. Uppgifterna stannar i ärtan och skickas inte till någon extern AI-tjänst.</p></article>
+    <section class="auth-intro"><p class="hi">${APP_NAME}</p><h1 class="h1">${registerMode ? "Skapa konto" : "Välkommen"}</h1><p class="sub">${registerMode ? registerIntro : "Logga in. Ärtan påminner om det som saknas, och uppgifterna stannar här."}</p></section>
     ${disabled ? `<article class="card important"><h3>Konfiguration saknas</h3><p>Aktivera Supabase i <code>supabase-config.js</code>.</p></article>` : ""}
     <form class="card form-stack" data-form="${registerMode ? "register" : "login"}">
       ${registerMode ? field("Namn", "name", "", { required: true, autocomplete: "name" }) : ""}
@@ -1941,7 +1940,7 @@ function renderAuth() {
       ${field("Lösenord", "password", "", { type: "password", required: true, autocomplete: registerMode ? "new-password" : "current-password", minlength: "8" })}
       ${state.inviteCode ? `<p class="form-hint">Inbjudningslänken följer med när kontot skapas. Använd e-postadressen som inbjudan gäller.</p>` : ""}
       <button class="primary" type="submit" ${disabled ? "disabled" : ""}>${registerMode ? "Skapa konto" : "Logga in"}</button>
-      <button class="secondary" type="button" data-action="auth-view" data-view="${registerMode ? "login" : "register"}">${registerMode ? "Jag har redan konto" : "Skapa nytt konto"}</button>
+      <button class="link" type="button" data-action="auth-view" data-view="${registerMode ? "login" : "register"}">${registerMode ? "Jag har redan konto" : "Skapa nytt konto"}</button>
     </form>`;
 }
 
@@ -1984,7 +1983,7 @@ function renderRemovedAccess() {
 }
 
 function childTabs() {
-  if (!state.children.length) return "";
+  if (state.children.length < 2) return "";
   return `<div class="child-tabs">${state.children.map((child) => `<button type="button" data-action="select-child" data-id="${esc(child.id)}" aria-pressed="${child.id === state.selectedChildId}">${esc(child.name)}<small>${esc(departmentName(child.department_id))}</small></button>`).join("")}</div>`;
 }
 
@@ -2141,7 +2140,7 @@ function renderParentTermSchedules(child) {
   const grid = typeof ArtanPickup === "undefined" ? "" : ArtanPickup.renderTermGrid(pickupGridInput(child), { currentWeekOnly: true });
   const cards = terms.map((term) => `<article class="card term-card" data-term-id="${esc(term.term_id)}"><p class="kicker">Publicerad</p><h3>${esc(term.term_name)}</h3><p>${esc(termDateSummary(term))}</p>${renderShareActions("term", term.term_id, term.term_name)}<p class="form-hint">Dela skickar terminen och stängningsdagarna. Barnets schema och kalenderlänken följer inte med.</p></article>`).join("");
   const edit = state.pickupWeekReady
-    ? `<button class="secondary" type="button" data-action="navigate" data-view="pickup">Visa hela schemat</button>`
+    ? `<button class="primary" type="button" data-action="navigate" data-view="pickup">Visa hela schemat</button>`
     : terms.map((term) => renderWeeklyScheduleForm(term, child)).join("");
   return `<section id="term-overview" class="term-overview"><div class="section-head"><div><p class="kicker">Termin</p><h2>Öppettider och schema</h2></div></div>${cards}${grid ? `<article class="card term-card">${grid}<p class="form-hint">Den aktuella veckan visas här och dagens datum är markerat. Öppna hela schemat för resten av terminen.</p></article>` : ""}${edit}</section>`;
 }
@@ -2383,7 +2382,7 @@ function pickupGridInput(child) {
 function renderPickupWeekNudge(child) {
   if (!child || !state.pickupWeekReady || typeof ArtanPickup === "undefined") return "";
   if (!ArtanPickup.buildTermGrid(pickupGridInput(child)).unfilled) return "";
-  return `<section class="card pickup-nudge"><p class="kicker">Lämning och hämtning</p><h2>Nästa vecka är inte ifylld</h2><p>Fyll i tider, vem som lämnar och vem som hämtar för de närmaste vardagarna. Bara sparade dagar räknas.</p><button class="primary" type="button" data-action="navigate" data-view="pickup">Öppna schemat</button></section>`;
+  return `<p class="nudge-line">Nästa vecka är inte ifylld. Bara sparade dagar räknas. <button class="link" type="button" data-action="navigate" data-view="pickup">Öppna schemat</button></p>`;
 }
 
 function pickerToken(picker) {
@@ -2465,6 +2464,7 @@ function pickupPersonName(child, picker) {
 function personPresentation(child, person) {
   const name = pickupPersonName(child, person);
   return {
+    name,
     initials: name
       ? ArtanPickup.personInitials(name)
       : person?.kind === "pass"
@@ -2495,10 +2495,14 @@ function weekEditorModel(child, editor) {
         open: Boolean(source.open),
         closed: Boolean(source.closed),
         outside: Boolean(source.outside),
+        closureReason: source.closureReason || "",
         dropoffInitials: dropoff.initials,
         dropoffKind: dropoff.kind,
+        dropoffName: dropoff.name,
         pickupInitials: pickup.initials,
         pickupKind: pickup.kind,
+        pickupName: pickup.name,
+        today: Boolean(source.today),
       };
     }),
   };
@@ -2630,7 +2634,7 @@ function renderPickupStandardEditor(child) {
     const dropoffPerson = people ? { kind: people.dropoff_person_kind, id: people.dropoff_person_id } : null;
     return `<div class="weekly-schedule-row" data-weekday="${weekday}"><label class="check"><input type="checkbox" name="attending_${weekday}" data-schedule-attending ${attending ? "checked" : ""}> ${esc(WEEKDAYS[weekday - 1])}</label><label>Lämning<input type="time" name="dropoff_${weekday}" value="${esc(String(saved?.dropoff_at || "").slice(0, 5))}" ${attending ? "" : "disabled"}></label>${pickerSelect(`dropoff_person_${weekday}`, calendar, "", pickerToken(dropoffPerson), false, "Vem lämnar?", false)}<label>Hämtning<input type="time" name="pickup_${weekday}" value="${esc(String(saved?.pickup_at || "").slice(0, 5))}" ${attending ? "" : "disabled"}></label>${pickerSelect(`picker_${weekday}`, calendar, "", pickerToken(people), false)}</div>`;
   }).join("");
-  return `<form class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="standard-sheet-title" data-form="pickup-standard" data-child-id="${esc(child.id)}"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="standard-sheet-title">Standardvecka</h1><button class="week-save" type="submit">Spara</button></header><div class="week-sheet-body"><p class="form-hint">Samma tider och personer varje vecka i terminen. Lämnare och hämtare väljs var för sig.</p><div class="assistant-form"><label>Berätta för Ärtan<textarea name="schedule_text" placeholder="08.00–16.30 alla dagar utom torsdagar, då 08.00–15.00"></textarea></label><button class="secondary" type="button" data-action="parse-weekly-schedule">Tolka och fyll i</button><p class="form-hint" data-parse-status aria-live="polite">Ärtan fyller bara i tiderna. Välj vem som lämnar och hämtar, och spara.</p></div><fieldset class="weekly-schedule"><legend>Måndag till fredag</legend>${rows}</fieldset></div></form>`;
+  return `<form class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="standard-sheet-title" data-form="pickup-standard" data-child-id="${esc(child.id)}"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="standard-sheet-title">Standardvecka</h1></header><div class="week-sheet-body"><p class="form-hint">Samma tider och personer varje vecka i terminen. Lämnare och hämtare väljs var för sig.</p><div class="assistant-form"><label>Berätta för Ärtan<textarea name="schedule_text" placeholder="08.00–16.30 alla dagar utom torsdagar, då 08.00–15.00"></textarea></label><button class="secondary" type="button" data-action="parse-weekly-schedule">Tolka och fyll i</button><p class="form-hint" data-parse-status aria-live="polite">Ärtan fyller bara i tiderna. Välj vem som lämnar och hämtar, och spara.</p></div><fieldset class="weekly-schedule"><legend>Måndag till fredag</legend>${rows}</fieldset><button class="primary" type="submit">Spara</button></div></form>`;
 }
 
 function renderPickupMenu() {
@@ -2703,7 +2707,7 @@ function renderPickupHub() {
   const schedule = state.pickupWeekReady
     ? `${grid || `<p class="form-hint">Ingen publicerad termin att visa ännu.</p>`}<button class="term-add no-print" type="button" data-action="pickup-add" aria-label="Planera vecka">+</button>${renderPickupOverlay(child)}`
     : `<section class="card"><h2>Veckoschema</h2><p class="form-hint">Veckoschemat för hämtning är inte aktiverat i databasen ännu.</p>${grid}</section>`;
-  return `${noticeHtml()}${childTabs()}<section class="hero-card"><p class="kicker">Hämtning</p><h1 class="h1">${esc(childFirstName(child) || child.name)}</h1><p class="sub">Schema, hämtpass och hämtlista för ${esc(departmentName(child.department_id))}.</p></section>
+  return `${noticeHtml()}${childTabs()}<h1 class="h1">Hämtning</h1><p class="page-sub">${esc(childFirstName(child) || child.name)} · ${esc(departmentName(child.department_id))}</p>
     <section class="card term-card" id="pickup-schedule"><div class="section-head"><div><p class="kicker">Schema</p><h2>Terminen</h2></div></div>${schedule}<p class="form-hint">Tryck på en vecka för att ändra. Bara sparade dagar är ifyllda. En svag tid är standardveckan, och Ej ifylld betyder att veckan inte är sparad. En personikon betyder att någon annan än du hämtar.</p></section>
     ${renderPickupSection(child)}`;
 }
@@ -2890,44 +2894,100 @@ async function presentPickupToken(raw, method) {
   }, "");
 }
 
+function dayGreeting() {
+  const hour = new Date().getHours();
+  const hello = hour < 10 ? "God morgon" : hour < 17 ? "God eftermiddag" : "God kväll";
+  const first = childFirstName({ name: state.profile?.name || "" });
+  return first ? `${hello}, ${first}` : hello;
+}
+
+function todayGridDay(child) {
+  if (!child || typeof ArtanPickup === "undefined") return null;
+  const grid = ArtanPickup.buildTermGrid(pickupGridInput(child));
+  const today = todayIso();
+  for (const week of grid.weeks) {
+    const day = week.days.find((item) => item.iso === today);
+    if (day) return { day, monday: week.monday };
+  }
+  return null;
+}
+
+function tomorrowClosureNote(child) {
+  if (!child || typeof ArtanPickup === "undefined") return "";
+  const tomorrow = ArtanPickup.addDays(todayIso(), 1);
+  const grid = ArtanPickup.buildTermGrid(pickupGridInput(child));
+  for (const week of grid.weeks) {
+    const day = week.days.find((item) => item.iso === tomorrow);
+    if (day?.closed) return `Imorgon stängt${day.closureReason ? ` (${day.closureReason})` : ""}`;
+  }
+  return "";
+}
+
+function todayStatusCopy(child, attendance) {
+  const place = departmentName(child.department_id);
+  if (isWeekend()) return { text: "Helg", sub: "ingen incheckning idag. Ingen dagsplan eller incheckning behövs under helgen.", dot: "is-muted" };
+  const status = attendanceState(attendance);
+  if (status === "in") return { text: `På förskolan sedan ${formatClock(attendance.checked_in_at)}`, sub: place, dot: "" };
+  if (status === "absent_sick") return { text: "Sjuk", sub: place, dot: "is-coral" };
+  if (status === "absent_leave") return { text: "Ledig", sub: place, dot: "is-sun" };
+  if (status === "picked_up") return { text: `Hämtad ${formatClock(attendance.checked_out_at)}`, sub: place, dot: "is-sky" };
+  return { text: "Inte incheckad", sub: place, dot: "is-muted" };
+}
+
+function pickupCardCopy(child, summary) {
+  const day = summary?.day;
+  const note = tomorrowClosureNote(child);
+  if (!day) return { value: "Ingen plan", sub: note || departmentName(child.department_id) };
+  if (day.closed) return { value: "Stängt", sub: day.closureReason || note || "Förskolan är stängd" };
+  if (day.saved) {
+    const who = pickupPersonName(child, day.picker);
+    return { value: `${day.pickup}${who ? ` · ${who}` : ""}`, sub: note };
+  }
+  return { value: "Ingen tid sparad", sub: note || "Öppna hela schemat för att fylla i veckan." };
+}
+
 function renderParentHome() {
   const child = selectedChild();
-  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Min dag</p><h1 class="h1">Välkommen</h1><p class="sub">När personalen har kopplat ett barn hjälper Ärtan-botten dig med vardagsplanen. Du kan också be om en koppling här.</p></section>${renderSiblingRequestForm()}`;
+  if (!child) return `${noticeHtml()}<p class="hi">Välkommen</p><h1 class="h1">Inget barn ännu</h1><p class="sub">När personalen har kopplat ett barn syns dagen här. Du kan också be om en koppling.</p>${renderSiblingRequestForm()}`;
   const attendance = attendanceFor(child.id);
   const weekend = isWeekend();
   const pickupContacts = contactsFor(child.id).filter((contact) => contact.can_pickup);
-  const messages = state.posts.filter((post) => !post.child_id || post.child_id === child.id).slice(0, 3);
+  const latest = state.posts.find((post) => !post.child_id || post.child_id === child.id);
   const reminders = parentReminders(child);
   const nextReminder = reminders[0];
-  const status = weekend ? "Helg" : attendanceLabel(attendanceState(attendance));
-  const statusDetail = weekend
-    ? " · ingen incheckning idag"
-    : attendance?.pickup_at
-      ? ` · planerad hämtning ${esc(attendance.pickup_at.slice(0, 5))}`
-      : "";
-  const doneText = weekend
-    ? "Ingen dagsplan eller incheckning behövs under helgen."
-    : "Dagens plan och barnets uppgifter ser kompletta ut.";
+  const status = todayStatusCopy(child, attendance);
+  const summary = todayGridDay(child);
+  const pickup = pickupCardCopy(child, summary);
+  const renewal = renderPassRenewalCards(child);
+  const editToday = `<button class="link" type="button" data-action="navigate" data-view="pickup">Visa hela schemat</button>`;
   const dailyPlan = weekend
     ? ""
-    : `<form id="daily-plan" class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><p class="kicker">Idag</p><h2>Dagens plan</h2>
+    : `<form id="daily-plan" class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><h2>Om något ändras idag</h2>
       ${selectField("Planerad status", "status", [["in", "Kommer"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]], ["absent_sick", "absent_leave"].includes(attendance?.status) ? attendance.status : "in", true)}
       <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
       <label>Vem hämtar?<input name="pickup_by" type="text" value="${esc(attendance?.pickup_by || "")}" list="pickup-contact-options" placeholder="Exempelvis mormor eller farfar"></label>
       ${pickupContacts.length ? `<datalist id="pickup-contact-options">${pickupContacts.map((contact) => `<option value="${esc(contact.name)}"></option>`).join("")}</datalist>` : ""}
       <p class="form-hint">Skriv vem som hämtar. Kontaktpersoner markerade med ”får hämta” visas som förslag.</p>
-      <button class="primary" type="submit">Spara dagens plan</button>
+      <button class="link" type="submit">Spara dagens plan</button>
     </form>`;
-  return `${noticeHtml()}${childTabs()}<section class="hero-card home-hero"><div><p class="kicker">${esc(new Intl.DateTimeFormat("sv-SE", { dateStyle: "full" }).format(new Date()))}</p><h1 class="h1">${esc(child.name)}</h1><p class="big-status">${esc(status)}</p><p class="sub">${esc(departmentName(child.department_id))}${statusDetail}</p></div>${botMascot()}</section>
+  const reminderBlock = reminders.length
+    ? `<section class="card"><h2>Att komma ihåg</h2><ul class="bot-reminders">${reminders.map((reminder) => `<li>${esc(reminder.text)}</li>`).join("")}</ul>${nextReminder ? `<button class="link" type="button" data-action="bot-reminder" data-view="${esc(nextReminder.view)}" data-target="${esc(nextReminder.target)}">Ta hand om nästa sak</button>` : ""}</section>`
+    : "";
+  const latestRow = latest
+    ? `<p class="menu-label">Senaste meddelande</p><div class="menu-group"><button type="button" class="menu-row" data-action="navigate" data-view="messages"><span class="menu-row-title">${esc(latest.title)}</span><span class="menu-row-status">${esc(formatTimestamp(latest.created_at))}</span></button></div>`
+    : "";
+  return `${noticeHtml()}${childTabs()}<p class="hi">${esc(dayGreeting())}</p><h1 class="h1">${esc(childFirstName(child) || child.name)}</h1>
+    <section class="soft-card is-today"><p class="soft-label">Idag</p><p class="soft-value"><span class="status-dot ${status.dot}"></span>${esc(status.text)}</p><p class="soft-sub">${esc(status.sub)}</p></section>
+    <section class="soft-card is-pick"><p class="soft-label">Hämtning</p><p class="soft-value">${esc(pickup.value)}</p>${pickup.sub ? `<p class="soft-sub">${esc(pickup.sub)}</p>` : ""}${editToday}</section>
+    ${renewal}
     ${renderPickupNotices()}
     ${renderIncidentCopies()}
     ${renderNoticeList("Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}
-    <section class="card bot-card"><div class="bot-card-mascot">${botMascot()}</div><div><p class="kicker">Ärtan-botten</p><h2>${reminders.length ? "Jag hjälper dig komma ihåg" : "Allt är uppdaterat"}</h2>${reminders.length ? `<ul class="bot-reminders">${reminders.map((reminder) => `<li>${esc(reminder.text)}</li>`).join("")}</ul>` : `<p class="bot-done">${doneText}</p>`}${nextReminder ? `<button class="primary bot-next" type="button" data-action="bot-reminder" data-view="${esc(nextReminder.view)}" data-target="${esc(nextReminder.target)}">Ta hand om nästa sak</button>` : ""}</div></section>
-    ${renderPassRenewalCards(child)}
+    ${reminderBlock}
     ${renderPickupWeekNudge(child)}
     ${renderParentTermSchedules(child)}
     ${dailyPlan}
-    <section><div class="section-head"><div><p class="kicker">Från skolan</p><h2>Meddelanden</h2></div><button class="link" data-action="navigate" data-view="messages">Visa alla</button></div>${messages.map(renderPost).join("") || emptyState("Inga meddelanden", "Nya meddelanden från personalen visas här.")}</section>`;
+    ${latestRow}`;
 }
 
 function commentsFor(postId) {
@@ -3263,8 +3323,8 @@ function renderClassList() {
     if (!groups.has(child.department_id)) groups.set(child.department_id, { name: child.department_name, children: [] });
     groups.get(child.department_id).children.push(child);
   });
-  const sections = Array.from(groups.values()).map((group) => `<section class="class-list-group"><h2>${esc(group.name)}</h2><div class="class-list">${group.children.map((child) => `<article class="card class-list-card">${childAvatarHtml(child.display_name, childPhotoUrl(child.photo_path))}<div><strong>${esc(child.display_name)}</strong>${child.photo_path ? "" : `<span>Ingen bild</span>`}</div></article>`).join("")}</div></section>`).join("");
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Avdelningen</p><h1 class="h1">Klasslista</h1><p class="sub">Barn i samma avdelning som dina barn, när vårdnadshavarna har valt att visa förnamnet. Bilden syns bara om alla vårdnadshavare till det barnet har sagt ja.</p></section>${sections || emptyState("Inga barn visas ännu", "Ett barn syns när en vårdnadshavare sagt ja till namnet och ingen sagt nej.")}`;
+  const sections = Array.from(groups.values()).map((group) => `<section class="class-list-group"><p class="menu-label">${esc(group.name)}</p><div class="menu-group">${group.children.map((child) => `<div class="menu-row class-list-card">${childAvatarHtml(child.display_name, childPhotoUrl(child.photo_path))}<div><strong>${esc(child.display_name)}</strong>${child.photo_path ? "" : `<span>Ingen bild</span>`}</div></div>`).join("")}</div></section>`).join("");
+  return `${noticeHtml()}<h1 class="h1">Klasslista</h1><p class="page-sub">Barn i samma avdelning, när vårdnadshavarna har valt att visa förnamnet. Bilden syns bara om alla vårdnadshavare till det barnet har sagt ja.</p>${sections || emptyState("Inga barn visas ännu", "Ett barn syns när en vårdnadshavare sagt ja till namnet och ingen sagt nej.")}`;
 }
 
 function renderChildFacts(child) {
@@ -3589,7 +3649,7 @@ function renderBirthdayInvitations() {
 function renderMessages() {
   const availableDepartments = editableDepartments();
   const canPublish = (state.profile.role === "staff" || state.profile.role === "admin") && availableDepartments.length > 0;
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Gemenskap</p><h1 class="h1">Skolans flöde</h1><p class="sub">Officiella inlägg från skolan, kommentarer och privata samtal samlade på ett ställe.</p></section>
+  return `${noticeHtml()}<h1 class="h1">Meddelanden</h1><p class="page-sub">Från skolan, och det ni skriver till varandra.</p>
     ${canPublish ? `<form id="official-post-form" class="card form-stack" data-form="post-create"><h2>Publicera officiellt inlägg</h2>
       ${selectField("Avdelning", "department_id", availableDepartments.map((department) => [department.id, `${schoolName(department.preschool_id)} · ${department.name}`]), "", true)}
       ${selectField("Barn, valfritt", "child_id", [["", "Hela avdelningen"], ...state.children.map((child) => [child.id, child.name])], "")}
@@ -3616,15 +3676,9 @@ function renderAttendance() {
     return result;
   }, {});
   const absentCount = (counts.absent_sick || 0) + (counts.absent_leave || 0);
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Närvaro</p><h1 class="h1">Checka in och ut</h1><p class="sub">${esc(todayIso())} · ${state.children.length} barn i dina avdelningar</p></section>
+  return `${noticeHtml()}<h1 class="h1">Närvaro</h1><p class="page-sub">${counts.in || 0} incheckade · ${counts.unregistered || 0} inte incheckade · ${counts.picked_up || 0} utcheckade · ${absentCount} frånvarande</p>
     ${renderScanPanel()}
     ${renderCheckoutPanel()}
-    <section class="metric-grid attendance-metrics" aria-label="Dagens närvaro">
-      <article class="metric"><strong>${counts.in || 0}</strong><span>Incheckade</span></article>
-      <article class="metric"><strong>${counts.unregistered || 0}</strong><span>Inte incheckade</span></article>
-      <article class="metric"><strong>${counts.picked_up || 0}</strong><span>Utcheckade</span></article>
-      <article class="metric"><strong>${absentCount}</strong><span>Frånvarande</span></article>
-    </section>
     ${state.children.length ? `<div class="attendance-list">${state.children.map((child) => {
       const attendance = attendanceFor(child.id);
       const status = attendanceState(attendance);
@@ -4249,12 +4303,13 @@ registerHubCard("people", { id: "sparrar", icon: "⛔", title: "Får ej hämta",
 registerHubCard("people", { id: "incidentrapporter", icon: "⚑", title: "Incidentrapporter", status: incidentHubStatus, visible: () => state.profile.role === "admin" || state.profile.role === "staff", render: renderIncidentBody });
 
 function renderOverview() {
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Organisation</p><h1 class="h1">${esc(state.organization?.name || "")}</h1><p class="sub">${esc(roleLabel(state.profile.role))}</p></section><div class="metric-grid"><article class="metric"><strong>${state.schools.length}</strong><span>Skolor</span></article><article class="metric"><strong>${state.departments.length}</strong><span>Avdelningar</span></article><article class="metric"><strong>${state.children.length}</strong><span>Barn</span></article><article class="metric"><strong>${state.invitations.filter((invite) => invite.status === "pending").length}</strong><span>Väntande inbjudningar</span></article></div>
+  const pendingInvites = state.invitations.filter((invite) => invite.status === "pending").length;
+  return `${noticeHtml()}<h1 class="h1">${esc(state.organization?.name || "Översikt")}</h1><p class="page-sub">${esc(roleLabel(state.profile.role))}</p><div class="menu-group" aria-label="Organisationen"><div class="menu-row"><span class="menu-row-title">Skolor</span><span class="menu-row-status">${state.schools.length}</span></div><div class="menu-row"><span class="menu-row-title">Avdelningar</span><span class="menu-row-status">${state.departments.length}</span></div><div class="menu-row"><span class="menu-row-title">Barn</span><span class="menu-row-status">${state.children.length}</span></div><div class="menu-row"><span class="menu-row-title">Väntande inbjudningar</span><span class="menu-row-status">${pendingInvites}</span></div></div>
     <article class="card"><h2>Kom igång</h2><ol class="steps"><li class="done">Organisation skapad</li><li class="${state.schools.length ? "done" : ""}">Skapa skola och avdelning</li><li class="${state.children.length ? "done" : ""}">Lägg till barn</li><li class="${state.invitations.length ? "done" : ""}">Bjud in personal och vårdnadshavare</li></ol></article>`;
 }
 
 function renderAccount() {
-  const privacySettings = state.profile.role === "parent" ? `<fieldset class="preference-group"><legend>Gemenskap och integritet</legend>
+  const privacySettings = state.profile.role === "parent" ? `<fieldset class="preference-group"><legend>Meddelanden och integritet</legend>
       <label class="check"><input type="checkbox" name="allow_parent_messages" ${state.profile.allow_parent_messages ? "checked" : ""}> Låt andra vårdnadshavare i min avdelning hitta och skriva till mig</label>
       <p class="form-hint">Båda vårdnadshavarna måste ha aktiverat detta. Lärare och administratörer kan alltid skriva privat till dig.</p>
       <label class="check"><input type="checkbox" name="allow_playdate_requests" ${state.profile.allow_playdate_requests ? "checked" : ""}> Visa mig för frivilliga lekförfrågningar</label>
@@ -4262,7 +4317,7 @@ function renderAccount() {
       <label class="check"><input type="checkbox" name="allow_birthday_invitations" ${state.profile.allow_birthday_invitations ? "checked" : ""}> Låt andra vårdnadshavare bjuda in mig till privata födelsedagskalas</label>
       <p class="form-hint">Kalasinbjudningar har ett separat frivilligt val. Båda måste ha aktiverat funktionen och tillhöra samma avdelning.</p>
     </fieldset>` : "";
-  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Konto</p><h1 class="h1">${esc(state.profile.name)}</h1><p class="sub">${esc(state.profile.email)} · ${esc(roleLabel(state.profile.role))}</p></section>
+  return `${noticeHtml()}<h1 class="h1">${esc(state.profile.name)}</h1><p class="page-sub">${esc(state.profile.email)} · ${esc(roleLabel(state.profile.role))}</p>
     <form class="card form-stack" data-form="profile-update"><h2>Dina uppgifter</h2>${field("Namn", "name", state.profile.name, { required: true, autocomplete: "name" })}${field("Telefon", "phone", state.profile.phone || "", { type: "tel", autocomplete: "tel" })}${privacySettings}<button class="primary" type="submit">Spara uppgifter</button></form>
     <button class="secondary" data-action="logout">Logga ut</button>`;
 }
@@ -4483,14 +4538,69 @@ function renderIncidents() {
   return `${noticeHtml()}<section class="hero-card"><p class="kicker">Avvikelser</p><h1 class="h1">${heading}</h1>${sub}</section>${renderIncidentBody()}`;
 }
 
+function navIcon(name) {
+  const paths = {
+    home: '<path d="M3.5 10.5 12 3.5l8.5 7V20h-5.5v-5.5h-6V20H3.5z"/>',
+    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    messages: '<path d="M20.5 12a8.5 8.5 0 0 1-12.3 7.6L3.5 21l1.4-4.4A8.5 8.5 0 1 1 20.5 12z"/>',
+    more: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+    check: '<circle cx="12" cy="12" r="8.5"/><path d="m8.2 12.2 2.4 2.4 5.2-5.4"/>',
+    people: '<circle cx="9" cy="8" r="3"/><path d="M3.6 18.5c.8-2.8 2.7-4.2 5.4-4.2s4.6 1.4 5.4 4.2"/><circle cx="17" cy="9" r="2.1"/><path d="M16.2 14.6c1.7.3 3 1.3 3.7 3.2"/>',
+    overview: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+    chevron: '<path d="m9 6 6 6-6 6"/>',
+  };
+  const size = name === "chevron" ? 16 : 22;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.more}</svg>`;
+}
+
+function moreDestinations(role) {
+  if (role === "admin") return ["schools", "people", "incidents", "account"];
+  if (role === "staff") return ["incidents", "account"];
+  return ["child", "classlist", "account"];
+}
+
+function renderMenuGroup(label, items) {
+  return `<p class="menu-label">${esc(label)}</p><div class="menu-group">${items.map(([view, title, status]) => `<button type="button" class="menu-row" data-action="navigate" data-view="${view}"><span class="menu-row-title">${esc(title)}</span>${status ? `<span class="menu-row-status">${esc(status)}</span>` : ""}<span class="menu-chevron" aria-hidden="true">${navIcon("chevron")}</span></button>`).join("")}</div>`;
+}
+
+function renderMore() {
+  const role = state.profile.role;
+  const child = selectedChild();
+  const groups = role === "admin"
+    ? [["Förskolan", [["schools", "Skolor", ""], ["people", "Personer", ""], ["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
+    : role === "staff"
+      ? [["Arbete", [["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
+      : [["Barnet", [["child", "Barnet", child?.name || "Inget barn"], ["classlist", "Klasslista", ""]]], ["Konto", [["account", "Konto", state.profile.email]]]];
+  return `${noticeHtml()}<h1 class="h1">Mer</h1>${groups.map(([label, items]) => renderMenuGroup(label, items)).join("")}<button class="link menu-logout" type="button" data-action="logout">Logga ut</button>`;
+}
+
 function renderNav() {
   const role = state.profile?.role;
   const items = role === "admin"
-    ? [["attendance", "✓", "Närvaro"], ["overview", "▦", "Översikt"], ["schools", "🏫", "Skolor"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Personer"], ["incidents", "⚑", "Avvikelse"], ["account", "⚙", "Konto"]]
+    ? [["attendance", "check", "Närvaro"], ["overview", "overview", "Översikt"], ["messages", "messages", "Meddelanden"], ["more", "more", "Mer"]]
     : role === "staff"
-      ? [["attendance", "✓", "Närvaro"], ["messages", "✉", "Gemenskap"], ["people", "👥", "Barn"], ["incidents", "⚑", "Avvikelse"], ["account", "⚙", "Konto"]]
-      : [["home", "●", "Min dag"], ["pickup", "◎", "Hämtning"], ["child", "🌱", "Barnet"], ["classlist", "☰", "Klasslista"], ["messages", "✉", "Gemenskap"], ["account", "⚙", "Konto"]];
-  nav.innerHTML = items.map(([view, icon, label]) => `<button data-action="navigate" data-view="${view}" aria-current="${state.view === view ? "page" : "false"}"><span class="ico">${icon}</span>${label}</button>`).join("");
+      ? [["attendance", "check", "Närvaro"], ["messages", "messages", "Meddelanden"], ["people", "people", "Barn"], ["more", "more", "Mer"]]
+      : [["home", "home", "Min dag"], ["pickup", "clock", "Hämtning"], ["messages", "messages", "Meddelanden"], ["more", "more", "Mer"]];
+  const buried = new Set(moreDestinations(role));
+  nav.innerHTML = items.map(([view, icon, label]) => {
+    const current = state.view === view || (view === "more" && buried.has(state.view));
+    return `<button data-action="navigate" data-view="${view}" aria-current="${current ? "page" : "false"}"><span class="ico">${navIcon(icon)}</span>${label}</button>`;
+  }).join("");
+}
+
+function paintHeaderContext() {
+  const role = state.profile?.role;
+  const child = role === "parent" ? selectedChild() : null;
+  accountButton.hidden = false;
+  accountButton.dataset.action = "navigate";
+  if (child) {
+    accountButton.dataset.view = "child";
+    accountButton.innerHTML = `<strong>${esc(childFirstName(child) || child.name)}</strong><small>${esc(departmentName(child.department_id))}</small>`;
+    return;
+  }
+  accountButton.dataset.view = "more";
+  const name = childFirstName({ name: state.profile?.name || "Mer" }) || "Mer";
+  accountButton.innerHTML = `<strong>${esc(name)}</strong><small>${esc(roleLabel(role))}</small>`;
 }
 
 function render() {
@@ -4512,17 +4622,18 @@ function render() {
     renderAssistant();
     return;
   }
-  accountButton.hidden = false;
-  accountButton.innerHTML = `<strong>${esc(state.profile?.name || "Konto")}</strong><small>${esc(state.profile ? roleLabel(state.profile.role) : "Kom igång")}</small>`;
   if (!state.profile || state.profile.removed_at) {
+    accountButton.hidden = true;
     screen.innerHTML = state.profile?.removed_at ? renderRemovedAccess() : state.onboarding?.kind === "pending" ? renderPendingAccess() : renderOnboarding();
     nav.innerHTML = "";
     renderAssistant();
     return;
   }
+  paintHeaderContext();
   const views = {
     home: renderParentHome,
     pickup: renderPickupHub,
+    more: renderMore,
     child: renderChildInfo,
     classlist: renderClassList,
     messages: renderMessages,
