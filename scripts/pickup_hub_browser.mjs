@@ -45,10 +45,8 @@ const preview = `<!doctype html>
       <nav id="bottomNav" class="bottom-nav" aria-label="ärtans huvudmeny">
         <button type="button" data-action="navigate" data-view="home"><span class="ico">●</span>Min dag</button>
         <button type="button" data-action="navigate" data-view="pickup" aria-current="page"><span class="ico">◎</span>Hämtning</button>
-        <button type="button"><span class="ico">🌱</span>Barnet</button>
-        <button type="button"><span class="ico">☰</span>Klasslista</button>
-        <button type="button"><span class="ico">✉</span>Gemenskap</button>
-        <button type="button"><span class="ico">⚙</span>Konto</button>
+        <button type="button"><span class="ico">✉</span>Meddelanden</button>
+        <button type="button"><span class="ico">☰</span>Mer</button>
       </nav>
     </div>
   </div>
@@ -439,7 +437,7 @@ try {
     const rect = bar.getBoundingClientRect();
     return { buttons: bar.querySelectorAll("button").length, height: rect.height, rows: getComputedStyle(bar).gridTemplateColumns.split(" ").length };
   })()`);
-  assert(nav.buttons === 6 && nav.rows === 3 && nav.height > 100, `menyn med sex knappar radbröts inte (${JSON.stringify(nav)})`);
+  assert(nav.buttons === 4 && nav.rows === 4 && nav.height < 100, `menyn ska vara en rad med fyra flikar (${JSON.stringify(nav)})`);
   const overlap = await evaluate(`(() => {
     const add = document.querySelector(".term-add").getBoundingClientRect();
     const bot = document.querySelector(".assistant-launcher").getBoundingClientRect();

@@ -88,6 +88,13 @@ function dashboard(iso) {
   vm.runInContext([
     functionSource("todayIso"),
     functionSource("isWeekend"),
+    functionSource("childFirstName"),
+    functionSource("formatClock"),
+    functionSource("dayGreeting"),
+    functionSource("todayGridDay"),
+    functionSource("tomorrowClosureNote"),
+    functionSource("todayStatusCopy"),
+    functionSource("pickupCardCopy"),
     functionSource("parentReminders"),
     functionSource("renderParentHome"),
   ].join("\n"), context);
