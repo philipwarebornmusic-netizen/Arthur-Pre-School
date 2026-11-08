@@ -464,6 +464,64 @@ def main():
         fail(f"anon was able to call the meal rpc\n{anon.stderr}")
     if q("select count(*)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and has_function_privilege('anon', p.oid, 'execute')") != "0":
         fail("anon can execute a private meal function")
+    far = q("""
+      select (
+        current_date + 150 + case
+          when extract(isodow from current_date + 150) = 6 then 2
+          when extract(isodow from current_date + 150) = 7 then 1
+          else 0
+        end
+      )::text
+    """)
+    expect_error(STAFF_A1, f"select public.save_meal_days('{SCHOOL_A1}', '[{{\"served_on\":\"{far}\",\"body\":\"För tidigt\"}}]'::jsonb)", "redigeras")
+    wide_path = f"{ORG_A}/{SCHOOL_A1}/99999999-9999-4999-8999-999999999999.pdf"
+    q(f"insert into storage.objects (bucket_id, name, metadata) values ('meal-menus', '{wide_path}', jsonb_build_object('mimetype', 'application/pdf', 'size', 120))")
+    expect_error(
+        STAFF_A1,
+        f"select public.attach_meal_menu('99999999-9999-4999-8999-999999999999', '{SCHOOL_A1}', current_date + 30, current_date + 130, '{wide_path}', 'termin.pdf')",
+        "42",
+    )
+    migration = ROOT / "supabase" / "migrations" / "20261108223000_meal_term_horizon.sql"
+    applied = subprocess.run(
+        ["sudo", "-u", "postgres", "psql", "-d", DB, "-v", "ON_ERROR_STOP=1", "-f", str(migration)],
+        text=True,
+        capture_output=True,
+    )
+    if applied.returncode != 0:
+        fail(applied.stderr.strip() or "term migration failed")
+    horizon = json.loads(as_user(STAFF_A1, "select public.meal_edit_horizon()::text"))
+    if horizon.get("revision") != "term" or horizon.get("future_days") != 186 or horizon.get("file_span_days") != 185:
+        fail(f"horizon was not the term window: {horizon}")
+    if q("select prosecdef::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and proname = 'meal_edit_horizon'") != "false":
+        fail("public meal_edit_horizon must stay security invoker")
+    if q("select prosecdef::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and proname = 'meal_edit_horizon'") != "true":
+        fail("private meal_edit_horizon must stay security definer")
+    anon_horizon = psql("set role anon; select public.meal_edit_horizon()", DB, check=False)
+    if anon_horizon.returncode == 0 or "permission denied" not in f"{anon_horizon.stderr}{anon_horizon.stdout}":
+        fail("anon could read the meal horizon")
+    as_user(STAFF_A1, f"select public.save_meal_days('{SCHOOL_A1}', '[{{\"served_on\":\"{far}\",\"body\":\"Inom terminen\"}}]'::jsonb)")
+    if as_user(PARENT_A1, f"select body from public.meal_days where served_on = '{far}'") != "Inom terminen":
+        fail("the term day was not saved for the assigned preschool")
+    expect_error(PARENT_A1, f"select public.save_meal_days('{SCHOOL_A1}', '[{{\"served_on\":\"{far}\",\"body\":\"Olovlig\"}}]'::jsonb)", "behörighet")
+    expect_error(STAFF_A2, f"select public.save_meal_days('{SCHOOL_A1}', '[{{\"served_on\":\"{far}\",\"body\":\"Annan\"}}]'::jsonb)", "behörighet")
+    too_far = q("""
+      select (
+        current_date + 200 + case
+          when extract(isodow from current_date + 200) = 6 then 2
+          when extract(isodow from current_date + 200) = 7 then 1
+          else 0
+        end
+      )::text
+    """)
+    expect_error(STAFF_A1, f"select public.save_meal_days('{SCHOOL_A1}', '[{{\"served_on\":\"{too_far}\",\"body\":\"För långt\"}}]'::jsonb)", "redigeras")
+    as_user(STAFF_A1, f"select public.attach_meal_menu('99999999-9999-4999-8999-999999999999', '{SCHOOL_A1}', current_date + 30, current_date + 130, '{wide_path}', 'termin.pdf')")
+    if q("select (ends_on - starts_on)::text from public.meal_menus where id = '99999999-9999-4999-8999-999999999999'") != "100":
+        fail("a 100-day term file was not attached")
+    expect_error(
+        STAFF_A1,
+        "select public.attach_meal_menu('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', '" + SCHOOL_A1 + "', current_date, current_date + 186, '" + wide_path + "', 'för lång.pdf')",
+        "186",
+    )
     print("executed local meal SQL checks passed")
     psql(f"drop database if exists {DB}")
 

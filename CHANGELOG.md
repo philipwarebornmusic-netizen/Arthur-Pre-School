@@ -10,6 +10,18 @@
 - En ny fil laddas upp på en egen sökväg. Den gamla filen tas bort först efter att den nya referensen är sparad. Ett misslyckat byte lämnar den tidigare filen kvar. Borttagning tillåts för personal och administratör vid `storage.object.delete` och `storage.object.delete_many`, inte för vårdnadshavare och inte som listning.
 - Migreringen ändrar inte `storage.objects`. Den kontrollerar bara att row level security redan är aktiverat, eftersom den roll som kör migreringen inte äger tabellen.
 
+## 2026-11-08 — Läs in rätter från en PDF
+
+- Personal och administratör kan läsa en PDF med text för en vecka, en månad eller en termin. Rätterna visas per riktigt datum och sparas bara om dagen är ikryssad.
+- År gissas inte när veckonumret saknar år. Vecka 52 följd av vecka 1 räknas som årsskifte bara när året redan är känt.
+- Ett foto eller en skannad PDF läses i webbläsaren och måste granskas innan något sparas. En text-PDF läses direkt.
+- En befintlig rätt byts inte utan att rutan kryssas i. Filen bifogas för högst 42 dagar tills migreringen för en hel termin är aktiverad.
+
+## 2026-11-08 — Termin och bildläsning, inte aktiverat
+
+- En ny migrering vidgar sparandet till 186 dagar framåt och en bifogad fil till 186 dagar. Den är inte körd. Tills dess visas de senare dagarna, men de kan inte sparas.
+- Ett foto eller en skannad PDF läses med svensk textigenkänning i webbläsaren. Raderna är avkryssade tills någon granskar dem. Filen skickas inte vidare.
+
 ## 2026-11-01 — Mjuka kort
 
 - Hela appen använder samma lugna yta: sandbakgrund, Inter i brödtext, Newsreader i stora rubriker, mjuka kort utan ram och utan skugga, och en solgul knapp per vy.

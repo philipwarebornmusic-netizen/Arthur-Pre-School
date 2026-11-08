@@ -291,6 +291,33 @@
     return `<button class="hub-back" type="button" data-action="navigate" data-view="home">‹ Min dag</button><h1 class="h1">Matsedel</h1><p class="page-sub">${escapeHtml(model.schoolName || "")} · ${escapeHtml(view.week.start)}–${escapeHtml(view.week.end)}</p>${files || `<p class="form-hint">Ingen uppladdad matsedel den här veckan.</p>`}${rows}`;
   }
 
+  function importEntryHtml() {
+    return `<section class="card meal-import-entry"><h2>Läs in rätter</h2><p class="form-hint">En PDF med text läses direkt. Ett foto eller en skannad PDF läses i webbläsaren. Varje bildrad måste kryssas i. Ingenting sparas av sig själv.</p><label>PDF eller bild<input type="file" accept="application/pdf,image/*" data-action="meal-import-file"></label><button class="link" type="button" data-action="meal-import-example">Visa exempel utan att spara</button><button class="link" type="button" data-action="meal-import-term">Visa en hel termin utan att spara</button></section>`;
+  }
+
+  function importReviewHtml(model) {
+    const pending = (model.weeks || []).reduce((count, week) => count + week.rows.filter((row) => row.pendingMigration).length, 0);
+    const pendingNote = pending ? `<p class="notice" role="status">${pending} dagar ligger längre fram än 120 dagar. De kan inte sparas förrän migreringen för en hel termin är aktiverad.</p>` : "";
+    const fileHint = model.limits && model.limits.revision === "term"
+      ? "Filen kan bifogas för högst 186 dagar. Rätterna sparas var för sig."
+      : "Filen kan bifogas för högst 42 dagar tills migreringen är aktiverad. En hel termin kan inte ligga på en fil ännu.";
+    const year = model.needsYear ? `<label>År för veckor som saknar år<input name="anchor_year" type="number" min="2000" max="2100" required value="${escapeHtml(model.anchorYear || "")}"></label><button class="link" type="button" data-action="meal-import-year">Visa datum</button>` : "";
+    const warnings = (model.warnings || []).map((warning) => `<p class="form-hint">${escapeHtml(warning.text)}</p>`).join("");
+    const weeks = (model.weeks || []).map((week) => {
+      const rows = week.rows.map((row) => {
+        const checked = row.approve ? "checked" : "";
+        const existing = row.existing ? `<p class="soft-sub">Redan sparad: ${escapeHtml(row.existing)}</p>` : "";
+        const reason = row.reason ? `<p class="form-hint">${escapeHtml(row.reason)}</p>` : "";
+        return `<div class="meal-review-day"><label class="check"><input type="checkbox" name="approve_${escapeHtml(row.id)}" ${checked}> ${escapeHtml(ArtanMenu.WEEKDAY_NAMES[row.weekday] || "Dag")} ${escapeHtml(row.served_on)}</label><input type="date" name="date_${escapeHtml(row.id)}" value="${escapeHtml(row.served_on)}"><textarea name="dish_${escapeHtml(row.id)}">${escapeHtml(row.body || "")}</textarea>${existing}${reason}</div>`;
+      }).join("");
+      return `<section class="card"><h2>Vecka från ${escapeHtml(week.monday)}</h2>${rows}</section>`;
+    }).join("");
+    const loose = (model.loose || []).length
+      ? `<section class="card"><h2>Utan säkert datum</h2>${model.loose.map((row) => `<div class="meal-review-day"><p>${escapeHtml(row.source)}</p><label class="check"><input type="checkbox" name="approve_${escapeHtml(row.id)}"> Spara när datumet är ifyllt</label><input type="date" name="date_${escapeHtml(row.id)}"><textarea name="dish_${escapeHtml(row.id)}">${escapeHtml(row.body || "")}</textarea><p class="form-hint">${escapeHtml(row.note || "Raden sparas inte förrän den har ett datum.")}</p></div>`).join("")}</section>`
+      : "";
+    return `<button class="hub-back" type="button" data-action="meal-import-back">‹ Tillbaka</button><h1 class="h1">Granska rätter</h1><p class="page-sub">${escapeHtml(model.fileName || "Exempel")}. Ingenting sparas förrän du kryssar i dagar och trycker på knappen.</p>${model.example ? `<p class="notice" role="status">Testversion. Exemplet sparar inte.</p>` : ""}${model.termFixture ? `<p class="notice" role="status">Testversion av en hel termin. Ingenting sparas. Den riktiga databasen har inte den här räckvidden förrän migreringen är aktiverad.</p>` : ""}${pendingNote}${warnings}${year}<form class="form-stack" data-form="meal-import-review">${weeks}${loose}<h2>Originalfil</h2><p class="form-hint">${fileHint}</p><label class="check"><input type="checkbox" name="attach_file"> Bifoga originalfilen</label><div class="form-grid"><label>Från<input type="date" name="file_start"></label><label>Till<input type="date" name="file_end"></label></div><button class="primary" type="submit">Spara granskade rätter</button></form>`;
+  }
+
   function editorHtml(model) {
     const schools = model.schools || [];
     const schoolField = schools.length > 1
@@ -302,7 +329,7 @@
       ? `<p class="meal-file">Nuvarande fil: ${escapeHtml(menu.display_name || "Matsedel")} · ${escapeHtml(menu.starts_on)}–${escapeHtml(menu.ends_on)}. ${menu.example ? "Exempelfil, kan inte öppnas." : ""}</p><button class="link" type="button" data-action="meal-clear-menu">Ta bort filen</button>`
       : `<p class="form-hint">Ingen fil är kopplad till den här veckan.</p>`;
     const disabled = model.locked ? "disabled" : "";
-    return `<h1 class="h1">Matsedel</h1><p class="page-sub">En gemensam matsedel för förskolan.</p><form class="form-stack" data-form="meal-week">${schoolField}<div class="meal-week-switch"><button class="link" type="button" data-action="meal-shift" data-start="${escapeHtml(model.previousWeek)}">Föregående vecka</button><button class="link" type="button" data-action="meal-shift" data-start="${escapeHtml(model.nextWeek)}">Nästa vecka</button></div><p class="kicker">Vecka ${escapeHtml(model.weekStart)}–${escapeHtml(model.weekEnd)}</p>${days}<h2>Befintlig matsedel</h2><p class="form-hint">Ladda upp en PDF eller bild som redan finns. Den kopplas till datumen nedan. Ärtan läser inte ut några rätter ur filen.</p><div class="form-grid"><label>Från<input name="menu_starts" type="date" value="${escapeHtml(menu?.starts_on || model.weekStart)}" required></label><label>Till<input name="menu_ends" type="date" value="${escapeHtml(menu?.ends_on || model.weekEnd)}" required></label></div><label>PDF eller bild<input name="menu_file" type="file" accept="application/pdf,image/*"></label><input type="hidden" name="menu_id" value="${escapeHtml(menu?.id || "")}">${currentFile}<button class="primary" type="submit" ${disabled}>Spara veckan</button></form>`;
+    return `<h1 class="h1">Matsedel</h1><p class="page-sub">En gemensam matsedel för förskolan.</p>${importEntryHtml()}<form class="form-stack" data-form="meal-week">${schoolField}<div class="meal-week-switch"><button class="link" type="button" data-action="meal-shift" data-start="${escapeHtml(model.previousWeek)}">Föregående vecka</button><button class="link" type="button" data-action="meal-shift" data-start="${escapeHtml(model.nextWeek)}">Nästa vecka</button></div><p class="kicker">Vecka ${escapeHtml(model.weekStart)}–${escapeHtml(model.weekEnd)}</p>${days}<h2>Befintlig matsedel</h2><p class="form-hint">Spara veckan bifogar filen utan att läsa rätter. Använd Läs in rätter för en PDF med text.</p><div class="form-grid"><label>Från<input name="menu_starts" type="date" value="${escapeHtml(menu?.starts_on || model.weekStart)}" required></label><label>Till<input name="menu_ends" type="date" value="${escapeHtml(menu?.ends_on || model.weekEnd)}" required></label></div><label>PDF eller bild<input name="menu_file" type="file" accept="application/pdf,image/*"></label><input type="hidden" name="menu_id" value="${escapeHtml(menu?.id || "")}">${currentFile}<button class="primary" type="submit" ${disabled}>Spara veckan</button></form>`;
   }
 
   async function transcodeJpeg(file, maxEdge, maxBytes) {
@@ -367,6 +394,7 @@
     todayCardHtml,
     weekHtml,
     editorHtml,
+    importReviewHtml,
     preparedMenuFile,
     transcodeJpeg,
   };
