@@ -77,6 +77,7 @@ function dashboard(iso) {
     renderPickupWeekNudge: () => "",
     renderPassRenewalCards: () => "",
     renderParentTermSchedules: () => "",
+    renderMealTodayCard: () => "",
     renderSiblingRequestForm: () => "",
     renderPost: () => "",
     emptyState: () => "",
@@ -120,6 +121,7 @@ assert(monday.reminders.some((item) => item.target === "daily-plan"), "vardagen 
 const roleContext = {};
 vm.createContext(roleContext);
 vm.runInContext([
+  readFileSync(new URL("../meals.js", import.meta.url), "utf8"),
   functionSource("allowedViewsForRole"),
   functionSource("defaultViewForRole"),
 ].join("\n"), roleContext);

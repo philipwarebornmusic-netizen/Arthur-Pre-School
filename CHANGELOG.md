@@ -1,5 +1,15 @@
 # Ändringslogg
 
+## 2026-11-08 — Matsedel
+
+- Föräldrar ser Idag serveras på Min dag, eller Nästa servering på helgen, och öppnar hela veckan därifrån. Hämtningsschemat är kvar.
+- Personal och administratör får Matsedel som en egen flik, direkt efter Närvaro. Närvaro är fortfarande startsidan. Översikt ligger under Mer för administratören, och Barn ligger under Mer för personalen. Menyn är fortfarande fyra flikar.
+- En förskola har en gemensam matsedel. Personal skriver korta rätter per vardag. En befintlig PDF eller bild kan kopplas till ett valt datumintervall och öppnas även när inga rätter är ifyllda. Filen blir inte tolkad till rätter.
+- Bilder på maten är valfria. Uppladdningen säger att bilden bara får visa mat, inga barn.
+- `supabase/migrations/20261108190711_meal_menus.sql` är inte körd. Tills den är godkänd och applicerad säger skärmen att matsedeln inte är aktiverad. `?demo=matsedel` visar en exempelvy som inte sparar något.
+- En ny fil laddas upp på en egen sökväg. Den gamla filen tas bort först efter att den nya referensen är sparad. Ett misslyckat byte lämnar den tidigare filen kvar. Borttagning tillåts för personal och administratör vid `storage.object.delete` och `storage.object.delete_many`, inte för vårdnadshavare och inte som listning.
+- Migreringen ändrar inte `storage.objects`. Den kontrollerar bara att row level security redan är aktiverat, eftersom den roll som kör migreringen inte äger tabellen.
+
 ## 2026-11-01 — Mjuka kort
 
 - Hela appen använder samma lugna yta: sandbakgrund, Inter i brödtext, Newsreader i stora rubriker, mjuka kort utan ram och utan skugga, och en solgul knapp per vy.
