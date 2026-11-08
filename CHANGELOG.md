@@ -7,6 +7,7 @@
 - En förskola har en gemensam matsedel. Personal skriver korta rätter per vardag. En befintlig PDF eller bild kan kopplas till ett valt datumintervall och öppnas även när inga rätter är ifyllda. Filen blir inte tolkad till rätter.
 - Bilder på maten är valfria. Uppladdningen säger att bilden bara får visa mat, inga barn.
 - `supabase/migrations/20261108190711_meal_menus.sql` är inte körd. Tills den är godkänd och applicerad säger skärmen att matsedeln inte är aktiverad. `?demo=matsedel` visar en exempelvy som inte sparar något.
+- En ny fil laddas upp på en egen sökväg. Den gamla filen tas bort först efter att den nya referensen är sparad. Ett misslyckat byte lämnar den tidigare filen kvar. Borttagning tillåts för personal och administratör vid `storage.object.delete` och `storage.object.delete_many`, inte för vårdnadshavare och inte som listning.
 
 ## 2026-11-01 — Mjuka kort
 

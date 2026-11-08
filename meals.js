@@ -147,12 +147,20 @@
     return text.startsWith("%PDF-");
   }
 
-  function menuPath(organizationId, preschoolId, menuId, kind) {
-    return `${organizationId}/${preschoolId}/${menuId}.${kind === "pdf" ? "pdf" : "jpg"}`;
+  function menuPath(organizationId, preschoolId, objectId, kind) {
+    return `${organizationId}/${preschoolId}/${objectId}.${kind === "pdf" ? "pdf" : "jpg"}`;
   }
 
-  function photoPath(organizationId, preschoolId, iso) {
-    return `${organizationId}/${preschoolId}/${iso}.jpg`;
+  function photoPath(organizationId, preschoolId, iso, objectId) {
+    return `${organizationId}/${preschoolId}/${iso}--${objectId}.jpg`;
+  }
+
+  function replaceCleanup(previousPath, stagedPath, attached) {
+    if (!attached) return { remove: stagedPath ? [stagedPath] : [], keep: previousPath || "" };
+    return {
+      remove: previousPath && previousPath !== stagedPath ? [previousPath] : [],
+      keep: stagedPath || "",
+    };
   }
 
   function downloadUrl(signedUrl, mime, displayName) {
@@ -348,6 +356,7 @@
     pdfHeaderOk,
     menuPath,
     photoPath,
+    replaceCleanup,
     downloadUrl,
     tabsForRole,
     buriedViews,

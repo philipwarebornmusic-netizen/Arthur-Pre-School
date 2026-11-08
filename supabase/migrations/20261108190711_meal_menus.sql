@@ -150,8 +150,14 @@ create table if not exists public.meal_menus (
     and display_name !~ '[[:cntrl:]\\/]'
   ),
   constraint meal_menus_path_shape check (
-    storage_path = organization_id::text || '/' || preschool_id::text || '/' || id::text
-      || case mime_type when 'application/pdf' then '.pdf' else '.jpg' end
+    split_part(storage_path, '/', 1) = organization_id::text
+    and split_part(storage_path, '/', 2) = preschool_id::text
+    and split_part(storage_path, '/', 3) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.](pdf|jpg)$'
+    and split_part(storage_path, '/', 4) = ''
+    and (
+      (mime_type = 'application/pdf' and right(storage_path, 4) = '.pdf')
+      or (mime_type = 'image/jpeg' and right(storage_path, 4) = '.jpg')
+    )
   ),
   constraint meal_menus_no_overlap exclude using gist (
     preschool_id with =,
@@ -176,7 +182,10 @@ create table if not exists public.meal_days (
   constraint meal_days_photo check (
     (photo_path is null and photo_byte_size is null)
     or (
-      photo_path = organization_id::text || '/' || preschool_id::text || '/' || to_char(served_on, 'YYYY-MM-DD') || '.jpg'
+      photo_path ~ (
+        '^' || organization_id::text || '/' || preschool_id::text || '/' || to_char(served_on, 'YYYY-MM-DD')
+        || '--[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]jpg$'
+      )
       and photo_byte_size between 1 and 2097152
     )
   )
@@ -245,15 +254,16 @@ begin
       return false;
     end if;
   elsif bucket = 'meal-photos' then
-    if file_part !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[.]jpg$' then
+    if file_part !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}--[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]jpg$' then
       return false;
     end if;
     begin
-      served := split_part(file_part, '.', 1)::date;
+      served := left(file_part, 10)::date;
     exception when others then
       return false;
     end;
-    if extract(isodow from served) not between 1 and 5 then
+    if to_char(served, 'YYYY-MM-DD') is distinct from left(file_part, 10)
+      or extract(isodow from served) not between 1 and 5 then
       return false;
     end if;
   else
@@ -464,11 +474,9 @@ begin
   if range_start < current_date - 14 or range_end > current_date + 120 then
     raise exception 'Datumet ligger utanför perioden som kan redigeras';
   end if;
-  if not private.meal_object_allowed('meal-menus', object_path, true) then
-    raise exception 'Filens sökväg är ogiltig';
-  end if;
-  if object_path <> public.current_organization_id()::text || '/' || target_preschool_id::text || '/' || target_menu_id::text || '.pdf'
-    and object_path <> public.current_organization_id()::text || '/' || target_preschool_id::text || '/' || target_menu_id::text || '.jpg' then
+  if not private.meal_object_allowed('meal-menus', object_path, true)
+    or split_part(object_path, '/', 1) is distinct from public.current_organization_id()::text
+    or split_part(object_path, '/', 2) is distinct from target_preschool_id::text then
     raise exception 'Filens sökväg är ogiltig';
   end if;
   select meta.mime_type, meta.byte_size into found_mime, found_size
@@ -572,8 +580,11 @@ begin
     or served < current_date - 14 or served > current_date + 120 then
     raise exception 'Bilden gäller en vardag inom perioden som kan redigeras';
   end if;
-  expected := public.current_organization_id()::text || '/' || target_preschool_id::text || '/' || to_char(served, 'YYYY-MM-DD') || '.jpg';
-  if object_path is distinct from expected or not private.meal_object_allowed('meal-photos', object_path, true) then
+  if object_path !~ (
+      '^' || public.current_organization_id()::text || '/' || target_preschool_id::text || '/'
+      || to_char(served, 'YYYY-MM-DD') || '--[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]jpg$'
+    )
+    or not private.meal_object_allowed('meal-photos', object_path, true) then
     raise exception 'Bildens sökväg är ogiltig';
   end if;
   select meta.mime_type, meta.byte_size into found_mime, found_size
@@ -777,6 +788,22 @@ using (
   and private.meal_object_allowed('meal-menus', name, false)
 );
 
+-- DELETE /object/{bucket} runs as storage.object.delete_many and uses
+-- DELETE ... RETURNING. Postgres also applies SELECT policies to that delete,
+-- so staff and admins need a narrow SELECT allowance for the delete operations.
+-- Parents stay on the read policy above and cannot satisfy for_write.
+drop policy if exists "meal menus object delete read" on storage.objects;
+create policy "meal menus object delete read" on storage.objects
+for select to authenticated
+using (
+  bucket_id = 'meal-menus'
+  and storage.allow_any_operation(array[
+    'storage.object.delete',
+    'storage.object.delete_many'
+  ])
+  and private.meal_object_allowed('meal-menus', name, true)
+);
+
 drop policy if exists "meal menus object insert" on storage.objects;
 create policy "meal menus object insert" on storage.objects
 for insert to authenticated
@@ -821,6 +848,18 @@ using (
     'storage.object.upload_update'
   ])
   and private.meal_object_allowed('meal-photos', name, false)
+);
+
+drop policy if exists "meal photos object delete read" on storage.objects;
+create policy "meal photos object delete read" on storage.objects
+for select to authenticated
+using (
+  bucket_id = 'meal-photos'
+  and storage.allow_any_operation(array[
+    'storage.object.delete',
+    'storage.object.delete_many'
+  ])
+  and private.meal_object_allowed('meal-photos', name, true)
 );
 
 drop policy if exists "meal photos object insert" on storage.objects;

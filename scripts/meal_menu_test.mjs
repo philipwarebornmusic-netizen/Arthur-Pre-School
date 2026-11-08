@@ -80,6 +80,13 @@ assert.equal(meals.pdfHeaderOk("%PDF-1.7\n"), true);
 assert.equal(meals.pdfHeaderOk("<html"), false);
 assert.equal(meals.downloadUrl("https://storage.example/sign?token=abc", "application/pdf", unsafe).includes("download="), true);
 assert.equal(meals.menuPath("org", "school", "menu", "pdf"), "org/school/menu.pdf");
+assert.equal(meals.photoPath("org", "school", "2026-11-10", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), "org/school/2026-11-10--aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg");
+const previous = "org/school/old.pdf";
+const staged = "org/school/new.pdf";
+assert.deepEqual(meals.replaceCleanup(previous, staged, false), { remove: [staged], keep: previous });
+assert.deepEqual(meals.replaceCleanup(previous, staged, true), { remove: [previous], keep: staged });
+assert.deepEqual(meals.replaceCleanup("", staged, false), { remove: [staged], keep: "" });
+assert.deepEqual(meals.replaceCleanup(previous, previous, true), { remove: [], keep: previous });
 
 const card = meals.todayCardHtml(fileOnly.todayCard);
 assert.equal(card.includes("soft-value"), false);

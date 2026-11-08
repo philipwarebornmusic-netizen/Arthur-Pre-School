@@ -3105,9 +3105,15 @@ async function loadMeals() {
 async function uploadMealObject(bucket, path, blob, mime) {
   await request(`/storage/v1/object/${bucket}/${encodedStoragePath(path)}`, {
     method: "POST",
-    headers: { "Content-Type": mime, "x-upsert": "true" },
+    headers: { "Content-Type": mime, "x-upsert": "false" },
     body: blob,
   });
+}
+
+async function removeMealObjects(bucket, paths) {
+  for (const path of paths) {
+    try { await deleteMealObject(bucket, path); } catch { /* A later clear can retry an unreferenced file. */ }
+  }
 }
 
 async function deleteMealObject(bucket, path) {
@@ -3130,7 +3136,8 @@ async function saveMealWeek(form, values) {
   if (file) {
     const prepared = await ArtanMeals.preparedMenuFile(file);
     const menuId = values.menu_id || crypto.randomUUID();
-    const path = ArtanMeals.menuPath(state.profile.organization_id, preschoolId, menuId, prepared.kind);
+    const previousPath = (mealBundle(preschoolId).menus || []).find((menu) => menu.id === values.menu_id)?.storage_path || "";
+    const path = ArtanMeals.menuPath(state.profile.organization_id, preschoolId, crypto.randomUUID(), prepared.kind);
     await uploadMealObject("meal-menus", path, prepared.blob, prepared.mime);
     try {
       await rpc("attach_meal_menu", {
@@ -3142,9 +3149,10 @@ async function saveMealWeek(form, values) {
         raw_display_name: file.name,
       });
     } catch (error) {
-      try { await deleteMealObject("meal-menus", path); } catch { /* The row was not saved. */ }
+      await removeMealObjects("meal-menus", ArtanMeals.replaceCleanup(previousPath, path, false).remove);
       throw error;
     }
+    await removeMealObjects("meal-menus", ArtanMeals.replaceCleanup(previousPath, path, true).remove);
   } else if (values.menu_id) {
     const existing = (mealBundle(preschoolId).menus || []).find((menu) => menu.id === values.menu_id);
     if (existing?.storage_path && (existing.starts_on !== values.menu_starts || existing.ends_on !== values.menu_ends)) {
@@ -3162,14 +3170,16 @@ async function saveMealWeek(form, values) {
     const photo = form.querySelector(`input[name="day_photo_${iso}"]`)?.files?.[0];
     if (!photo) continue;
     const blob = await ArtanMeals.transcodeJpeg(photo, 1280, 2 * 1024 * 1024);
-    const path = ArtanMeals.photoPath(state.profile.organization_id, preschoolId, iso);
+    const previousPath = (mealBundle(preschoolId).days || []).find((day) => day.served_on === iso)?.photo_path || "";
+    const path = ArtanMeals.photoPath(state.profile.organization_id, preschoolId, iso, crypto.randomUUID());
     await uploadMealObject("meal-photos", path, blob, "image/jpeg");
     try {
       await rpc("attach_meal_photo", { target_preschool_id: preschoolId, served: iso, object_path: path });
     } catch (error) {
-      try { await deleteMealObject("meal-photos", path); } catch { /* The row was not saved. */ }
+      await removeMealObjects("meal-photos", ArtanMeals.replaceCleanup(previousPath, path, false).remove);
       throw error;
     }
+    await removeMealObjects("meal-photos", ArtanMeals.replaceCleanup(previousPath, path, true).remove);
   }
   await loadMeals();
 }

@@ -57,6 +57,22 @@ def as_user(user_id, sql):
     return q(f"select set_config('request.jwt.claim.sub', '{user_id}', false); set role authenticated; {sql}")
 
 
+def as_user_op(user_id, operation, sql):
+    return q(
+        "select set_config('request.jwt.claim.sub', '" + user_id + "', false); "
+        "select set_config('storage.operation', '" + operation + "', false); "
+        "set role authenticated; " + sql
+    )
+
+
+def delete_count_sql(bucket, name):
+    return (
+        "with removed as (delete from storage.objects "
+        f"where bucket_id = '{bucket}' and name = '{name}' returning name) "
+        "select count(*)::text from removed"
+    )
+
+
 def expect_error(user_id, sql, snippet):
     completed = psql(
         f"select set_config('request.jwt.claim.sub', '{user_id}', false); set role authenticated; {sql}",
@@ -152,7 +168,26 @@ create table storage.objects (
   metadata jsonb
 );
 create or replace function storage.allow_any_operation(operations text[])
-returns boolean language sql immutable as $$ select true $$;
+returns boolean
+language sql
+stable
+as $$
+  with current_operation as (
+    select nullif(current_setting('storage.operation', true), '') as operation
+  )
+  select exists (
+    select 1
+    from unnest(coalesce(operations, '{{}}'::text[])) as candidate
+    cross join current_operation
+    where current_operation.operation is not null
+      and candidate <> ''
+      and (
+        candidate = current_operation.operation
+        or regexp_replace(candidate, '^storage[.]', '') = regexp_replace(current_operation.operation, '^storage[.]', '')
+      )
+  );
+$$;
+grant execute on function storage.allow_any_operation(text[]) to authenticated;
 
 insert into auth.users (id) values
   ('{ADMIN_A}'), ('{STAFF_A1}'), ('{STAFF_A2}'), ('{PARENT_A1}'), ('{PARENT_A2}'), ('{ADMIN_B}');
@@ -297,8 +332,48 @@ def main():
     expect_error(ADMIN_B, f"select public.attach_meal_menu('{MENU_A1}'::uuid, '{SCHOOL_A1}'::uuid, '{monday}'::date, '{friday}'::date, '{path}', 'x.pdf')", "behörighet")
     q(f"insert into storage.objects (bucket_id, name, metadata) values ('meal-menus', '{ORG_A}/{SCHOOL_A1}/{MENU_OVERLAP}.pdf', jsonb_build_object('mimetype', 'application/pdf', 'size', 100))")
     expect_error(STAFF_A1, f"select public.attach_meal_menu('{MENU_OVERLAP}'::uuid, '{SCHOOL_A1}'::uuid, '{monday}'::date, '{friday}'::date, '{ORG_A}/{SCHOOL_A1}/{MENU_OVERLAP}.pdf', 'igen.pdf')", "redan en matsedel")
+    listed_objects = as_user_op(STAFF_A1, "storage.object.list", "select count(*)::text from storage.objects where bucket_id = 'meal-menus'")
+    if listed_objects != "0":
+        fail(f"staff could list meal files: {listed_objects}")
+    parent_read = as_user_op(PARENT_A1, "storage.object.get_authenticated", f"select count(*)::text from storage.objects where name = '{path}'")
+    if parent_read != "1":
+        fail(f"parent could not read the linked menu file: {parent_read}")
+    staged = f"{ORG_A}/{SCHOOL_A1}/44444444-4444-4444-8444-444444444444.pdf"
+    as_user_op(STAFF_A1, "storage.object.upload", f"insert into storage.objects (bucket_id, name, metadata) values ('meal-menus', '{staged}', jsonb_build_object('mimetype', 'application/pdf', 'size', 50))")
+    hidden_stage = as_user_op(PARENT_A1, "storage.object.get_authenticated", f"select count(*)::text from storage.objects where name = '{staged}'")
+    if hidden_stage != "0":
+        fail("parent could read a file that is not attached")
+    expect_error(STAFF_A1, f"select public.attach_meal_menu('55555555-5555-4555-8555-555555555555', '{SCHOOL_A1}', '{friday}'::date, '{monday}'::date, '{staged}', 'fel.pdf')", "intervall")
+    if q(f"select storage_path from public.meal_menus where id = '{MENU_A1}'") != path or q(f"select count(*)::text from storage.objects where name in ('{path}', '{staged}')") != "2":
+        fail("a rejected replacement changed the saved file")
+    if as_user_op(PARENT_A1, "storage.object.delete_many", delete_count_sql("meal-menus", staged)) != "0":
+        fail("parent deleted a staged menu file")
+    if as_user_op(STAFF_A2, "storage.object.delete_many", delete_count_sql("meal-menus", staged)) != "0":
+        fail("staff deleted a file outside their preschool")
+    if as_user_op(STAFF_A1, "storage.object.delete_many", delete_count_sql("meal-menus", staged)) != "1" or q(f"select count(*)::text from storage.objects where name = '{path}'") != "1":
+        fail("staff cleanup of the rejected file removed the saved file")
+    replacement = f"{ORG_A}/{SCHOOL_A1}/66666666-6666-4666-8666-666666666666.jpg"
+    q(f"insert into storage.objects (bucket_id, name, metadata) values ('meal-menus', '{replacement}', jsonb_build_object('mimetype', 'image/jpeg', 'size', 80))")
+    as_user(STAFF_A1, f"select public.attach_meal_menu('{MENU_A1}', '{SCHOOL_A1}', '{monday}'::date, '{friday}'::date, '{replacement}', 'veckobild.jpg')")
+    if q(f"select storage_path from public.meal_menus where id = '{MENU_A1}'") != replacement or q(f"select count(*)::text from storage.objects where name = '{path}'") != "1":
+        fail("a valid image replacement did not keep the previous file until removal")
+    if as_user_op(STAFF_A1, "storage.object.delete", delete_count_sql("meal-menus", path)) != "1":
+        fail("staff could not remove the previous menu file after the reference moved")
+    photo_old = f"{ORG_A}/{SCHOOL_A1}/{tuesday}--77777777-7777-4777-8777-777777777777.jpg"
+    photo_new = f"{ORG_A}/{SCHOOL_A1}/{tuesday}--88888888-8888-4888-8888-888888888888.jpg"
+    q(f"insert into storage.objects (bucket_id, name, metadata) values ('meal-photos', '{photo_old}', jsonb_build_object('mimetype', 'image/jpeg', 'size', 40))")
+    as_user(STAFF_A1, f"select public.attach_meal_photo('{SCHOOL_A1}', '{tuesday}'::date, '{photo_old}')")
+    if as_user_op(PARENT_A1, "storage.object.delete_many", delete_count_sql("meal-photos", photo_old)) != "0" or q(f"select count(*)::text from storage.objects where name = '{photo_old}'") != "1":
+        fail("parent deleted a food photo")
+    q(f"insert into storage.objects (bucket_id, name, metadata) values ('meal-photos', '{photo_new}', jsonb_build_object('mimetype', 'image/jpeg', 'size', 41))")
+    as_user(STAFF_A1, f"select public.attach_meal_photo('{SCHOOL_A1}', '{tuesday}'::date, '{photo_new}')")
+    if q(f"select photo_path from public.meal_days where served_on = '{tuesday}'") != photo_new:
+        fail("food photo replacement did not keep a reference")
+    if as_user_op(STAFF_A1, "storage.object.delete_many", delete_count_sql("meal-photos", photo_old)) != "1" or q(f"select count(*)::text from storage.objects where name = '{photo_new}'") != "1":
+        fail("removing the previous food photo removed the current one")
     expect_error(STAFF_A1, f"select public.clear_meal_menu('{MENU_A1}')", "Ta bort filen först")
-    q(f"delete from storage.objects where name = '{path}'")
+    if as_user_op(STAFF_A1, "storage.object.delete_many", delete_count_sql("meal-menus", replacement)) != "1":
+        fail("staff could not delete the current menu through the delete_many policy")
     as_user(STAFF_A1, f"select public.clear_meal_menu('{MENU_A1}')")
     if q(f"select count(*)::text from public.meal_menus where id = '{MENU_A1}'") != "0":
         fail("clear left the menu row behind")

@@ -45,6 +45,12 @@ def main():
         fail("service_role must not receive the meal rpc")
     if "storage.object.list" in code:
         fail("object listing must stay out of the meal read policy")
+    if sql.count("'storage.object.delete_many'") < 2 or sql.count("\n    'storage.object.delete',") < 2:
+        fail("delete and delete_many must be selectable for both private buckets")
+    if "meal menus object delete read" not in sql or "meal photos object delete read" not in sql:
+        fail("delete SELECT policies are missing")
+    if sql.count("meal_object_allowed('meal-menus', name, true)") < 1 or sql.count("meal_object_allowed('meal-photos', name, true)") < 1:
+        fail("delete SELECT must require an editor")
     if "for insert to authenticated" not in code or "for update to authenticated" not in code or "for select to authenticated" not in code:
         fail("storage upsert needs insert, select, and update policies")
     if "current_role() = 'parent'" in code and "meal_preschool_editable" in code:
