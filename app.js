@@ -73,6 +73,8 @@ const state = {
   mealPreschoolId: "",
   mealDemo: false,
   mealDemoToday: "",
+  mealImport: null,
+  mealImportCancel: false,
   childPhotoUrls: {},
   contactPhotoUrls: {},
   selectedChildId: null,
@@ -1111,6 +1113,7 @@ async function logout() {
       mealBundles: {},
       mealWeekStart: "",
       mealPreschoolId: "",
+      mealImport: null,
       childPhotoUrls: {},
       contactPhotoUrls: {},
       termEditor: null,
@@ -1403,6 +1406,7 @@ function clearLoadedData() {
     mealBundles: {},
     mealWeekStart: "",
     mealPreschoolId: "",
+    mealImport: null,
     childPhotoUrls: {},
     contactPhotoUrls: {},
     selectedChildId: null,
@@ -3014,6 +3018,22 @@ function renderMeals() {
   const inactive = !state.mealsReady && !state.mealDemo
     ? `<p class="notice error" role="status">Matsedeln är inte aktiverad i databasen ännu. Inget kan sparas förrän migreringen är godkänd och körd.</p>`
     : "";
+  if (state.mealImport && state.profile.role !== "parent") {
+    if (state.mealImport.status === "reading") {
+      return `${noticeHtml()}<h1 class="h1">Läser menyn</h1><p class="page-sub">${esc(state.mealImport.progress || "Filen läses i webbläsaren.")}</p><button class="link" type="button" data-action="meal-import-cancel">Avbryt</button>`;
+    }
+    if (state.mealImport.status === "review") {
+      const review = ArtanMenu.reviewRows(state.mealImport.parsed, {
+        today: todayIso(),
+        existing: Object.fromEntries((mealBundle(preschoolId).days || []).map((day) => [day.served_on, day.body || ""])),
+        closures: mealClosedDates(preschoolId),
+      });
+      return `${noticeHtml()}${ArtanMeals.importReviewHtml({ ...review, anchorYear: state.mealImport.anchorYear, fileName: state.mealImport.fileName, example: state.mealDemo || state.mealImport.example })}`;
+    }
+    if (state.mealImport.status === "unsupported" || state.mealImport.status === "error") {
+      return `${noticeHtml()}<h1 class="h1">Matsedel</h1><p class="notice error" role="status">${esc(state.mealImport.message)}</p><button class="link" type="button" data-action="meal-import-back">Tillbaka</button>`;
+    }
+  }
   if (state.profile.role === "parent") {
     return `${noticeHtml()}${inactive}${ArtanMeals.weekHtml({
       today: todayIso(),
@@ -3100,6 +3120,163 @@ async function loadMeals() {
     throw error;
   }
   state.mealBundles = bundles;
+}
+
+async function ensureMealRange(preschoolId, start, end) {
+  if (!preschoolId || state.mealDemo || !state.mealsReady || !start || !end || end < start) return;
+  let cursor = start;
+  while (cursor <= end) {
+    const chunkEnd = ArtanMeals.addDays(cursor, 120);
+    const rangeEnd = chunkEnd < end ? chunkEnd : end;
+    const payload = await rpc("list_preschool_meals", {
+      target_preschool_id: preschoolId,
+      range_start: cursor,
+      range_end: rangeEnd,
+    });
+    const signed = await signMealBundle(payload || {});
+    const bundle = mealBundle(preschoolId);
+    const days = new Map((bundle.days || []).map((day) => [day.served_on, day]));
+    for (const day of signed.days) days.set(day.served_on, day);
+    const menus = [...(bundle.menus || [])];
+    for (const menu of signed.menus) {
+      if (!menus.some((item) => item.id === menu.id)) menus.push(menu);
+    }
+    state.mealBundles[preschoolId] = { ...bundle, days: [...days.values()], menus };
+    cursor = ArtanMeals.addDays(rangeEnd, 1);
+  }
+}
+
+function openMenuReview(parsed, file, fileName, example = false, sourceText = "") {
+  state.mealImport = { status: "review", parsed, file: file || null, fileName, anchorYear: "", example, sourceText };
+  state.view = "meals";
+}
+
+async function readMealImport(file) {
+  state.mealImportCancel = false;
+  state.mealImport = { status: "reading", fileName: file.name, progress: "Filen läses i webbläsaren." };
+  state.view = "meals";
+  render();
+  try {
+    if (file.size > ArtanMenu.MAX_PDF_BYTES) {
+      state.mealImport = { status: "error", fileName: file.name, message: "Filen är större än 8 MB." };
+      render();
+      return;
+    }
+    const header = new TextDecoder().decode(new Uint8Array(await file.slice(0, 5).arrayBuffer()));
+    const decision = ArtanMenu.importDecision({ name: file.name, type: file.type, size: file.size, header });
+    if (decision.kind !== "pdf") {
+      state.mealImport = { status: decision.kind === "image" ? "unsupported" : "error", fileName: file.name, message: decision.message };
+      render();
+      return;
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const text = await ArtanMenuExtract.extractPdfText(bytes, {
+      signal: { get aborted() { return state.mealImportCancel; } },
+      onProgress(progress) {
+        if (!state.mealImport || state.mealImport.status !== "reading") return;
+        state.mealImport.progress = `Läser sida ${progress.page} av ${progress.total}.`;
+        render();
+      },
+    });
+    if (state.mealImportCancel) {
+      state.mealImport = null;
+      render();
+      return;
+    }
+    if (String(text || "").trim().length < 20) {
+      state.mealImport = { status: "unsupported", fileName: file.name, file, message: "Ingen text hittades i PDF:en. En skannad fil läses inte här. Rätterna behöver skrivas in, eller så behövs en PDF med text." };
+      render();
+      return;
+    }
+    const parsed = ArtanMenu.parseMenuText(text, {});
+    const dates = parsed.items.map((item) => item.served_on).filter(Boolean).sort();
+    if (!state.mealDemo && dates.length) {
+      try {
+        await ensureMealRange(mealPreschoolForView(), dates[0], dates.at(-1));
+      } catch (error) {
+        parsed.warnings.push({ code: "existing", text: `Befintliga rätter kunde inte hämtas: ${error.message}` });
+      }
+    }
+    openMenuReview(parsed, file, file.name, false, text);
+    render();
+  } catch (error) {
+    if (state.mealImportCancel) {
+      state.mealImport = null;
+    } else {
+      state.mealImport = { status: "error", fileName: file.name, message: error.message };
+    }
+    render();
+  }
+}
+
+async function saveMealImport(form) {
+  const data = new FormData(form);
+  const rows = state.mealImport?.parsed?.items || [];
+  const existing = Object.fromEntries((mealBundle(mealPreschoolForView()).days || []).map((day) => [day.served_on, day.body || ""]));
+  const approved = [];
+  for (const row of rows) {
+    if (data.get(`approve_${row.id}`) !== "on") continue;
+    const served_on = String(data.get(`date_${row.id}`) || row.served_on || "");
+    const body = String(data.get(`dish_${row.id}`) || "").trim();
+    const assessment = ArtanMenu.assessRow({
+      served_on,
+      body,
+      existing: existing[served_on] || "",
+      today: todayIso(),
+      closure: mealClosedDates(mealPreschoolForView()).includes(served_on),
+      weekday: served_on === row.served_on ? row.weekday : null,
+    });
+    if (!assessment.savable) throw new Error(`${served_on || "En rad"}: ${assessment.reason}`);
+    approved.push({ served_on, body });
+  }
+  if (!approved.length) throw new Error("Inga dagar är ikryssade.");
+  const planned = ArtanMenu.batches(approved);
+  for (const batch of planned) {
+    if (batch.days.length > 5) throw new Error(`Veckan som börjar ${batch.monday} har fler än fem dagar.`);
+    if (new Set(batch.days.map((day) => day.served_on)).size !== batch.days.length) {
+      throw new Error(`Samma dag är med flera gånger i veckan som börjar ${batch.monday}.`);
+    }
+  }
+  if (state.mealDemo) {
+    state.notice = { type: "success", text: "Exemplet sparar inte de granskade rätterna." };
+    return;
+  }
+  if (!state.mealsReady) throw new Error("Matsedeln är inte aktiverad i databasen ännu.");
+  const preschoolId = mealPreschoolForView();
+  try {
+    await ArtanMenu.saveApprovedWeeks(planned, async (batch) => {
+      await rpc("save_meal_days", { target_preschool_id: preschoolId, meal_days: batch.days });
+    });
+  } catch (error) {
+    await loadMeals();
+    throw error;
+  }
+  if (data.get("attach_file") === "on") {
+    const start = String(data.get("file_start") || "");
+    const end = String(data.get("file_end") || "");
+    const problem = ArtanMenu.fileRangeError(start, end, todayIso());
+    if (problem) throw new Error(`Rätterna är sparade. Filen bifogades inte: ${problem}`);
+    const file = state.mealImport?.file;
+    if (!file) throw new Error("Rätterna är sparade. Exempelfilen kan inte bifogas.");
+    const prepared = await ArtanMeals.preparedMenuFile(file);
+    const path = ArtanMeals.menuPath(state.profile.organization_id, preschoolId, crypto.randomUUID(), prepared.kind);
+    await uploadMealObject("meal-menus", path, prepared.blob, prepared.mime);
+    try {
+      await rpc("attach_meal_menu", {
+        target_menu_id: crypto.randomUUID(),
+        target_preschool_id: preschoolId,
+        range_start: start,
+        range_end: end,
+        object_path: path,
+        raw_display_name: file.name,
+      });
+    } catch (error) {
+      await removeMealObjects("meal-menus", [path]);
+      throw new Error(`Rätterna är sparade. Filen bifogades inte: ${error.message}`);
+    }
+  }
+  state.mealImport = null;
+  await loadMeals();
 }
 
 async function uploadMealObject(bucket, path, blob, mime) {
@@ -4962,6 +5139,15 @@ document.body.addEventListener("submit", (event) => {
   const values = Object.fromEntries(new FormData(form));
   const type = form.dataset.form;
   if (type === "review-only") return;
+  if (type === "meal-import-review") {
+    if (state.mealDemo || state.mealImport?.example) {
+      state.notice = { type: "success", text: "Exemplet sparar inte de granskade rätterna." };
+      render();
+      return;
+    }
+    runMutation(() => saveMealImport(form), "De ikryssade rätterna är sparade.");
+    return;
+  }
   if (type === "meal-week") {
     if (state.mealDemo) saveMealDemo(form, values);
     else runMutation(() => saveMealWeek(form, values), "Veckan är sparad.");
@@ -5716,6 +5902,32 @@ document.body.addEventListener("click", (event) => {
   }
   if (action === "meal-shift") {
     state.mealWeekStart = target.dataset.start || "";
+    const preschoolId = mealPreschoolForView();
+    if (preschoolId && state.mealsReady && !state.mealDemo) {
+      runMutation(async () => {
+        await ensureMealRange(preschoolId, state.mealWeekStart, ArtanMeals.addDays(state.mealWeekStart, 4));
+      }, "");
+      return;
+    }
+    render();
+    return;
+  }
+  if (action === "meal-import-cancel" || action === "meal-import-back") {
+    state.mealImportCancel = true;
+    state.mealImport = null;
+    render();
+    return;
+  }
+  if (action === "meal-import-example") {
+    const parsed = ArtanMenu.parseMenuText(ArtanMenu.EXAMPLE_IMPORT_TEXT, {});
+    openMenuReview(parsed, null, "Exempelmeny", true, ArtanMenu.EXAMPLE_IMPORT_TEXT);
+    render();
+    return;
+  }
+  if (action === "meal-import-year") {
+    const year = document.querySelector("[name=anchor_year]")?.value;
+    const parsed = ArtanMenu.parseMenuText(state.mealImport?.sourceText || "", { anchorYear: year });
+    state.mealImport = { ...state.mealImport, parsed, anchorYear: year, status: "review" };
     render();
     return;
   }
@@ -6543,6 +6755,11 @@ document.body.addEventListener("click", (event) => {
 });
 
 document.body.addEventListener("change", (event) => {
+  if (event.target.dataset?.action === "meal-import-file") {
+    const file = event.target.files?.[0];
+    if (file) readMealImport(file);
+    return;
+  }
   if (event.target.name === "preschool_id" && event.target.closest("[data-form='meal-week']")) {
     state.mealPreschoolId = event.target.value;
     render();
@@ -6598,8 +6815,12 @@ function startMealDemo(params) {
   state.mealPreschoolId = example.preschoolId;
   state.mealWeekStart = ArtanMeals.mondayOf(day);
   state.mealBundles = { [example.preschoolId]: ArtanMeals.exampleBundle(day) };
+  if (params.get("las") === "1" && role !== "parent") {
+    openMenuReview(ArtanMenu.parseMenuText(ArtanMenu.EXAMPLE_IMPORT_TEXT, {}), null, "Exempelmeny", true, ArtanMenu.EXAMPLE_IMPORT_TEXT);
+  }
   const requested = params.get("view") || "";
   state.view = ArtanMeals.allowedViews(role).includes(requested) ? requested : ArtanMeals.allowedViews(role)[0];
+  if (params.get("las") === "1" && role !== "parent" && !requested) state.view = "meals";
   state.notice = null;
   state.busy = false;
 }
