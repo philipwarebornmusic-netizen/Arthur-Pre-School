@@ -67,6 +67,12 @@ const state = {
   classListReady: true,
   classListConsents: [],
   classList: [],
+  mealsReady: true,
+  mealBundles: {},
+  mealWeekStart: "",
+  mealPreschoolId: "",
+  mealDemo: false,
+  mealDemoToday: "",
   childPhotoUrls: {},
   contactPhotoUrls: {},
   selectedChildId: null,
@@ -108,6 +114,7 @@ function csv(value) {
 }
 
 function todayIso() {
+  if (state.mealDemo && state.mealDemoToday) return state.mealDemoToday;
   return new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" });
 }
 
@@ -547,11 +554,7 @@ function registerHubCard(hub, card) {
 }
 
 function allowedViewsForRole(role) {
-  return {
-    admin: ["attendance", "overview", "messages", "more", "schools", "people", "incidents", "account"],
-    staff: ["attendance", "messages", "people", "more", "incidents", "account"],
-    parent: ["home", "pickup", "messages", "more", "child", "classlist", "account"],
-  }[role] || ["home", "pickup", "messages", "more", "child", "classlist", "account"];
+  return ArtanMeals.allowedViews(role);
 }
 
 function defaultViewForRole(role) {
@@ -1104,6 +1107,10 @@ async function logout() {
       classListReady: true,
       classListConsents: [],
       classList: [],
+      mealsReady: true,
+      mealBundles: {},
+      mealWeekStart: "",
+      mealPreschoolId: "",
       childPhotoUrls: {},
       contactPhotoUrls: {},
       termEditor: null,
@@ -1329,6 +1336,7 @@ async function loadData() {
   ]);
   state.onboarding = { kind: "active" };
   if (!state.children.some((child) => child.id === state.selectedChildId)) state.selectedChildId = state.children[0]?.id || null;
+  await loadMeals();
   const roleViews = allowedViewsForRole(state.profile.role);
   if (!roleViews.includes(state.view)) state.view = defaultViewForRole(state.profile.role);
   restoreHubFromHash();
@@ -1391,6 +1399,10 @@ function clearLoadedData() {
     classListReady: true,
     classListConsents: [],
     classList: [],
+    mealsReady: true,
+    mealBundles: {},
+    mealWeekStart: "",
+    mealPreschoolId: "",
     childPhotoUrls: {},
     contactPhotoUrls: {},
     selectedChildId: null,
@@ -2946,6 +2958,257 @@ function pickupCardCopy(child, summary) {
   return { value: "Ingen tid sparad", sub: note || "Öppna hela schemat för att fylla i veckan." };
 }
 
+function mealEditorSchools() {
+  if (!state.profile) return [];
+  if (state.profile.role === "admin") return state.schools;
+  const mine = new Set(state.staffAssignments.filter((row) => row.staff_id === state.profile.id).map((row) => row.department_id));
+  const preschoolIds = new Set(state.departments.filter((department) => mine.has(department.id)).map((department) => department.preschool_id));
+  return state.schools.filter((school) => preschoolIds.has(school.id));
+}
+
+function mealPreschoolForView() {
+  if (state.profile?.role === "parent") return childSchoolId(selectedChild());
+  const schools = mealEditorSchools();
+  if (state.mealPreschoolId && schools.some((school) => school.id === state.mealPreschoolId)) return state.mealPreschoolId;
+  return schools[0]?.id || "";
+}
+
+function mealReadablePreschoolIds() {
+  if (state.profile?.role === "parent") return [...new Set(state.children.map((child) => childSchoolId(child)).filter(Boolean))];
+  return mealEditorSchools().map((school) => school.id);
+}
+
+function mealBundle(preschoolId) {
+  return state.mealBundles[preschoolId] || { menus: [], days: [], example: false };
+}
+
+function mealClosedDates(preschoolId) {
+  return state.termClosures.filter((closure) => {
+    const term = state.schoolTerms.find((item) => item.term_id === closure.term_id);
+    return term && term.preschool_id === preschoolId;
+  }).map((closure) => closure.closure_date);
+}
+
+function renderMealTodayCard(child) {
+  if (!child || state.profile?.role !== "parent") return "";
+  const preschoolId = childSchoolId(child);
+  if (!state.mealsReady && !state.mealDemo) {
+    return `<section class="soft-card is-meal"><p class="soft-label">Matsedel</p><p class="soft-sub">Matsedeln är inte aktiverad i databasen ännu.</p></section>`;
+  }
+  const bundle = mealBundle(preschoolId);
+  const card = ArtanMeals.presentation({
+    today: todayIso(),
+    menus: bundle.menus,
+    days: bundle.days,
+    closedDates: mealClosedDates(preschoolId),
+    example: bundle.example,
+  }).todayCard;
+  return ArtanMeals.todayCardHtml(card);
+}
+
+function renderMeals() {
+  const preschoolId = mealPreschoolForView();
+  const school = state.schools.find((item) => item.id === preschoolId);
+  const monday = state.mealWeekStart || ArtanMeals.mondayOf(todayIso());
+  const bundle = mealBundle(preschoolId);
+  const inactive = !state.mealsReady && !state.mealDemo
+    ? `<p class="notice error" role="status">Matsedeln är inte aktiverad i databasen ännu. Inget kan sparas förrän migreringen är godkänd och körd.</p>`
+    : "";
+  if (state.profile.role === "parent") {
+    return `${noticeHtml()}${inactive}${ArtanMeals.weekHtml({
+      today: todayIso(),
+      weekStart: monday,
+      menus: bundle.menus,
+      days: bundle.days,
+      closedDates: mealClosedDates(preschoolId),
+      schoolName: school?.name || "",
+      example: bundle.example,
+    })}`;
+  }
+  if (!preschoolId) {
+    return `${noticeHtml()}${inactive}<h1 class="h1">Matsedel</h1><p class="page-sub">Du är inte kopplad till en förskola ännu.</p>`;
+  }
+  return `${noticeHtml()}${inactive}${ArtanMeals.editorHtml({
+    schools: mealEditorSchools(),
+    preschoolId,
+    schoolName: school?.name || "",
+    weekStart: monday,
+    weekEnd: ArtanMeals.addDays(monday, 4),
+    previousWeek: ArtanMeals.addDays(monday, -7),
+    nextWeek: ArtanMeals.addDays(monday, 7),
+    days: ArtanMeals.weekDays(monday).map((iso, index) => {
+      const row = (bundle.days || []).find((day) => day.served_on === iso);
+      return { iso, label: ArtanMeals.DAY_LABELS[index], body: row?.body || "", photoUrl: row?.photo_url || "" };
+    }),
+    menu: (bundle.menus || []).find((item) => ArtanMeals.rangesOverlap(item.starts_on, item.ends_on, monday, ArtanMeals.addDays(monday, 4))) || null,
+    locked: !state.mealsReady && !state.mealDemo,
+  })}`;
+}
+
+async function signMealPaths(bucket, paths) {
+  const unique = [...new Set(paths.filter(Boolean))];
+  if (!unique.length) return new Map();
+  const signed = await request(`/storage/v1/object/sign/${bucket}`, {
+    method: "POST",
+    body: JSON.stringify({ expiresIn: 120, paths: unique }),
+  });
+  return new Map((signed || []).map((item) => [item.path, storageSignedUrl(item.signedURL || item.signedUrl)]));
+}
+
+async function signMealBundle(payload) {
+  const menus = payload?.menus || [];
+  const days = payload?.days || [];
+  let menuUrls = new Map();
+  let photoUrls = new Map();
+  try {
+    [menuUrls, photoUrls] = await Promise.all([
+      signMealPaths("meal-menus", menus.map((menu) => menu.storage_path)),
+      signMealPaths("meal-photos", days.map((day) => day.photo_path)),
+    ]);
+  } catch {
+    menuUrls = new Map();
+    photoUrls = new Map();
+  }
+  return {
+    example: false,
+    menus: menus.map((menu) => ({ ...menu, signed_url: menuUrls.get(menu.storage_path) || "" })),
+    days: days.map((day) => ({ ...day, photo_url: photoUrls.get(day.photo_path) || "" })),
+  };
+}
+
+async function loadMeals() {
+  state.mealsReady = true;
+  const ids = mealReadablePreschoolIds();
+  const start = ArtanMeals.addDays(ArtanMeals.mondayOf(todayIso()), -14);
+  const end = ArtanMeals.addDays(todayIso(), 42);
+  const bundles = {};
+  try {
+    for (const id of ids) {
+      const payload = await rpc("list_preschool_meals", {
+        target_preschool_id: id,
+        range_start: start,
+        range_end: end,
+      });
+      bundles[id] = await signMealBundle(payload || {});
+    }
+  } catch (error) {
+    if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
+      state.mealsReady = false;
+      state.mealBundles = {};
+      return;
+    }
+    throw error;
+  }
+  state.mealBundles = bundles;
+}
+
+async function uploadMealObject(bucket, path, blob, mime) {
+  await request(`/storage/v1/object/${bucket}/${encodedStoragePath(path)}`, {
+    method: "POST",
+    headers: { "Content-Type": mime, "x-upsert": "true" },
+    body: blob,
+  });
+}
+
+async function deleteMealObject(bucket, path) {
+  await request(`/storage/v1/object/${bucket}`, {
+    method: "DELETE",
+    body: JSON.stringify({ prefixes: [path] }),
+  });
+}
+
+async function saveMealWeek(form, values) {
+  if (!state.mealsReady) throw new Error("Matsedeln är inte aktiverad i databasen ännu.");
+  const preschoolId = values.preschool_id;
+  const monday = state.mealWeekStart || ArtanMeals.mondayOf(todayIso());
+  const days = ArtanMeals.weekDays(monday).map((iso) => ({
+    served_on: iso,
+    body: String(values[`day_body_${iso}`] || "").trim(),
+  }));
+  await rpc("save_meal_days", { target_preschool_id: preschoolId, meal_days: days });
+  const file = form.querySelector('input[name="menu_file"]')?.files?.[0];
+  if (file) {
+    const prepared = await ArtanMeals.preparedMenuFile(file);
+    const menuId = values.menu_id || crypto.randomUUID();
+    const path = ArtanMeals.menuPath(state.profile.organization_id, preschoolId, menuId, prepared.kind);
+    await uploadMealObject("meal-menus", path, prepared.blob, prepared.mime);
+    try {
+      await rpc("attach_meal_menu", {
+        target_menu_id: menuId,
+        target_preschool_id: preschoolId,
+        range_start: values.menu_starts,
+        range_end: values.menu_ends,
+        object_path: path,
+        raw_display_name: file.name,
+      });
+    } catch (error) {
+      try { await deleteMealObject("meal-menus", path); } catch { /* The row was not saved. */ }
+      throw error;
+    }
+  } else if (values.menu_id) {
+    const existing = (mealBundle(preschoolId).menus || []).find((menu) => menu.id === values.menu_id);
+    if (existing?.storage_path && (existing.starts_on !== values.menu_starts || existing.ends_on !== values.menu_ends)) {
+      await rpc("attach_meal_menu", {
+        target_menu_id: existing.id,
+        target_preschool_id: preschoolId,
+        range_start: values.menu_starts,
+        range_end: values.menu_ends,
+        object_path: existing.storage_path,
+        raw_display_name: existing.display_name,
+      });
+    }
+  }
+  for (const iso of ArtanMeals.weekDays(monday)) {
+    const photo = form.querySelector(`input[name="day_photo_${iso}"]`)?.files?.[0];
+    if (!photo) continue;
+    const blob = await ArtanMeals.transcodeJpeg(photo, 1280, 2 * 1024 * 1024);
+    const path = ArtanMeals.photoPath(state.profile.organization_id, preschoolId, iso);
+    await uploadMealObject("meal-photos", path, blob, "image/jpeg");
+    try {
+      await rpc("attach_meal_photo", { target_preschool_id: preschoolId, served: iso, object_path: path });
+    } catch (error) {
+      try { await deleteMealObject("meal-photos", path); } catch { /* The row was not saved. */ }
+      throw error;
+    }
+  }
+  await loadMeals();
+}
+
+function saveMealDemo(form, values) {
+  const preschoolId = values.preschool_id || mealPreschoolForView();
+  const monday = state.mealWeekStart || ArtanMeals.mondayOf(todayIso());
+  const entries = ArtanMeals.weekDays(monday).map((iso) => ({ served_on: iso, body: values[`day_body_${iso}`] || "" }));
+  const current = state.mealBundles[preschoolId] || ArtanMeals.exampleBundle(todayIso());
+  const next = ArtanMeals.applyText(current, entries);
+  const file = form.querySelector('input[name="menu_file"]')?.files?.[0];
+  if (file) {
+    const mime = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg";
+    next.menus = [{
+      id: values.menu_id || ArtanMeals.EXAMPLE.menuId,
+      starts_on: values.menu_starts,
+      ends_on: values.menu_ends,
+      display_name: ArtanMeals.sanitizeDisplayName(file.name, mime),
+      mime_type: mime,
+      storage_path: null,
+      signed_url: "",
+      example: true,
+    }];
+  } else if (values.menu_starts && values.menu_ends && next.menus[0]) {
+    next.menus[0] = { ...next.menus[0], starts_on: values.menu_starts, ends_on: values.menu_ends };
+  }
+  ArtanMeals.weekDays(monday).forEach((iso) => {
+    const photo = form.querySelector(`input[name="day_photo_${iso}"]`)?.files?.[0];
+    if (!photo) return;
+    const row = next.days.find((day) => day.served_on === iso);
+    const photoUrl = URL.createObjectURL(photo);
+    if (row) row.photo_url = photoUrl;
+    else next.days.push({ served_on: iso, body: "", photo_url: photoUrl, example: true });
+  });
+  state.mealBundles[preschoolId] = next;
+  state.notice = { type: "success", text: "Exemplet uppdaterades bara i den här webbläsaren." };
+  render();
+}
+
 function renderParentHome() {
   const child = selectedChild();
   if (!child) return `${noticeHtml()}<p class="hi">Välkommen</p><h1 class="h1">Inget barn ännu</h1><p class="sub">När personalen har kopplat ett barn syns dagen här. Du kan också be om en koppling.</p>${renderSiblingRequestForm()}`;
@@ -2979,6 +3242,7 @@ function renderParentHome() {
   return `${noticeHtml()}${childTabs()}<p class="hi">${esc(dayGreeting())}</p><h1 class="h1">${esc(childFirstName(child) || child.name)}</h1>
     <section class="soft-card is-today"><p class="soft-label">Idag</p><p class="soft-value"><span class="status-dot ${status.dot}"></span>${esc(status.text)}</p><p class="soft-sub">${esc(status.sub)}</p></section>
     <section class="soft-card is-pick"><p class="soft-label">Hämtning</p><p class="soft-value">${esc(pickup.value)}</p>${pickup.sub ? `<p class="soft-sub">${esc(pickup.sub)}</p>` : ""}${editToday}</section>
+    ${renderMealTodayCard(child)}
     ${renewal}
     ${renderPickupNotices()}
     ${renderIncidentCopies()}
@@ -4547,6 +4811,7 @@ function navIcon(name) {
     check: '<circle cx="12" cy="12" r="8.5"/><path d="m8.2 12.2 2.4 2.4 5.2-5.4"/>',
     people: '<circle cx="9" cy="8" r="3"/><path d="M3.6 18.5c.8-2.8 2.7-4.2 5.4-4.2s4.6 1.4 5.4 4.2"/><circle cx="17" cy="9" r="2.1"/><path d="M16.2 14.6c1.7.3 3 1.3 3.7 3.2"/>',
     overview: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+    meal: '<path d="M5 10h14M7 10c0 4 1.4 7 5 7s5-3 5-7"/><path d="M12 17v3"/>',
     chevron: '<path d="m9 6 6 6-6 6"/>',
   };
   const size = name === "chevron" ? 16 : 22;
@@ -4554,9 +4819,7 @@ function navIcon(name) {
 }
 
 function moreDestinations(role) {
-  if (role === "admin") return ["schools", "people", "incidents", "account"];
-  if (role === "staff") return ["incidents", "account"];
-  return ["child", "classlist", "account"];
+  return ArtanMeals.buriedViews(role);
 }
 
 function renderMenuGroup(label, items) {
@@ -4567,23 +4830,19 @@ function renderMore() {
   const role = state.profile.role;
   const child = selectedChild();
   const groups = role === "admin"
-    ? [["Förskolan", [["schools", "Skolor", ""], ["people", "Personer", ""], ["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
+    ? [["Förskolan", [["overview", "Översikt", ""], ["schools", "Skolor", ""], ["people", "Personer", ""], ["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
     : role === "staff"
-      ? [["Arbete", [["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
+      ? [["Arbete", [["people", "Barn", ""], ["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
       : [["Barnet", [["child", "Barnet", child?.name || "Inget barn"], ["classlist", "Klasslista", ""]]], ["Konto", [["account", "Konto", state.profile.email]]]];
   return `${noticeHtml()}<h1 class="h1">Mer</h1>${groups.map(([label, items]) => renderMenuGroup(label, items)).join("")}<button class="link menu-logout" type="button" data-action="logout">Logga ut</button>`;
 }
 
 function renderNav() {
   const role = state.profile?.role;
-  const items = role === "admin"
-    ? [["attendance", "check", "Närvaro"], ["overview", "overview", "Översikt"], ["messages", "messages", "Meddelanden"], ["more", "more", "Mer"]]
-    : role === "staff"
-      ? [["attendance", "check", "Närvaro"], ["messages", "messages", "Meddelanden"], ["people", "people", "Barn"], ["more", "more", "Mer"]]
-      : [["home", "home", "Min dag"], ["pickup", "clock", "Hämtning"], ["messages", "messages", "Meddelanden"], ["more", "more", "Mer"]];
+  const items = ArtanMeals.tabsForRole(role);
   const buried = new Set(moreDestinations(role));
   nav.innerHTML = items.map(([view, icon, label]) => {
-    const current = state.view === view || (view === "more" && buried.has(state.view));
+    const current = state.view === view || (view === "more" && buried.has(state.view)) || (view === "home" && state.view === "meals" && role === "parent");
     return `<button data-action="navigate" data-view="${view}" aria-current="${current ? "page" : "false"}"><span class="ico">${navIcon(icon)}</span>${label}</button>`;
   }).join("");
 }
@@ -4632,6 +4891,7 @@ function render() {
   paintHeaderContext();
   const views = {
     home: renderParentHome,
+    meals: renderMeals,
     pickup: renderPickupHub,
     more: renderMore,
     child: renderChildInfo,
@@ -4645,7 +4905,8 @@ function render() {
     account: renderAccount,
   };
   const fallback = views[defaultViewForRole(state.profile.role)] || renderParentHome;
-  screen.innerHTML = (views[state.view] || fallback)();
+  const banner = state.mealDemo ? ArtanMeals.demoBanner(formatDate(state.mealDemoToday)) : "";
+  screen.innerHTML = banner + (views[state.view] || fallback)();
   renderNav();
   renderAssistant();
   prefetchGuardianAttachments();
@@ -4654,6 +4915,11 @@ function render() {
 }
 
 async function runMutation(work, successText = "Sparat.") {
+  if (state.mealDemo) {
+    state.notice = { type: "success", text: "Exemplet sparar inget." };
+    render();
+    return;
+  }
   stopPickupScanner();
   state.busy = true;
   state.notice = null;
@@ -4686,6 +4952,11 @@ document.body.addEventListener("submit", (event) => {
   const values = Object.fromEntries(new FormData(form));
   const type = form.dataset.form;
   if (type === "review-only") return;
+  if (type === "meal-week") {
+    if (state.mealDemo) saveMealDemo(form, values);
+    else runMutation(() => saveMealWeek(form, values), "Veckan är sparad.");
+    return;
+  }
   if (type === "assistant-question") {
     const question = String(values.question || "").trim();
     if (!question) return;
@@ -5420,6 +5691,74 @@ document.body.addEventListener("click", (event) => {
     state.authView = target.dataset.view;
     state.notice = null;
     render();
+    return;
+  }
+  if (action === "demo-role") {
+    if (!state.mealDemo) return;
+    startMealDemo(new URLSearchParams({ role: target.dataset.role || "parent", day: state.mealDemoToday }));
+    render();
+    return;
+  }
+  if (action === "open-meals") {
+    state.mealWeekStart = target.dataset.week || ArtanMeals.mondayOf(todayIso());
+    showView("meals");
+    return;
+  }
+  if (action === "meal-shift") {
+    state.mealWeekStart = target.dataset.start || "";
+    render();
+    return;
+  }
+  if (action === "meal-file-example") {
+    state.notice = { type: "success", text: "Filen kan inte öppnas i den här vyn." };
+    render();
+    return;
+  }
+  if (action === "meal-clear-menu") {
+    if (state.mealDemo) {
+      const preschoolId = mealPreschoolForView();
+      const bundle = mealBundle(preschoolId);
+      state.mealBundles[preschoolId] = { ...bundle, menus: [] };
+      state.notice = { type: "success", text: "Exempelfilen togs bort bara i den här webbläsaren." };
+      render();
+      return;
+    }
+    const preschoolId = mealPreschoolForView();
+    const monday = state.mealWeekStart || ArtanMeals.mondayOf(todayIso());
+    const menu = (mealBundle(preschoolId).menus || []).find((item) => ArtanMeals.rangesOverlap(item.starts_on, item.ends_on, monday, ArtanMeals.addDays(monday, 4)));
+    if (!menu?.storage_path) return;
+    runMutation(async () => {
+      await deleteMealObject("meal-menus", menu.storage_path);
+      await rpc("clear_meal_menu", { target_menu_id: menu.id });
+      await loadMeals();
+    }, "Filen är borttagen.");
+    return;
+  }
+  if (action === "meal-clear-photo") {
+    const iso = target.dataset.date;
+    if (state.mealDemo) {
+      const preschoolId = mealPreschoolForView();
+      const bundle = mealBundle(preschoolId);
+      state.mealBundles[preschoolId] = {
+        ...bundle,
+        days: (bundle.days || []).flatMap((day) => {
+          if (day.served_on !== iso) return [day];
+          if (!String(day.body || "").trim()) return [];
+          return [{ ...day, photo_url: "", photo_path: null }];
+        }),
+      };
+      state.notice = { type: "success", text: "Exempelbilden togs bort bara i den här webbläsaren." };
+      render();
+      return;
+    }
+    const preschoolId = mealPreschoolForView();
+    const row = (mealBundle(preschoolId).days || []).find((day) => day.served_on === iso);
+    if (!row?.photo_path) return;
+    runMutation(async () => {
+      await deleteMealObject("meal-photos", row.photo_path);
+      await rpc("clear_meal_photo", { target_preschool_id: preschoolId, served: iso });
+      await loadMeals();
+    }, "Bilden är borttagen.");
     return;
   }
   if (action === "navigate" || action === "account") {
@@ -6194,6 +6533,11 @@ document.body.addEventListener("click", (event) => {
 });
 
 document.body.addEventListener("change", (event) => {
+  if (event.target.name === "preschool_id" && event.target.closest("[data-form='meal-week']")) {
+    state.mealPreschoolId = event.target.value;
+    render();
+    return;
+  }
   const select = event.target.closest("[data-pickup-choice]");
   if (select?.form) updatePickupChoice(select.form);
   const contact = event.target;
@@ -6215,7 +6559,47 @@ document.addEventListener("keydown", (event) => {
 });
 
 
+function startMealDemo(params) {
+  const role = ["parent", "staff", "admin"].includes(params.get("role")) ? params.get("role") : "parent";
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(params.get("day") || "") ? params.get("day") : "2026-11-10";
+  const example = ArtanMeals.EXAMPLE;
+  state.mealDemo = true;
+  state.mealDemoToday = day;
+  state.mealsReady = false;
+  state.session = { access_token: "demo", user: { id: example.profileId } };
+  state.profile = {
+    id: example.profileId,
+    role,
+    name: role === "parent" ? "Exempel Förälder" : role === "staff" ? "Exempel Personal" : "Exempel Administratör",
+    email: "exempel@example.test",
+    organization_id: example.organizationId,
+  };
+  state.organization = { id: example.organizationId, name: "Exempelorganisation" };
+  state.schools = [{ id: example.preschoolId, name: "Exempelförskolan" }];
+  state.departments = [{ id: example.departmentId, preschool_id: example.preschoolId, name: "Exempelavdelningen" }];
+  state.staffAssignments = [{ staff_id: example.profileId, department_id: example.departmentId }];
+  state.children = [{ id: example.childId, name: "Nova Exempel", department_id: example.departmentId }];
+  state.selectedChildId = example.childId;
+  state.attendance = [];
+  state.schoolTerms = [];
+  state.termClosures = [];
+  state.posts = [];
+  state.notices = [];
+  state.mealPreschoolId = example.preschoolId;
+  state.mealWeekStart = ArtanMeals.mondayOf(day);
+  state.mealBundles = { [example.preschoolId]: ArtanMeals.exampleBundle(day) };
+  const requested = params.get("view") || "";
+  state.view = ArtanMeals.allowedViews(role).includes(requested) ? requested : ArtanMeals.allowedViews(role)[0];
+  state.notice = null;
+  state.busy = false;
+}
+
 (async function start() {
+  if (!passFromUrl && new URLSearchParams(location.search).get("demo") === "matsedel") {
+    startMealDemo(new URLSearchParams(location.search));
+    render();
+    return;
+  }
   if (passFromUrl) {
     state.busy = true;
     render();
