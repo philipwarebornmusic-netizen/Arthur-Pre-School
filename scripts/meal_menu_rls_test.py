@@ -235,13 +235,92 @@ def main():
     psql(f"create database {DB}")
     harness = Path("/tmp/meal_menu_harness.sql")
     harness.write_text(HARNESS, encoding="utf-8")
+    prepared = subprocess.run(
+        ["sudo", "-u", "postgres", "psql", "-d", DB, "-v", "ON_ERROR_STOP=1", "-f", str(harness)],
+        text=True,
+        capture_output=True,
+    )
+    if prepared.returncode != 0:
+        fail(prepared.stderr.strip() or prepared.stdout)
+    # storage.objects stays owned by storage_owner. meal_migrator can create
+    # policies through that role, and an event trigger rejects altering RLS,
+    # matching the hosted 42501 on the redundant ENABLE statement.
+    rights = f"""
+    do $$ begin create role storage_owner nologin; exception when duplicate_object then null; end $$;
+    do $$ begin create role meal_migrator nologin; exception when duplicate_object then null; end $$;
+    grant meal_migrator to postgres;
+    grant storage_owner to postgres;
+    create schema if not exists extensions;
+    create extension if not exists btree_gist with schema extensions;
+    grant usage on schema extensions to meal_migrator;
+    alter table storage.buckets owner to storage_owner;
+    alter table storage.objects owner to storage_owner;
+    grant usage on schema storage to storage_owner;
+    set role storage_owner;
+    alter table storage.objects enable row level security;
+    reset role;
+    grant storage_owner to meal_migrator;
+    grant usage on schema storage to meal_migrator;
+    grant usage on schema auth to meal_migrator;
+    alter role meal_migrator bypassrls;
+    grant create on database {DB} to meal_migrator;
+    grant usage, create on schema public to meal_migrator;
+    grant all on all tables in schema public to meal_migrator;
+    create or replace function public.reject_storage_objects_rls_alter()
+    returns event_trigger
+    language plpgsql
+    as $fn$
+    declare
+      command record;
+    begin
+      for command in select * from pg_catalog.pg_event_trigger_ddl_commands() loop
+        if command.command_tag = 'ALTER TABLE'
+          and command.object_identity = 'storage.objects'
+          and pg_catalog.current_query() ilike '%row level security%'
+        then
+          raise exception 'must be owner of table objects';
+        end if;
+      end loop;
+    end;
+    $fn$;
+    drop event trigger if exists reject_storage_objects_rls_alter;
+    create event trigger reject_storage_objects_rls_alter
+      on ddl_command_end
+      when tag in ('ALTER TABLE')
+      execute function public.reject_storage_objects_rls_alter();
+    """
+    rights_result = psql(rights, DB, check=False)
+    if rights_result.returncode != 0:
+        fail(rights_result.stderr.strip() or rights_result.stdout)
+    blocked = psql(
+        "set role meal_migrator; alter table storage.objects enable row level security;",
+        DB,
+        check=False,
+    )
+    if blocked.returncode == 0 or "must be owner of table objects" not in f"{blocked.stderr}{blocked.stdout}":
+        fail(f"non-owner should not enable storage RLS\n{blocked.stderr}")
+    runner = Path("/tmp/meal_menu_as_migrator.sql")
+    runner.write_text(
+        "set role meal_migrator;\nset search_path = public, extensions;\n"
+        + MIGRATION.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     applied = subprocess.run(
-        ["sudo", "-u", "postgres", "psql", "-d", DB, "-v", "ON_ERROR_STOP=1", "-f", str(harness), "-f", str(MIGRATION)],
+        ["sudo", "-u", "postgres", "psql", "-d", DB, "-v", "ON_ERROR_STOP=1", "-f", str(runner)],
         text=True,
         capture_output=True,
     )
     if applied.returncode != 0:
         fail(applied.stderr.strip() or applied.stdout)
+    owner = q("""
+      select r.rolname || ':' || c.relrowsecurity::text
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      join pg_roles r on r.oid = c.relowner
+      where n.nspname = 'storage' and c.relname = 'objects'
+    """)
+    if owner != "storage_owner:true":
+        fail(f"storage.objects owner or RLS changed: {owner}")
     psql(
         """
         grant usage on schema storage to authenticated;

@@ -766,9 +766,19 @@ begin
   if to_regprocedure('storage.allow_any_operation(text[])') is null then
     raise exception 'storage.allow_any_operation saknas. Matsedeln kräver aktuell Storage innan den aktiveras.';
   end if;
+  -- storage.objects is owned outside this migration and already has row level
+  -- security. Enabling it again requires that owner, so this is only a check.
+  if not exists (
+    select 1
+    from pg_catalog.pg_class relation
+    join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'storage'
+      and relation.relname = 'objects'
+      and relation.relrowsecurity
+  ) then
+    raise exception 'storage.objects måste redan ha row level security aktiverat';
+  end if;
 end $$;
-
-alter table storage.objects enable row level security;
 
 drop policy if exists "meal menus object read" on storage.objects;
 create policy "meal menus object read" on storage.objects

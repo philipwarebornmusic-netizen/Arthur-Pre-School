@@ -8,6 +8,7 @@
 - Bilder på maten är valfria. Uppladdningen säger att bilden bara får visa mat, inga barn.
 - `supabase/migrations/20261108190711_meal_menus.sql` är inte körd. Tills den är godkänd och applicerad säger skärmen att matsedeln inte är aktiverad. `?demo=matsedel` visar en exempelvy som inte sparar något.
 - En ny fil laddas upp på en egen sökväg. Den gamla filen tas bort först efter att den nya referensen är sparad. Ett misslyckat byte lämnar den tidigare filen kvar. Borttagning tillåts för personal och administratör vid `storage.object.delete` och `storage.object.delete_many`, inte för vårdnadshavare och inte som listning.
+- Migreringen ändrar inte `storage.objects`. Den kontrollerar bara att row level security redan är aktiverat, eftersom den roll som kör migreringen inte äger tabellen.
 
 ## 2026-11-01 — Mjuka kort
 

@@ -51,6 +51,10 @@ def main():
         fail("delete SELECT policies are missing")
     if sql.count("meal_object_allowed('meal-menus', name, true)") < 1 or sql.count("meal_object_allowed('meal-photos', name, true)") < 1:
         fail("delete SELECT must require an editor")
+    if "alter table storage.objects" in code:
+        fail("migration must not alter storage.objects; the migration role is not its owner")
+    if "relrowsecurity" not in code:
+        fail("migration must check that storage.objects already has row level security")
     if "for insert to authenticated" not in code or "for update to authenticated" not in code or "for select to authenticated" not in code:
         fail("storage upsert needs insert, select, and update policies")
     if "current_role() = 'parent'" in code and "meal_preschool_editable" in code:
