@@ -66,9 +66,19 @@ assert.equal(cyclic.items[0].body, "Fisk");
 const long = "a".repeat(401);
 const tooLong = menu.assessRow({ served_on: "2026-11-10", body: long, existing: "", today: "2026-11-08", closure: false, weekday: 1 });
 assert.equal(tooLong.savable, false);
-const outside = menu.assessRow({ served_on: "2027-06-01", body: "Fisk", existing: "", today: "2026-11-08", closure: false, weekday: 1 });
-assert.equal(outside.savable, false);
-assert.match(outside.reason, /120/);
+const later = "2027-03-22";
+const pending = menu.assessRow({ served_on: later, body: "Fisk", existing: "", today: "2026-11-08", closure: false, weekday: 0 });
+assert.equal(menu.isWeekday(later), true);
+assert.equal(pending.savable, false);
+assert.equal(pending.pendingMigration, true);
+assert.match(pending.reason, /120/);
+const allowed = menu.assessRow({ served_on: later, body: "Fisk", existing: "", today: "2026-11-08", closure: false, weekday: 0, limits: menu.TERM_LIMITS });
+assert.equal(allowed.savable, true);
+const beyond = menu.assessRow({ served_on: "2027-06-01", body: "Fisk", existing: "", today: "2026-11-08", closure: false, weekday: 1, limits: menu.TERM_LIMITS });
+assert.equal(beyond.savable, false);
+assert.match(beyond.reason, /186/);
+assert.equal(menu.fileRangeError("2026-11-09", "2027-02-17", "2026-11-08", menu.TERM_LIMITS), "");
+assert.match(menu.fileRangeError("2026-11-09", "2027-05-14", "2026-11-08", menu.TERM_LIMITS), /186/);
 const weekend = menu.assessRow({ served_on: "2026-11-14", body: "Fisk", existing: "", today: "2026-11-08", closure: false, weekday: 5 });
 assert.equal(weekend.savable, false);
 const mismatch = menu.assessRow({ served_on: "2026-11-10", body: "Fisk", existing: "", today: "2026-11-08", closure: false, weekday: 0 });
@@ -134,5 +144,25 @@ await assert.rejects(
   /Sparat genom veckan som börjar 2026-11-09/,
 );
 assert.deepEqual(calls, ["2026-11-09", "2026-12-21"]);
+
+const ocr = menu.parseMenuText("Vecka 52 2026\nMåndag\nÄrtsoppa\nVecka 1\nMåndag\nKorv stroganoff", { uncertain: true });
+assert.equal(ocr.items[0].served_on, "2026-12-21");
+assert.equal(ocr.items[1].served_on, "2027-01-04");
+assert.equal(ocr.items.every((item) => item.uncertain), true);
+const ocrRows = menu.reviewRows(ocr, { today: "2026-11-08", existing: {}, closures: [], limits: menu.TERM_LIMITS });
+assert.equal(ocrRows.weeks.flatMap((week) => week.rows).every((row) => row.approve === false), true);
+
+const term = menu.parseMenuText(menu.termExampleText());
+const legacyTerm = menu.reviewRows(term, { today: "2026-11-10", existing: {}, closures: [], limits: menu.LEGACY_LIMITS });
+const legacyRows = legacyTerm.weeks.flatMap((week) => week.rows);
+assert.equal(legacyRows.length, 32);
+assert.equal(legacyRows.some((row) => row.pendingMigration), true);
+assert.equal(legacyRows.some((row) => /186/.test(row.reason)), true);
+assert.equal(legacyRows.filter((row) => row.pendingMigration).every((row) => row.approve === false), true);
+const openTerm = menu.reviewRows(term, { today: "2026-11-10", existing: {}, closures: [], limits: menu.TERM_LIMITS });
+const openRows = openTerm.weeks.flatMap((week) => week.rows);
+assert.equal(openRows.some((row) => row.pendingMigration), false);
+assert.equal(openRows.filter((row) => row.served_on <= "2027-05-15" && row.body).every((row) => row.savable), true);
+assert.equal(openRows.some((row) => row.savable === false && /186/.test(row.reason)), true);
 
 console.log("menu read tests passed");

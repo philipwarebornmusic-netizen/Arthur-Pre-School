@@ -292,10 +292,15 @@
   }
 
   function importEntryHtml() {
-    return `<section class="card meal-import-entry"><h2>Läs in rätter</h2><p class="form-hint">En PDF med text kan läsas till en granskning. Varje dag kryssas i innan den sparas. Foton och skannade sidor läses inte.</p><label>PDF eller bild<input type="file" accept="application/pdf,image/*" data-action="meal-import-file"></label><button class="link" type="button" data-action="meal-import-example">Visa exempel utan att spara</button></section>`;
+    return `<section class="card meal-import-entry"><h2>Läs in rätter</h2><p class="form-hint">En PDF med text läses direkt. Ett foto eller en skannad PDF läses i webbläsaren. Varje bildrad måste kryssas i. Ingenting sparas av sig själv.</p><label>PDF eller bild<input type="file" accept="application/pdf,image/*" data-action="meal-import-file"></label><button class="link" type="button" data-action="meal-import-example">Visa exempel utan att spara</button><button class="link" type="button" data-action="meal-import-term">Visa en hel termin utan att spara</button></section>`;
   }
 
   function importReviewHtml(model) {
+    const pending = (model.weeks || []).reduce((count, week) => count + week.rows.filter((row) => row.pendingMigration).length, 0);
+    const pendingNote = pending ? `<p class="notice" role="status">${pending} dagar ligger längre fram än 120 dagar. De kan inte sparas förrän migreringen för en hel termin är aktiverad.</p>` : "";
+    const fileHint = model.limits && model.limits.revision === "term"
+      ? "Filen kan bifogas för högst 186 dagar. Rätterna sparas var för sig."
+      : "Filen kan bifogas för högst 42 dagar tills migreringen är aktiverad. En hel termin kan inte ligga på en fil ännu.";
     const year = model.needsYear ? `<label>År för veckor som saknar år<input name="anchor_year" type="number" min="2000" max="2100" required value="${escapeHtml(model.anchorYear || "")}"></label><button class="link" type="button" data-action="meal-import-year">Visa datum</button>` : "";
     const warnings = (model.warnings || []).map((warning) => `<p class="form-hint">${escapeHtml(warning.text)}</p>`).join("");
     const weeks = (model.weeks || []).map((week) => {
@@ -310,7 +315,7 @@
     const loose = (model.loose || []).length
       ? `<section class="card"><h2>Utan säkert datum</h2>${model.loose.map((row) => `<div class="meal-review-day"><p>${escapeHtml(row.source)}</p><label class="check"><input type="checkbox" name="approve_${escapeHtml(row.id)}"> Spara när datumet är ifyllt</label><input type="date" name="date_${escapeHtml(row.id)}"><textarea name="dish_${escapeHtml(row.id)}">${escapeHtml(row.body || "")}</textarea><p class="form-hint">${escapeHtml(row.note || "Raden sparas inte förrän den har ett datum.")}</p></div>`).join("")}</section>`
       : "";
-    return `<button class="hub-back" type="button" data-action="meal-import-back">‹ Tillbaka</button><h1 class="h1">Granska rätter</h1><p class="page-sub">${escapeHtml(model.fileName || "Exempel")}. Ingenting sparas förrän du kryssar i dagar och trycker på knappen.</p>${model.example ? `<p class="notice" role="status">Testversion. Exemplet sparar inte.</p>` : ""}${warnings}${year}<form class="form-stack" data-form="meal-import-review">${weeks}${loose}<h2>Originalfil</h2><p class="form-hint">Filen bifogas bara om du kryssar i det och väljer ett intervall på högst 42 dagar. Rätterna sparas var för sig.</p><label class="check"><input type="checkbox" name="attach_file"> Bifoga originalfilen</label><div class="form-grid"><label>Från<input type="date" name="file_start"></label><label>Till<input type="date" name="file_end"></label></div><button class="primary" type="submit">Spara granskade rätter</button></form>`;
+    return `<button class="hub-back" type="button" data-action="meal-import-back">‹ Tillbaka</button><h1 class="h1">Granska rätter</h1><p class="page-sub">${escapeHtml(model.fileName || "Exempel")}. Ingenting sparas förrän du kryssar i dagar och trycker på knappen.</p>${model.example ? `<p class="notice" role="status">Testversion. Exemplet sparar inte.</p>` : ""}${model.termFixture ? `<p class="notice" role="status">Testversion av en hel termin. Ingenting sparas. Den riktiga databasen har inte den här räckvidden förrän migreringen är aktiverad.</p>` : ""}${pendingNote}${warnings}${year}<form class="form-stack" data-form="meal-import-review">${weeks}${loose}<h2>Originalfil</h2><p class="form-hint">${fileHint}</p><label class="check"><input type="checkbox" name="attach_file"> Bifoga originalfilen</label><div class="form-grid"><label>Från<input type="date" name="file_start"></label><label>Till<input type="date" name="file_end"></label></div><button class="primary" type="submit">Spara granskade rätter</button></form>`;
   }
 
   function editorHtml(model) {

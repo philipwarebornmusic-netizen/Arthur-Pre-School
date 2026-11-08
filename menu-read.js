@@ -9,6 +9,8 @@
   const EDIT_PAST = 14;
   const EDIT_FUTURE = 120;
   const FILE_SPAN = 41;
+  const LEGACY_LIMITS = { past: 14, future: 120, fileSpan: 41, revision: "legacy" };
+  const TERM_LIMITS = { past: 14, future: 186, fileSpan: 185, revision: "term" };
   const MAX_DISH = 400;
   const MAX_PDF_PAGES = 20;
   const MAX_PDF_BYTES = 8 * 1024 * 1024;
@@ -242,19 +244,26 @@
       }
     }
     flush();
+    const uncertain = Boolean(options.uncertain);
     return {
       needsYear: items.some((item) => item.needsYear) || warnings.some((warning) => warning.code === "needs-year"),
       warnings,
-      items: items.map((item, index) => ({ ...item, id: `row-${index}` })),
+      items: items.map((item, index) => ({ ...item, id: `row-${index}`, uncertain })),
     };
   }
 
-  function withinEditWindow(iso, today) {
-    const delta = diffDays(today, iso);
-    return delta !== null && delta >= -EDIT_PAST && delta <= EDIT_FUTURE;
+  function resolvedLimits(limits) {
+    return limits && limits.revision === "term" ? TERM_LIMITS : LEGACY_LIMITS;
   }
 
-  function assessRow({ served_on, body, existing, today, closure, weekday }) {
+  function withinEditWindow(iso, today, limits) {
+    const active = resolvedLimits(limits);
+    const delta = diffDays(today, iso);
+    return delta !== null && delta >= -active.past && delta <= active.future;
+  }
+
+  function assessRow({ served_on, body, existing, today, closure, weekday, limits }) {
+    const active = resolvedLimits(limits);
     const dish = String(body || "").trim();
     if (!served_on) return { savable: false, reason: "Datum saknas." };
     if (weekday !== undefined && weekday !== null && weekday >= 0 && weekdayIndex(served_on) !== weekday) {
@@ -263,7 +272,14 @@
     if (!isWeekday(served_on)) return { savable: false, reason: "Helger sparas inte som serveringsdagar." };
     if (!dish) return { savable: false, reason: "Ingen rätt att spara." };
     if (dish.length > MAX_DISH) return { savable: false, reason: "Rätten är längre än 400 tecken. Korta den innan den sparas." };
-    if (!withinEditWindow(served_on, today)) return { savable: false, reason: "Datumet ligger utanför perioden som kan sparas, 14 dagar bakåt till 120 dagar framåt." };
+    const delta = diffDays(today, served_on);
+    if (delta === null || delta < -active.past) return { savable: false, reason: "Datumet ligger mer än 14 dagar bakåt." };
+    if (delta > active.future) {
+      if (active.revision !== "term" && delta <= TERM_LIMITS.future) {
+        return { savable: false, pendingMigration: true, reason: "Dagen visas, men kan inte sparas förrän migreringen för en hel termin är aktiverad. Gränsen nu är 120 dagar framåt." };
+      }
+      return { savable: false, reason: "Datumet ligger efter 186 dagar framåt och sparas inte." };
+    }
     if (closure) return { savable: true, closed: true, replace: false, reason: "Terminen är stängd denna dag." };
     if (existing) {
       return {
@@ -289,13 +305,17 @@
     }));
   }
 
-  function fileRangeError(start, end, today) {
+  function fileRangeError(start, end, today, limits) {
+    const active = resolvedLimits(limits);
     if (!start || !end) return "Välj både från och till om filen ska bifogas.";
     if (end < start) return "Slutdatumet är före startdatumet.";
     const span = diffDays(start, end);
     if (span === null) return "Datumintervallet är ogiltigt.";
-    if (span > FILE_SPAN) return "Filen kan kopplas till högst 42 dagar. Rätterna kan ändå sparas var för sig. Välj ett kortare intervall, eller spara utan fil.";
-    if (!withinEditWindow(start, today) || !withinEditWindow(end, today)) return "Filens intervall ligger utanför perioden som kan sparas.";
+    if (span > active.fileSpan) {
+      if (active.revision !== "term") return "Filen kan kopplas till högst 42 dagar tills migreringen för en hel termin är aktiverad. Rätterna inom 120 dagar kan ändå sparas var för sig.";
+      return "Filen kan kopplas till högst 186 dagar. Rätterna kan ändå sparas var för sig.";
+    }
+    if (!withinEditWindow(start, today, active) || !withinEditWindow(end, today, active)) return "Filens intervall ligger utanför perioden som kan sparas.";
     return "";
   }
 
@@ -314,6 +334,16 @@
       row.parts.push({ x, str });
     }
     return rows.sort((a, b) => b.y - a.y).map((row) => row.parts.sort((a, b) => a.x - b.x).map((part) => part.str).join(" ").replace(/\s+/g, " ").trim()).filter(Boolean);
+  }
+
+  function termExampleText() {
+    const lines = [];
+    const addWeek = (week, year) => {
+      lines.push(`Vecka ${week} ${year}`, "Måndag", `Rätt vecka ${week}`);
+    };
+    for (let week = 46; week <= 53; week += 1) addWeek(week, 2026);
+    for (let week = 1; week <= 24; week += 1) addWeek(week, 2027);
+    return lines.join("\n");
   }
 
   const EXAMPLE_IMPORT_TEXT = `Vecka 46 2026
@@ -349,12 +379,17 @@ Ingen servering`;
         today: context.today,
         closure,
         weekday: item.weekday,
+        limits: context.limits,
       });
+      const reason = assessment.reason || (item.uncertain && assessment.savable
+        ? "Texten är läst från en bild. Kontrollera rätt och datum innan du kryssar i."
+        : "");
       const row = {
         ...item,
         existing,
         ...assessment,
-        approve: Boolean(assessment.savable && !assessment.replace && !assessment.closed && !existing && String(item.body || "").trim()),
+        reason,
+        approve: Boolean(!item.uncertain && assessment.savable && !assessment.replace && !assessment.closed && !existing && String(item.body || "").trim()),
       };
       if (!row.served_on) {
         loose.push(row);
@@ -389,7 +424,7 @@ Ingen servering`;
   function importDecision({ name, type, size, header }) {
     if (size > MAX_PDF_BYTES) return { kind: "too-big", message: "Filen är större än 8 MB." };
     if (String(type || "").startsWith("image/") || /\.(jpe?g|png|webp|gif)$/i.test(name || "")) {
-      return { kind: "image", message: "Rätter läses inte ur foton eller skannade bilder. Filen kan bifogas under Spara veckan, och rätterna skrivs in för hand." };
+      return { kind: "image" };
     }
     if (type === "application/pdf" || String(name || "").toLowerCase().endsWith(".pdf")) {
       if (!String(header || "").startsWith("%PDF-")) return { kind: "bad-pdf", message: "Filen är inte en PDF." };
@@ -400,9 +435,13 @@ Ingen servering`;
 
   root.ArtanMenu = {
     EXAMPLE_IMPORT_TEXT,
+    termExampleText,
     EDIT_PAST,
     EDIT_FUTURE,
     FILE_SPAN,
+    LEGACY_LIMITS,
+    TERM_LIMITS,
+    MAX_OCR_PAGES: 12,
     MAX_DISH,
     MAX_PDF_PAGES,
     MAX_PDF_BYTES,

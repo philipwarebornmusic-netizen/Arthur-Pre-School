@@ -75,6 +75,8 @@ const state = {
   mealDemoToday: "",
   mealImport: null,
   mealImportCancel: false,
+  mealHorizon: null,
+  mealTermFixture: false,
   childPhotoUrls: {},
   contactPhotoUrls: {},
   selectedChildId: null,
@@ -1114,6 +1116,8 @@ async function logout() {
       mealWeekStart: "",
       mealPreschoolId: "",
       mealImport: null,
+      mealHorizon: null,
+      mealTermFixture: false,
       childPhotoUrls: {},
       contactPhotoUrls: {},
       termEditor: null,
@@ -1407,6 +1411,8 @@ function clearLoadedData() {
     mealWeekStart: "",
     mealPreschoolId: "",
     mealImport: null,
+    mealHorizon: null,
+    mealTermFixture: false,
     childPhotoUrls: {},
     contactPhotoUrls: {},
     selectedChildId: null,
@@ -3027,8 +3033,9 @@ function renderMeals() {
         today: todayIso(),
         existing: Object.fromEntries((mealBundle(preschoolId).days || []).map((day) => [day.served_on, day.body || ""])),
         closures: mealClosedDates(preschoolId),
+        limits: mealLimits(),
       });
-      return `${noticeHtml()}${ArtanMeals.importReviewHtml({ ...review, anchorYear: state.mealImport.anchorYear, fileName: state.mealImport.fileName, example: state.mealDemo || state.mealImport.example })}`;
+      return `${noticeHtml()}${ArtanMeals.importReviewHtml({ ...review, anchorYear: state.mealImport.anchorYear, fileName: state.mealImport.fileName, example: state.mealDemo || state.mealImport.example, termFixture: state.mealTermFixture, limits: mealLimits() })}`;
     }
     if (state.mealImport.status === "unsupported" || state.mealImport.status === "error") {
       return `${noticeHtml()}<h1 class="h1">Matsedel</h1><p class="notice error" role="status">${esc(state.mealImport.message)}</p><button class="link" type="button" data-action="meal-import-back">Tillbaka</button>`;
@@ -3120,6 +3127,24 @@ async function loadMeals() {
     throw error;
   }
   state.mealBundles = bundles;
+  await loadMealHorizon();
+}
+
+function mealLimits() {
+  if (state.mealTermFixture) return ArtanMenu.TERM_LIMITS;
+  return state.mealHorizon || ArtanMenu.LEGACY_LIMITS;
+}
+
+async function loadMealHorizon() {
+  if (state.mealDemo) return;
+  try {
+    const horizon = await rpc("meal_edit_horizon");
+    state.mealHorizon = horizon && horizon.revision === "term" && Number(horizon.future_days) === ArtanMenu.TERM_LIMITS.future
+      ? ArtanMenu.TERM_LIMITS
+      : ArtanMenu.LEGACY_LIMITS;
+  } catch {
+    state.mealHorizon = ArtanMenu.LEGACY_LIMITS;
+  }
 }
 
 async function ensureMealRange(preschoolId, start, end) {
@@ -3151,8 +3176,23 @@ function openMenuReview(parsed, file, fileName, example = false, sourceText = ""
   state.view = "meals";
 }
 
+async function downscaleImage(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height, 1));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  return canvas;
+}
+
 async function readMealImport(file) {
   state.mealImportCancel = false;
+  state.mealTermFixture = false;
   state.mealImport = { status: "reading", fileName: file.name, progress: "Filen läses i webbläsaren." };
   state.view = "meals";
   render();
@@ -3164,31 +3204,73 @@ async function readMealImport(file) {
     }
     const header = new TextDecoder().decode(new Uint8Array(await file.slice(0, 5).arrayBuffer()));
     const decision = ArtanMenu.importDecision({ name: file.name, type: file.type, size: file.size, header });
-    if (decision.kind !== "pdf") {
-      state.mealImport = { status: decision.kind === "image" ? "unsupported" : "error", fileName: file.name, message: decision.message };
+    if (decision.kind !== "pdf" && decision.kind !== "image") {
+      state.mealImport = { status: "error", fileName: file.name, message: decision.message };
       render();
       return;
     }
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const text = await ArtanMenuExtract.extractPdfText(bytes, {
-      signal: { get aborted() { return state.mealImportCancel; } },
-      onProgress(progress) {
-        if (!state.mealImport || state.mealImport.status !== "reading") return;
-        state.mealImport.progress = `Läser sida ${progress.page} av ${progress.total}.`;
-        render();
-      },
-    });
+    const signal = { get aborted() { return state.mealImportCancel; } };
+    const report = (text) => {
+      if (!state.mealImport || state.mealImport.status !== "reading") return;
+      state.mealImport.progress = text;
+      render();
+    };
+    let text = "";
+    let uncertain = false;
+    const warnings = [];
+    if (decision.kind === "image") {
+      report("Läser bilden i webbläsaren. Filen lämnar inte webbläsaren.");
+      const canvas = await downscaleImage(file);
+      const reader = await ArtanMenuOcr.openReader({ signal, onProgress(message) {
+        if (message?.status === "recognizing text") report(`Läser bilden, ${Math.round((message.progress || 0) * 100)} %.`);
+      } });
+      try {
+        text = await reader.recognize(canvas);
+      } finally {
+        canvas.width = 1;
+        canvas.height = 1;
+        await reader.close();
+      }
+      uncertain = true;
+    } else {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      text = await ArtanMenuExtract.extractPdfText(bytes, {
+        signal,
+        onProgress(progress) {
+          report(`Läser sida ${progress.page} av ${progress.total}.`);
+        },
+      });
+      if (String(text || "").trim().length < 20) {
+        report("Ingen text i PDF:en. Läser sidorna som bild.");
+        const pageText = [];
+        const reader = await ArtanMenuOcr.openReader({ signal });
+        try {
+          const rendered = await ArtanMenuExtract.renderPdfPages(bytes, {
+            signal,
+            maxPages: ArtanMenu.MAX_OCR_PAGES,
+            onProgress(progress) { report(`Läser skannad sida ${progress.page} av ${progress.total}.`); },
+            onPage: async (canvas) => {
+              pageText.push(await reader.recognize(canvas));
+            },
+          });
+          if (rendered.truncated) warnings.push({ code: "ocr-pages", text: `Filen har ${rendered.pages} sidor. Bara de första ${rendered.read} läses. Skriv in resten för hand.` });
+        } finally {
+          await reader.close();
+        }
+        text = pageText.filter(Boolean).join("\n");
+        uncertain = true;
+      }
+    }
     if (state.mealImportCancel) {
       state.mealImport = null;
       render();
       return;
     }
-    if (String(text || "").trim().length < 20) {
-      state.mealImport = { status: "unsupported", fileName: file.name, file, message: "Ingen text hittades i PDF:en. En skannad fil läses inte här. Rätterna behöver skrivas in, eller så behövs en PDF med text." };
-      render();
-      return;
+    const parsed = ArtanMenu.parseMenuText(text, { uncertain });
+    parsed.warnings.push(...warnings);
+    if (!parsed.items.length) {
+      parsed.warnings.push({ code: "ocr-empty", text: "Ingen säker text hittades. Skriv in rätterna här, eller använd en PDF med text. Ingenting har sparats." });
     }
-    const parsed = ArtanMenu.parseMenuText(text, {});
     const dates = parsed.items.map((item) => item.served_on).filter(Boolean).sort();
     if (!state.mealDemo && dates.length) {
       try {
@@ -3225,6 +3307,7 @@ async function saveMealImport(form) {
       today: todayIso(),
       closure: mealClosedDates(mealPreschoolForView()).includes(served_on),
       weekday: served_on === row.served_on ? row.weekday : null,
+      limits: mealLimits(),
     });
     if (!assessment.savable) throw new Error(`${served_on || "En rad"}: ${assessment.reason}`);
     approved.push({ served_on, body });
@@ -3254,7 +3337,7 @@ async function saveMealImport(form) {
   if (data.get("attach_file") === "on") {
     const start = String(data.get("file_start") || "");
     const end = String(data.get("file_end") || "");
-    const problem = ArtanMenu.fileRangeError(start, end, todayIso());
+    const problem = ArtanMenu.fileRangeError(start, end, todayIso(), mealLimits());
     if (problem) throw new Error(`Rätterna är sparade. Filen bifogades inte: ${problem}`);
     const file = state.mealImport?.file;
     if (!file) throw new Error("Rätterna är sparade. Exempelfilen kan inte bifogas.");
@@ -5915,18 +5998,25 @@ document.body.addEventListener("click", (event) => {
   if (action === "meal-import-cancel" || action === "meal-import-back") {
     state.mealImportCancel = true;
     state.mealImport = null;
+    state.mealTermFixture = false;
     render();
     return;
   }
-  if (action === "meal-import-example") {
-    const parsed = ArtanMenu.parseMenuText(ArtanMenu.EXAMPLE_IMPORT_TEXT, {});
-    openMenuReview(parsed, null, "Exempelmeny", true, ArtanMenu.EXAMPLE_IMPORT_TEXT);
+  if (action === "meal-import-example" || action === "meal-import-term") {
+    const term = action === "meal-import-term";
+    state.mealTermFixture = term;
+    const source = term ? ArtanMenu.termExampleText() : ArtanMenu.EXAMPLE_IMPORT_TEXT;
+    const parsed = ArtanMenu.parseMenuText(source, {});
+    openMenuReview(parsed, null, term ? "Exempeltermin" : "Exempelmeny", true, source);
     render();
     return;
   }
   if (action === "meal-import-year") {
     const year = document.querySelector("[name=anchor_year]")?.value;
-    const parsed = ArtanMenu.parseMenuText(state.mealImport?.sourceText || "", { anchorYear: year });
+    const parsed = ArtanMenu.parseMenuText(state.mealImport?.sourceText || "", {
+      anchorYear: year,
+      uncertain: Boolean(state.mealImport?.parsed?.items?.some((item) => item.uncertain)),
+    });
     state.mealImport = { ...state.mealImport, parsed, anchorYear: year, status: "review" };
     render();
     return;
@@ -6814,13 +6904,18 @@ function startMealDemo(params) {
   state.notices = [];
   state.mealPreschoolId = example.preschoolId;
   state.mealWeekStart = ArtanMeals.mondayOf(day);
+  state.mealTermFixture = params.get("las") === "termin" && role !== "parent";
   state.mealBundles = { [example.preschoolId]: ArtanMeals.exampleBundle(day) };
   if (params.get("las") === "1" && role !== "parent") {
     openMenuReview(ArtanMenu.parseMenuText(ArtanMenu.EXAMPLE_IMPORT_TEXT, {}), null, "Exempelmeny", true, ArtanMenu.EXAMPLE_IMPORT_TEXT);
   }
+  if (state.mealTermFixture) {
+    const source = ArtanMenu.termExampleText();
+    openMenuReview(ArtanMenu.parseMenuText(source, {}), null, "Exempeltermin", true, source);
+  }
   const requested = params.get("view") || "";
   state.view = ArtanMeals.allowedViews(role).includes(requested) ? requested : ArtanMeals.allowedViews(role)[0];
-  if (params.get("las") === "1" && role !== "parent" && !requested) state.view = "meals";
+  if ((params.get("las") === "1" || params.get("las") === "termin") && role !== "parent" && !requested) state.view = "meals";
   state.notice = null;
   state.busy = false;
 }

@@ -14,8 +14,13 @@
 
 - Personal och administratör kan läsa en PDF med text för en vecka, en månad eller en termin. Rätterna visas per riktigt datum och sparas bara om dagen är ikryssad.
 - År gissas inte när veckonumret saknar år. Vecka 52 följd av vecka 1 räknas som årsskifte bara när året redan är känt.
-- Foton och skannade PDF:er läses inte. De kan fortfarande bifogas, och rätterna skrivs in för hand.
-- En befintlig rätt byts inte utan att rutan kryssas i. Filen bifogas bara om intervallet är högst 42 dagar och inget annat täcker samma dagar.
+- Ett foto eller en skannad PDF läses i webbläsaren och måste granskas innan något sparas. En text-PDF läses direkt.
+- En befintlig rätt byts inte utan att rutan kryssas i. Filen bifogas för högst 42 dagar tills migreringen för en hel termin är aktiverad.
+
+## 2026-11-08 — Termin och bildläsning, inte aktiverat
+
+- En ny migrering vidgar sparandet till 186 dagar framåt och en bifogad fil till 186 dagar. Den är inte körd. Tills dess visas de senare dagarna, men de kan inte sparas.
+- Ett foto eller en skannad PDF läses med svensk textigenkänning i webbläsaren. Raderna är avkryssade tills någon granskar dem. Filen skickas inte vidare.
 
 ## 2026-11-01 — Mjuka kort
 
