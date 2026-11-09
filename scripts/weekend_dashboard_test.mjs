@@ -128,10 +128,13 @@ const sick = dashboard("2026-10-26", { status: "absent_sick", absence_note: "Feb
 assert(sick.html.includes("Anledning till sjukdom, valfritt"), "sjuk ska visa anledning till sjukdom");
 assert(sick.html.includes("data-attendance-present-fields hidden"), "sjuk ska dölja lämning, hämtning och hämtare");
 assert(sick.html.includes("data-present-day-content hidden"), "sjuk ska dölja irrelevanta dagskort");
+assert(!sick.html.includes('class="card quick-panel" open'), "sparad sjukstatus ska visas med stängd panel");
+assert(!sick.html.includes("data-home-reminder-content hidden"), "relevanta påminnelser ska återkomma efter sparning");
 
 const leave = dashboard("2026-10-26", { status: "absent_leave", absence_note: "Familjeledig" });
 assert(leave.html.includes("Anledning till ledighet, valfritt"), "ledig ska visa anledning till ledighet");
 assert(leave.html.includes("data-attendance-present-fields hidden"), "ledig ska dölja lämning, hämtning och hämtare");
+assert(!leave.html.includes('class="card quick-panel" open'), "sparad ledighet ska visas med stängd panel");
 
 const roleContext = {};
 vm.createContext(roleContext);

@@ -3732,7 +3732,7 @@ function renderParentHome() {
     .join("");
   const dailyPlan = weekend
     ? `<section class="card quick-panel is-disabled"><span class="menu-icon-badge">${navIcon("illness")}</span><div><h2>Sjukanmälan</h2><p class="form-hint">Dagens status kan ändras här på vardagar.</p></div></section>`
-    : `<details id="daily-plan" class="card quick-panel" ${absentToday ? "open" : ""}>
+    : `<details id="daily-plan" class="card quick-panel">
       <summary><span class="menu-icon-badge">${navIcon("illness")}</span><span><strong>Anmäl sjuk eller ledig</strong><small>${absentToday ? `Registrerad som ${attendanceLabel(attendance.status).toLowerCase()}` : "Ändra dagens status"}</small></span><span class="menu-chevron" aria-hidden="true">${navIcon("chevron")}</span></summary>
       <form class="form-stack quick-panel-form" data-form="parent-attendance" data-child-id="${esc(child.id)}">
         <fieldset class="attendance-status-options"><legend>Vad gäller idag?</legend><div>${statusChoices}</div></fieldset>
@@ -3764,7 +3764,7 @@ function renderParentHome() {
     </div>
     ${renderIncidentCopies()}
     ${renderNoticeList("Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}
-    <div class="home-reminder-content" data-home-reminder-content ${absentToday ? "hidden" : ""}>${reminderBlock}</div>
+    <div class="home-reminder-content" data-home-reminder-content>${reminderBlock}</div>
     ${latestRow}`;
 }
 
@@ -6436,15 +6436,11 @@ document.body.addEventListener("change", (event) => {
     const absent = ["absent_sick", "absent_leave"].includes(input.value);
     const note = input.form.querySelector("[data-absence-note-field]");
     const presentFields = input.form.querySelector("[data-attendance-present-fields]");
-    const dayContent = document.querySelector("[data-present-day-content]");
-    const reminderContent = document.querySelector("[data-home-reminder-content]");
     if (note) note.hidden = !absent;
     if (presentFields) {
       presentFields.hidden = absent;
       presentFields.querySelectorAll("input").forEach((field) => { field.disabled = absent; });
     }
-    if (dayContent) dayContent.hidden = absent;
-    if (reminderContent) reminderContent.hidden = absent;
     const noteTitle = input.form.querySelector("[data-absence-note-title]");
     if (noteTitle) noteTitle.textContent = input.value === "absent_leave" ? "Anledning till ledighet, valfritt" : "Anledning till sjukdom, valfritt";
     const noteInput = input.form.elements.absence_note;

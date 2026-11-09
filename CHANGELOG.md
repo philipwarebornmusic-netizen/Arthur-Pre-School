@@ -6,6 +6,7 @@
 - Lade Sjukanmälan högst upp på Min dag som en infällbar panel och som en egen ikon under Mer → Barnet. Orsak visas först när Sjuk eller Ledig är valt.
 - Statusvalet är nu tre kompakta knappar: Kommer, Sjuk och Ledig. Sjuk och Ledig döljer lämning, hämtning och hämtare och visar i stället en kort, statusanpassad anledning.
 - När statuspanelen är öppen fokuseras hela mobilvyn på formuläret. Kommer, Sjuk och Ledig ryms utan sidskrollning vid 390 × 844 pixlar.
+- Efter sparning fälls statuspanelen ihop automatiskt. Min dag visar den registrerade statusen och relevanta påminnelser igen, medan hämtnings- och matsedelskorten förblir dolda när barnet är sjukt eller ledigt.
 - Gjorde Portfolio och Skola direkt nåbara under Mer → Barnet även när de ännu saknar innehåll.
 - Gjorde Viktig information, Händelser och OSA samt Borttappat direkt nåbara under Mer → Förskolan för vårdnadshavare.
 
