@@ -1,6 +1,6 @@
 # Ändringslogg
 
-## 2026-11-09 — Familjefunktioner och skolprogression, inte publicerat
+## 2026-11-09 — Familjefunktioner och skolprogression
 
 - Lade till en privat, barnspecifik **Portfolio**. Behörig personal kan ladda upp JPEG-bilder först när samtycket Bilder i ärtan är aktivt; barnets vårdnadshavare och behörig personal kan läsa.
 - Lade till **Borttappat** per avdelning med Saknad/Upphittad, valfri privat bild, sökning och statusarna Öppen, Hittad, Återlämnad och Avslutad. Bildsökvägen binder ihop avdelning, författare och inlägg så att en annan vårdnadshavare inte kan radera objektet.

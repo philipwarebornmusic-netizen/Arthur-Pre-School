@@ -98,7 +98,7 @@ Etapp 5 kräver separat rättslig bedömning och konsekvensbedömning innan utve
 
 ## Funktionsinventering 2026-11-09
 
-Statusorden nedan skiljer på produktionen 2026-11-09 och senare lokalt genomförda ändringar som ännu inte är publicerade.
+Statusorden nedan beskriver produktionen efter publiceringen 2026-11-09.
 
 ### Önskad vardagsyta
 
@@ -110,19 +110,19 @@ Statusorden nedan skiljer på produktionen 2026-11-09 och senare lokalt genomfö
 ### Schema, händelser och information
 
 - [ ] **Lägga schema för flera veckor samtidigt — delvis implementerat.** Standardveckan kan fylla återkommande tider, en vecka kan kopieras till nästa och hela terminen visas. Det saknas val av ett godtyckligt veckointervall, förhandsgranskning av alla berörda datum och en atomisk sparaåtgärd för flera veckor.
-- [x] **Viktig banner från förskolan — implementerat lokalt, inte publicerat.** Tidsstyrda banners har målgrupp per skola eller avdelning, start/slut, allvarlighetsgrad och ansvarig avsändare. Aktiva banners visas på Min dag, Närvaro och Översikt. Databaskontraktet finns i den ej applicerade migrationen `supabase/022_family_school_features.sql`.
-- [x] **Händelser i schema med påminnelser och OSA — implementerat lokalt, inte publicerat.** Verksamhetshändelser kan gälla en avdelning eller en hel skola. Vårdnadshavaren svarar Ja eller Nej per barn, och Min dag påminner från sju dagar före start till händelsens slut.
+- [x] **Viktig banner från förskolan — publicerat 2026-11-09.** Tidsstyrda banners har målgrupp per skola eller avdelning, start/slut, allvarlighetsgrad och ansvarig avsändare. Aktiva banners visas på Min dag, Närvaro och Översikt. Databaskontraktet finns i `supabase/022_family_school_features.sql`.
+- [x] **Händelser i schema med påminnelser och OSA — publicerat 2026-11-09.** Verksamhetshändelser kan gälla en avdelning eller en hel skola. Vårdnadshavaren svarar Ja eller Nej per barn, och Min dag påminner från sju dagar före start till händelsens slut.
 - [ ] **Kontaktuppgifter till förskola, rektor och avdelning — delvis implementerat.** Förskolan lagrar telefon, adress, ort och öppettider. Dessa visas främst för administratören, och Ärtan kan svara om öppettider. Avdelningar har bara namn; rektor, avdelningstelefon, e-post och en tydlig föräldrasida saknas.
 
 ### Bilder, portfolio och borttappat
 
-- [x] **Privat portfolio per barn — implementerat lokalt, inte publicerat.** Portfolion är separat från skolflödet och använder en privat bucket. Bara behörig personal kan lägga till bilder, uppladdning kräver samtycket Bilder i ärtan och barnets vårdnadshavare samt behörig personal kan läsa. Objekt kan raderas permanent av behörig personal.
-- [x] **Borttappat och efterlysningar — implementerat lokalt, inte publicerat.** Avdelningen kan dela Saknad eller Upphittad med valfri privat bild, fritextsökning och status Öppen, Hittad, Återlämnad eller Avslutad. Inlägg upphör att visas efter 180 dagar, privata kontaktuppgifter efterfrågas inte och bara författaren eller behörig personal kan ändra eller radera.
+- [x] **Privat portfolio per barn — publicerat 2026-11-09.** Portfolion är separat från skolflödet och använder en privat bucket. Bara behörig personal kan lägga till bilder, uppladdning kräver samtycket Bilder i ärtan och barnets vårdnadshavare samt behörig personal kan läsa. Objekt kan raderas permanent av behörig personal.
+- [x] **Borttappat och efterlysningar — publicerat 2026-11-09.** Avdelningen kan dela Saknad eller Upphittad med valfri privat bild, fritextsökning och status Öppen, Hittad, Återlämnad eller Avslutad. Inlägg upphör att visas efter 180 dagar, privata kontaktuppgifter efterfrågas inte och bara författaren eller behörig personal kan ändra eller radera.
 
 ### Frånvaro och skola
 
-- [ ] **Strukturerad sjukanmälan — delvis implementerat lokalt.** Vårdnadshavaren kan välja Sjuk eller Ledig och skriva en behörighetsskyddad orsak via migration 021. Fasta val som diarré, kräkning, feber, ögoninfektion, hosta och löss saknas. De bör vara frivilliga flerval med Annat och fri anteckning, visas endast för behörig personal och aldrig återanvändas som publik smittstatistik om inte organisationen uttryckligen beslutar det.
-- [x] **Läxor, missade uppgifter, progression och registrerade betyg — implementerat lokalt, inte publicerat.** Skolytan visar ämne, period, läge, skolans registrerade betyg, sammanfattning och nästa steg samt uppgifter med datum och status. Barnets vårdnadshavare har läsbehörighet; tilldelad personal och administratör kan skriva. Ärtan gör ingen automatisk bedömning eller betygsberäkning. Inlämningar och en fullständig kursplattform ingår inte i den här leveransen.
+- [ ] **Strukturerad sjukanmälan — delvis implementerat.** Vårdnadshavaren kan välja Sjuk eller Ledig och skriva en behörighetsskyddad orsak via den applicerade migrationen 021. Fasta val som diarré, kräkning, feber, ögoninfektion, hosta och löss saknas. De bör vara frivilliga flerval med Annat och fri anteckning, visas endast för behörig personal och aldrig återanvändas som publik smittstatistik om inte organisationen uttryckligen beslutar det.
+- [x] **Läxor, missade uppgifter, progression och registrerade betyg — publicerat 2026-11-09.** Skolytan visar ämne, period, läge, skolans registrerade betyg, sammanfattning och nästa steg samt uppgifter med datum och status. Barnets vårdnadshavare har läsbehörighet; tilldelad personal och administratör kan skriva. Ärtan gör ingen automatisk bedömning eller betygsberäkning. Inlämningar och en fullständig kursplattform ingår inte i den här leveransen.
 
 ### Rekommenderad leveransordning
 
