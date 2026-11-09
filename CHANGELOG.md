@@ -9,7 +9,7 @@
 - Skolläget döljer lämning, hämtning och barnets låda när verksamheten inte använder dem. Frånvarokortet säger Ingen frånvaro anmäld i stället för Inte incheckad.
 - Skolan kan publicera lektioner och koppla huvudlärare samt ämneslärare. Vårdnadshavare kan skicka privata intyg och frånvarounderlag; personal kan bifoga underlag till uppgifter.
 - Nya uppgifter skapar en barnspecifik vårdnadshavarnotis. Bilagorna ligger i den privata bucketen `child-documents` med barn-, roll- och filtypskontroll.
-- `supabase/024_adaptive_school_experience.sql` och samma kontrakt i `supabase/schema.sql` skapar konfiguration, schema, lärarkopplingar, dokument, notiser, RLS och behörighetsstyrda RPC:er.
+- `supabase/024_adaptive_school_experience.sql` och samma kontrakt i `supabase/schema.sql` skapar konfiguration, schema, lärarkopplingar, dokument, notiser, RLS och behörighetsstyrda RPC:er. Migration 024 applicerades i produktion 2026-11-09.
 - `scripts/adaptive_school_experience_sql_test.py` provar skola/förskola, klasschema, fritidsschema, lärarkoppling, privata bilagor, notiser, barnisolering och spärrade direktwrites i PostgreSQL 16.
 
 ## 2026-11-09 — Tydligare menyer och sjukanmälan
