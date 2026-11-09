@@ -1,5 +1,6 @@
 (function pickupHub(root) {
   const MONTHS = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+  const FULL_MONTHS = ["januari", "februari", "mars", "april", "maj", "juni", "juli", "augusti", "september", "oktober", "november", "december"];
   const DAY_NAMES = ["mån", "tis", "ons", "tor", "fre"];
   const SHORT_DAYS = ["Mån", "Tis", "Ons", "Tor", "Fre"];
   const FULL_DAYS = ["måndag", "tisdag", "onsdag", "torsdag", "fredag"];
@@ -515,6 +516,18 @@
     return { ...fallback, weekNumber: isoWeekNumber(recent.monday), fallback: Boolean(fallback.copied) };
   }
 
+  function weekRangeLabel(days) {
+    const isos = (days || []).map((day) => day.iso).filter(Boolean).sort();
+    if (!isos.length) return "";
+    const start = isoDate(isos[0]);
+    const end = isoDate(isos[isos.length - 1]);
+    if (!start || !end) return "";
+    if (start.getUTCMonth() === end.getUTCMonth() && start.getUTCFullYear() === end.getUTCFullYear()) {
+      return `${start.getUTCDate()}–${end.getUTCDate()} ${FULL_MONTHS[start.getUTCMonth()]}`;
+    }
+    return `${shortDate(isos[0])}–${shortDate(isos[isos.length - 1])}`;
+  }
+
   function renderWeekEditor(model) {
     const rows = (model?.days || []).map((day) => {
       const weekday = Number(day.weekday) || weekdayNumber(day.iso);
@@ -524,24 +537,27 @@
       if (day.closed) classes.push("is-closed");
       if (day.outside) classes.push("is-outside");
       if (day.ledig) classes.push("is-ledig");
-      const circle = `<span class="week-date-circle" aria-hidden="true"><span>${escapeHtml(name)}</span><span>${escapeHtml(shortDate(day.iso))}</span></span><span class="visually-hidden">${escapeHtml(dateLabel)}</span>`;
+      if (day.today) classes.push("is-today");
+      const dayMark = `<div class="week-day"><strong>${escapeHtml(name)}</strong><small>${escapeHtml(day.today ? "Idag" : shortDate(day.iso))}</small><span class="visually-hidden">${escapeHtml(dateLabel)}</span></div>`;
       if (!day.open) {
         const note = day.closed
-          ? `${closedIcon()}<span>Stängt</span>`
+          ? `<span>Stängt</span>${day.closureReason ? `<small>${escapeHtml(day.closureReason)}</small>` : ""}`
           : "<span>Utanför</span>";
-        return `<div class="${classes.join(" ")}" data-weekday="${weekday}">${circle}<span class="week-closed">${note}</span></div>`;
+        return `<div class="${classes.join(" ")}" data-week-day="${escapeHtml(day.iso)}" data-weekday="${weekday}">${dayMark}<span class="week-closed">${note}</span></div>`;
       }
       const disabled = day.ledig ? "disabled" : "";
       const dropoffKind = day.dropoffKind === "contact" ? "is-contact" : "is-guardian";
       const pickupKind = day.pickupKind === "contact" ? "is-contact" : day.pickupKind === "pass" ? "is-pass" : "is-guardian";
       const dropoffInitials = day.dropoffInitials || day.initials || "?";
       const pickupInitials = day.pickupInitials || day.initials || "?";
-      return `<div class="${classes.join(" ")}" data-weekday="${weekday}">${circle}<div class="week-handoffs"><div class="week-handoff"><span class="week-handoff-label">Lämning</span><label class="week-time"><span class="visually-hidden">Lämningstid ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="dropoff" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.dropoff || "")}" ${disabled}></label><button class="week-avatar ${dropoffKind}" type="button" data-action="open-picker" data-person-role="dropoff" data-date="${escapeHtml(day.iso)}" aria-label="Vem lämnar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(dropoffInitials)}</button></div><div class="week-handoff"><span class="week-handoff-label">Hämtning</span><label class="week-time"><span class="visually-hidden">Hämtningstid ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="pickup" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.pickup || "")}" ${disabled}></label><button class="week-avatar ${pickupKind}" type="button" data-action="open-picker" data-person-role="pickup" data-date="${escapeHtml(day.iso)}" aria-label="Vem hämtar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(pickupInitials)}</button></div></div><label class="week-ledig"><input type="checkbox" data-week-ledig data-date="${escapeHtml(day.iso)}" ${day.ledig ? "checked" : ""}><span>Ledig</span></label></div>`;
+      const who = day.pickupName ? `Hämtas av ${day.pickupName}` : "";
+      return `<div class="${classes.join(" ")}" data-week-day="${escapeHtml(day.iso)}" data-weekday="${weekday}">${dayMark}<div class="week-main"><div class="week-clocks"><label class="week-time"><span class="visually-hidden">Lämningstid ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="dropoff" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.dropoff || "")}" ${disabled}></label><span aria-hidden="true">–</span><label class="week-time"><span class="visually-hidden">Hämtningstid ${escapeHtml(dateLabel)}</span><input type="time" data-week-time="pickup" data-date="${escapeHtml(day.iso)}" value="${escapeHtml(day.pickup || "")}" ${disabled}></label></div><div class="week-people"><span class="week-handoff-label">Lämning</span><button class="week-avatar ${dropoffKind}" type="button" data-action="open-picker" data-person-role="dropoff" data-date="${escapeHtml(day.iso)}" aria-label="Vem lämnar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(dropoffInitials)}</button><span class="week-handoff-label">Hämtning</span><button class="week-avatar ${pickupKind}" type="button" data-action="open-picker" data-person-role="pickup" data-date="${escapeHtml(day.iso)}" aria-label="Vem hämtar ${escapeHtml(dateLabel)}" ${disabled}>${escapeHtml(pickupInitials)}</button>${who ? `<span>${escapeHtml(who)}</span>` : ""}</div></div><label class="week-ledig"><input type="checkbox" data-week-ledig data-date="${escapeHtml(day.iso)}" ${day.ledig ? "checked" : ""}><span>Ledig</span></label></div>`;
     }).join("");
     const error = model?.error ? `<p class="notice error">${escapeHtml(model.error)}</p>` : "";
     const note = model?.note ? `<p class="form-hint" data-week-note>${escapeHtml(model.note)}</p>` : "";
-    const copyButton = model?.canCopyPrevious ? `<button class="secondary week-copy" type="button" data-action="same-as-previous-week">Samma som förra veckan</button>` : "";
-    return `<section id="week-sheet" class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="week-sheet-title"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="week-sheet-title">Vecka ${escapeHtml(model?.weekNumber || "")}</h1><button class="week-save" type="button" data-action="save-pickup-week">Spara</button></header><div class="week-sheet-body">${error}${note}${copyButton}${rows}<p class="form-hint">Lämnare och hämtare väljs var för sig. Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen.</p></div></section>`;
+    const copyButton = model?.canCopyPrevious ? `<button class="week-copy link" type="button" data-action="same-as-previous-week">Samma som förra veckan</button>` : "";
+    const range = weekRangeLabel(model?.days);
+    return `<section id="week-sheet" class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="week-sheet-title"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="week-sheet-title">Vecka ${escapeHtml(model?.weekNumber || "")}</h1></header><div class="week-sheet-body">${range ? `<p class="week-range">${escapeHtml(range)}</p>` : ""}${error}${note}<div class="week-rows">${rows}</div>${copyButton}<p class="form-hint">Lämnare och hämtare väljs var för sig. Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen.</p><button class="primary week-save" type="button" data-action="save-pickup-week">Spara veckan</button></div></section>`;
   }
 
   function renderPickerSheet(model) {

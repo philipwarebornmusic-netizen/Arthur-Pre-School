@@ -219,7 +219,8 @@ const sheet = ArtanPickup.renderWeekEditor({
     { iso: "2026-10-23", weekday: 5, closed: true, open: false },
   ],
 });
-assert(sheet.includes("Vecka 43") && sheet.includes("Mån 19 okt") && sheet.includes(">Ledig<") && sheet.includes('type="time"') && sheet.includes(">Spara<") && sheet.includes("is-closed"), "veckovyn visar datum, tider och stängt");
+assert(sheet.includes("Vecka 43") && sheet.includes("Mån 19 okt") && sheet.includes(">Ledig<") && sheet.includes('type="time"') && sheet.includes("Spara veckan") && sheet.includes("is-closed"), "veckovyn visar datum, tider och stängt");
+assert(sheet.includes('data-week-day="2026-10-19"') && sheet.includes('data-week-day="2026-10-23"'), "varje veckorad kan scrollas fram");
 assert(sheet.includes('data-person-role="dropoff"') && sheet.includes('data-person-role="pickup"'), "veckovyn väljer lämnare och hämtare var för sig");
 assert(sheet.includes('data-action="same-as-previous-week"') && sheet.includes("Samma som förra veckan"), "veckovyn kan fyllas från förra veckan");
 assert(!ArtanPickup.renderWeekEditor({ weekNumber: 43, canCopyPrevious: false, days: [] }).includes("same-as-previous-week"), "knappen döljs utan sparad vecka");
@@ -431,11 +432,13 @@ assert(purgeSql.includes("interval '7 days'") && purgeSql.includes("delete from 
 assert(sql.includes("pass_kind = 'permanent'"), "standardhämtare kan bara vara ett permanent pass");
 
 assert(html.includes('<script src="pickup-hub.js"></script>'), "kalendern laddas");
-const nav = app.slice(app.indexOf("function renderNav"), app.indexOf("function render()"));
-assert(nav.includes('["pickup", "◎", "Hämtning"]'), "Hämtning ligger i vårdnadshavarens meny");
-const staffNav = nav.slice(nav.indexOf('role === "staff"'), nav.indexOf('["home", "●", "Min dag"]'));
-assert(staffNav.startsWith('role === "staff"') && !staffNav.includes("Hämtning"), "personal får ingen Hämtning-knapp");
-assert(app.includes('staff: ["attendance", "messages", "people", "incidents", "account"]'), "personalens vyer är oförändrade");
+assert(html.includes('<script src="meals.js"></script>'), "matsedeln laddas");
+const mealSource = readFileSync(new URL("../meals.js", import.meta.url), "utf8");
+const parentTabs = mealSource.slice(mealSource.indexOf("return ["), mealSource.indexOf("];", mealSource.indexOf('["home", "home", "Min dag"]')) + 2);
+assert(parentTabs.includes('["pickup", "clock", "Hämtning"]') && parentTabs.includes("Min dag") && parentTabs.includes("Meddelanden") && parentTabs.includes('"more", "Mer"'), "Hämtning ligger i vårdnadshavarens meny");
+const staffTabs = mealSource.slice(mealSource.indexOf('["attendance", "check", "Närvaro"]'), mealSource.indexOf('["home", "home", "Min dag"]'));
+assert(staffTabs.includes("Matsedel") && !staffTabs.includes("Hämtning"), "personal får Matsedel och ingen Hämtning-knapp");
+assert(mealSource.includes('["attendance", "meals", "messages", "people", "more", "incidents", "account"]'), "personal når närvaro, matsedel, barn, avvikelser och konto");
 assert(!app.includes('registerHubCard("child", { id: "hamtlista"'), "Hämtlista-kortet är borta");
 assert(app.includes("Öppna Hämtning") && app.includes("Hämtlistan, hämtpassen och veckoschemat finns under Hämtning"), "Kontaktpersoner länkar till Hämtning");
 for (const needle of ["share-pass", "print-pass", "open-pass", "remember_pickup_pass_token", "reveal_pickup_pass", "renderTermGrid", "edit-pickup-week", "save-pickup-week", "open-picker", "same-as-previous-week", "weekEditorSeed", "smartFillWeek", "reopenWeekDay", "hasEarlierSavedWeek", "Kopierade vecka", "Ej ifylld", "pickup-current-week", "pickup-add", "copy-pickup-week", "list_department_pickup_plans"]) {

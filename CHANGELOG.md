@@ -6,6 +6,34 @@
 - En vårdnadshavare kan ange en valfri orsak när dagens status är Sjuk eller Ledig. Anteckningen visas för behörig personal i Närvaro och rensas när barnet åter markeras som Kommer eller checkas in.
 - Ärtans standardschematolkare förstår nu intervall som `måndag–fredag` och matchar namngivna vårdnadshavare i fraser som `mamma Johanna lämnar och hämtar`.
 - `supabase/021_child_box_absence_notes.sql` skapar den behörighetsstyrda barnlådan och frånvaroanteckningen. Migrationen applicerades i produktion 2026-11-09.
+## 2026-11-08 — Matsedel
+
+- Föräldrar ser Idag serveras på Min dag, eller Nästa servering på helgen, och öppnar hela veckan därifrån. Hämtningsschemat är kvar.
+- Personal och administratör får Matsedel som en egen flik, direkt efter Närvaro. Närvaro är fortfarande startsidan. Översikt ligger under Mer för administratören, och Barn ligger under Mer för personalen. Menyn är fortfarande fyra flikar.
+- En förskola har en gemensam matsedel. Personal skriver korta rätter per vardag. En befintlig PDF eller bild kan kopplas till ett valt datumintervall och öppnas även när inga rätter är ifyllda. Filen blir inte tolkad till rätter.
+- Bilder på maten är valfria. Uppladdningen säger att bilden bara får visa mat, inga barn.
+- `supabase/migrations/20261108190711_meal_menus.sql` är inte körd. Tills den är godkänd och applicerad säger skärmen att matsedeln inte är aktiverad. `?demo=matsedel` visar en exempelvy som inte sparar något.
+- En ny fil laddas upp på en egen sökväg. Den gamla filen tas bort först efter att den nya referensen är sparad. Ett misslyckat byte lämnar den tidigare filen kvar. Borttagning tillåts för personal och administratör vid `storage.object.delete` och `storage.object.delete_many`, inte för vårdnadshavare och inte som listning.
+- Migreringen ändrar inte `storage.objects`. Den kontrollerar bara att row level security redan är aktiverat, eftersom den roll som kör migreringen inte äger tabellen.
+
+## 2026-11-08 — Läs in rätter från en PDF
+
+- Personal och administratör kan läsa en PDF med text för en vecka, en månad eller en termin. Rätterna visas per riktigt datum och sparas bara om dagen är ikryssad.
+- År gissas inte när veckonumret saknar år. Vecka 52 följd av vecka 1 räknas som årsskifte bara när året redan är känt.
+- Ett foto eller en skannad PDF läses i webbläsaren och måste granskas innan något sparas. En text-PDF läses direkt.
+- En befintlig rätt byts inte utan att rutan kryssas i. Filen bifogas för högst 42 dagar tills migreringen för en hel termin är aktiverad.
+
+## 2026-11-08 — Termin och bildläsning, inte aktiverat
+
+- En ny migrering vidgar sparandet till 186 dagar framåt och en bifogad fil till 186 dagar. Den är inte körd. Tills dess visas de senare dagarna, men de kan inte sparas.
+- Ett foto eller en skannad PDF läses med svensk textigenkänning i webbläsaren. Raderna är avkryssade tills någon granskar dem. Filen skickas inte vidare.
+
+## 2026-11-01 — Mjuka kort
+
+- Hela appen använder samma lugna yta: sandbakgrund, Inter i brödtext, Newsreader i stora rubriker, mjuka kort utan ram och utan skugga, och en solgul knapp per vy.
+- Menyn är fyra flikar på en rad: Min dag, Hämtning och Meddelanden, plus Mer. Barnet, klasslistan och kontot ligger i Mer. Personal och administratör landar på Närvaro, och övriga verktyg ligger i Mer.
+- Min dag öppnar med hälsning, barnets namn, dagens status och hämtningen. Bara den aktuella veckan visas, med datum i rutorna. Visa hela schemat öppnar Hämtning.
+- Veckovyn under Hämtning är en lista med hårfina linjer, Samma som förra veckan och en knapp, Spara veckan. Lämning, hämtning, person och Ledig är kvar.
 
 ## 2026-10-30 — Kortare schema på Min dag
 

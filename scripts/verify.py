@@ -268,6 +268,16 @@ def check_child_care(errors):
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "child care sql test failed").strip()
         errors.append(detail)
+def check_menu_import(errors):
+    for name in ("menu_read_test.mjs", "menu_pdf_test.mjs"):
+        script = ROOT / "scripts" / name
+        if not script.exists():
+            errors.append(f"scripts/{name} is missing")
+            continue
+        result = subprocess.run(["node", str(script)], cwd=ROOT, capture_output=True, text=True)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or f"{name} failed").strip()
+            errors.append(detail)
 
 
 def main():
@@ -283,6 +293,7 @@ def main():
     check_permanent_passes(errors)
     check_weekend_dashboard(errors)
     check_pickup_hub(errors)
+    check_menu_import(errors)
     check_contact_photos(errors)
     check_child_care(errors)
 
