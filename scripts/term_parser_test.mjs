@@ -5,12 +5,12 @@ import { fileURLToPath } from "node:url";
 const appPath = fileURLToPath(new URL("../app.js", import.meta.url));
 const source = fs.readFileSync(appPath, "utf8");
 const start = source.indexOf("const SWEDISH_MONTHS");
-const end = source.indexOf("function weekdaysIn");
-if (start < 0 || end < start) throw new Error("Could not find the term parser in app.js");
+const end = source.indexOf("function roleLabel");
+if (start < 0 || end < start) throw new Error("Could not find the schedule parsers in app.js");
 
 const context = { todayIso: () => "2026-10-22" };
 vm.createContext(context);
-vm.runInContext(`${source.slice(start, end)}\nthis.parseTermText = parseTermText;\nthis.clockRanges = clockRanges;`, context);
+vm.runInContext(`${source.slice(start, end)}\nthis.parseTermText = parseTermText;\nthis.clockRanges = clockRanges;\nthis.parseWeeklyScheduleText = parseWeeklyScheduleText;\nthis.schedulePersonAssignments = schedulePersonAssignments;`, context);
 
 const PHILIP = "Startar 3 aug och slutar 31 dec. Vi har stängt för kompetensutveckling 20 aug, 23 sep & 1 nov. stäng kring jul/nyår 24 dec, 25 dec, 26 dec 30 dec och 31 dec. öppettider är 06.30-17.30";
 let failed = 0;
@@ -147,6 +147,32 @@ if (!threw) {
 }
 
 assertEqual(context.clockRanges("vardagar 8.00-15.00"), [{ start: "08:00", end: "15:00", index: 9 }], "weekly hours with a hyphen still parse");
+
+assertEqual(context.parseWeeklyScheduleText("07:45–16:30 måndag-fredag, mamma Johanna lämnar och hämtar"), [
+  { weekday: 1, attending: true, dropoff_at: "07:45", pickup_at: "16:30" },
+  { weekday: 2, attending: true, dropoff_at: "07:45", pickup_at: "16:30" },
+  { weekday: 3, attending: true, dropoff_at: "07:45", pickup_at: "16:30" },
+  { weekday: 4, attending: true, dropoff_at: "07:45", pickup_at: "16:30" },
+  { weekday: 5, attending: true, dropoff_at: "07:45", pickup_at: "16:30" },
+], "the reported Monday-Friday schedule fills every weekday");
+
+assertEqual(context.schedulePersonAssignments(
+  "07:45–16:30 måndag-fredag, mamma Johanna lämnar och hämtar",
+  [{ id: "guardian-johanna", name: "Johanna Talus" }],
+  [],
+), {
+  dropoffToken: "guardian:guardian-johanna",
+  pickupToken: "guardian:guardian-johanna",
+}, "one named guardian can be both drop-off and pickup person");
+
+assertEqual(context.schedulePersonAssignments(
+  "Johanna lämnar och Peter hämtar",
+  [{ id: "guardian-johanna", name: "Johanna Talus" }, { id: "guardian-peter", name: "Peter Talus" }],
+  [],
+), {
+  dropoffToken: "guardian:guardian-johanna",
+  pickupToken: "guardian:guardian-peter",
+}, "separate named guardians are assigned to the nearest handoff verb");
 
 if (failed) {
   console.error(`${failed} term parser check(s) failed`);

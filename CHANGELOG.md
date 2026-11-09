@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 2026-11-09 — Barnets låda, frånvaroorsak och bättre schematolkning
+
+- Lade till **Barnets låda** med statusarna Slut, Få och Finns för blöjor, extrakläder, regnkläder och strumpor. Vårdnadshavare samt behörig personal ser och uppdaterar samma status, och Min dag påminner när något behöver fyllas på.
+- En vårdnadshavare kan ange en valfri orsak när dagens status är Sjuk eller Ledig. Anteckningen visas för behörig personal i Närvaro och rensas när barnet åter markeras som Kommer eller checkas in.
+- Ärtans standardschematolkare förstår nu intervall som `måndag–fredag` och matchar namngivna vårdnadshavare i fraser som `mamma Johanna lämnar och hämtar`.
+- `supabase/021_child_box_absence_notes.sql` skapar den behörighetsstyrda barnlådan och frånvaroanteckningen. Migrationen applicerades i produktion 2026-11-09.
+
 ## 2026-10-30 — Kortare schema på Min dag
 
 - Min dag visar bara den aktuella schemaveckan i stället för hela terminen. Hela kalendern finns kvar under Hämtning via knappen Visa hela schemat.

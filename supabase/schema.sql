@@ -133,11 +133,21 @@ create table if not exists public.attendance (
   dropoff_at time,
   pickup_at time,
   pickup_by text,
+  absence_note text check (absence_note is null or char_length(trim(absence_note)) between 1 and 500),
   checked_in_at timestamptz,
   checked_out_at timestamptz,
   updated_by uuid references public.profiles(id) on delete set null,
   updated_at timestamptz not null default now(),
   unique (child_id, date)
+);
+
+create table if not exists public.child_box_items (
+  child_id uuid not null references public.children(id) on delete cascade,
+  item_type text not null check (item_type in ('diapers', 'spare_clothes', 'rain_clothes', 'socks')),
+  level text not null check (level in ('none', 'few', 'many')),
+  updated_by uuid references public.profiles(id) on delete set null,
+  updated_at timestamptz not null default now(),
+  primary key (child_id, item_type)
 );
 
 create table if not exists public.posts (
@@ -634,7 +644,8 @@ create or replace function public.save_attendance_plan(
   plan_status public.attendance_status,
   plan_dropoff_at time,
   plan_pickup_at time,
-  plan_pickup_by text
+  plan_pickup_by text,
+  plan_absence_note text
 )
 returns public.attendance
 language plpgsql
@@ -643,6 +654,7 @@ set search_path = public
 as $$
 declare
   saved_attendance public.attendance;
+  normalized_note text := nullif(trim(plan_absence_note), '');
 begin
   if auth.uid() is null then raise exception 'Du måste vara inloggad'; end if;
   if not public.is_guardian(target_child_id) then raise exception 'Du är inte vårdnadshavare för barnet'; end if;
@@ -651,6 +663,8 @@ begin
     raise exception 'Hämtningstiden måste vara efter lämningstiden';
   end if;
   if char_length(coalesce(trim(plan_pickup_by), '')) > 200 then raise exception 'Hämtarens namn är för långt'; end if;
+  if char_length(coalesce(normalized_note, '')) > 500 then raise exception 'Frånvaroorsaken är för lång'; end if;
+  if plan_status = 'in' then normalized_note := null; end if;
   if plan_status <> 'in' and exists (
     select 1 from public.attendance
     where child_id = target_child_id
@@ -662,21 +676,79 @@ begin
   end if;
 
   insert into public.attendance (
-    child_id, date, status, dropoff_at, pickup_at, pickup_by, updated_by, updated_at
+    child_id, date, status, dropoff_at, pickup_at, pickup_by, absence_note, updated_by, updated_at
   ) values (
     target_child_id, current_date, plan_status, plan_dropoff_at, plan_pickup_at,
-    nullif(trim(plan_pickup_by), ''), public.current_profile_id(), now()
+    nullif(trim(plan_pickup_by), ''), normalized_note, public.current_profile_id(), now()
   )
   on conflict (child_id, date) do update
   set status = excluded.status,
       dropoff_at = excluded.dropoff_at,
       pickup_at = excluded.pickup_at,
       pickup_by = excluded.pickup_by,
+      absence_note = excluded.absence_note,
       updated_by = excluded.updated_by,
       updated_at = excluded.updated_at
   returning * into saved_attendance;
 
   return saved_attendance;
+end;
+$$;
+
+create or replace function public.list_child_box_items()
+returns table (
+  child_id uuid,
+  item_type text,
+  level text,
+  updated_at timestamptz
+)
+language sql
+stable
+set search_path = public
+as $$
+  select box.child_id, box.item_type, box.level, box.updated_at
+  from public.child_box_items box
+  order by box.child_id, box.item_type
+$$;
+
+create or replace function public.save_child_box(target_child_id uuid, items jsonb)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  item jsonb;
+  item_name text;
+  item_level text;
+begin
+  if auth.uid() is null then raise exception 'Du måste vara inloggad'; end if;
+  if not (
+    public.is_guardian(target_child_id)
+    or public.is_staff_for_child(target_child_id)
+    or public.is_admin_for_child(target_child_id)
+  ) then
+    raise exception 'Du saknar behörighet till barnets låda';
+  end if;
+  if jsonb_typeof(items) <> 'array' or jsonb_array_length(items) = 0 then
+    raise exception 'Välj minst en status i barnets låda';
+  end if;
+  if jsonb_array_length(items) > 4 then raise exception 'För många saker i barnets låda'; end if;
+
+  for item in select value from jsonb_array_elements(items)
+  loop
+    item_name := item->>'item_type';
+    item_level := item->>'level';
+    if item_name not in ('diapers', 'spare_clothes', 'rain_clothes', 'socks') then raise exception 'Ogiltig sak i barnets låda'; end if;
+    if item_level not in ('none', 'few', 'many') then raise exception 'Ogiltig status i barnets låda'; end if;
+    if (select count(*) from jsonb_array_elements(items) candidate where candidate->>'item_type' = item_name) > 1 then
+      raise exception 'Samma sak finns flera gånger i barnets låda';
+    end if;
+    insert into public.child_box_items (child_id, item_type, level, updated_by, updated_at)
+    values (target_child_id, item_name, item_level, public.current_profile_id(), now())
+    on conflict (child_id, item_type) do update
+    set level = excluded.level, updated_by = excluded.updated_by, updated_at = excluded.updated_at;
+  end loop;
 end;
 $$;
 
@@ -708,12 +780,12 @@ begin
       raise exception 'Barnet är redan incheckat';
     end if;
     insert into public.attendance (
-      child_id, date, status, checked_in_at, checked_out_at, updated_by, updated_at
+      child_id, date, status, checked_in_at, checked_out_at, absence_note, updated_by, updated_at
     ) values (
-      target_child_id, current_date, 'in', now(), null, public.current_profile_id(), now()
+      target_child_id, current_date, 'in', now(), null, null, public.current_profile_id(), now()
     )
     on conflict (child_id, date) do update
-    set status = 'in', checked_in_at = now(), checked_out_at = null,
+    set status = 'in', checked_in_at = now(), checked_out_at = null, absence_note = null,
         updated_by = public.current_profile_id(), updated_at = now()
     returning * into saved_attendance;
   elsif transition = 'check_out' then
@@ -755,6 +827,7 @@ alter table public.child_guardians enable row level security;
 alter table public.child_contacts enable row level security;
 alter table public.staff_departments enable row level security;
 alter table public.attendance enable row level security;
+alter table public.child_box_items enable row level security;
 alter table public.posts enable row level security;
 alter table public.consents enable row level security;
 alter table public.invitations enable row level security;
@@ -770,7 +843,7 @@ begin
       and tablename = any(array[
         'organizations', 'preschools', 'departments', 'profiles', 'children',
         'child_health', 'child_guardians', 'child_contacts', 'staff_departments',
-        'attendance', 'posts', 'consents', 'invitations', 'shelf_items',
+        'attendance', 'child_box_items', 'posts', 'consents', 'invitations', 'shelf_items',
         'documents', 'document_signatures', 'playdate_opt_ins', 'playdate_requests',
         'lost_items', 'calendar_feeds', 'calendar_events'
       ])
@@ -855,6 +928,9 @@ create policy "attendance authorized update" on public.attendance
 for update using (public.is_admin_for_child(child_id) or public.is_guardian(child_id) or public.is_staff_for_child(child_id))
 with check (public.is_admin_for_child(child_id) or public.is_guardian(child_id) or public.is_staff_for_child(child_id));
 
+create policy "child box authorized read" on public.child_box_items
+for select using (public.is_admin_for_child(child_id) or public.is_guardian(child_id) or public.is_staff_for_child(child_id));
+
 create policy "post authorized read" on public.posts
 for select using (
   public.is_admin_for_department(department_id)
@@ -892,16 +968,20 @@ revoke all on function public.update_child_profile(uuid, text, date, text) from 
 revoke all on function public.register_guardian_child(text, date, uuid) from public;
 revoke all on function public.create_invitation(text, text, uuid, uuid, text) from public;
 revoke all on function public.accept_invitation(text) from public;
-revoke all on function public.save_attendance_plan(uuid, public.attendance_status, time, time, text) from public;
+revoke all on function public.save_attendance_plan(uuid, public.attendance_status, time, time, text, text) from public;
 revoke all on function public.set_child_attendance(uuid, text) from public;
+revoke all on function public.list_child_box_items() from public;
+revoke all on function public.save_child_box(uuid, jsonb) from public;
 grant execute on function public.create_organization(text, text, text, text) to authenticated;
 grant execute on function public.create_preschool(text, text, text, text, text, text, text) to authenticated;
 grant execute on function public.update_child_profile(uuid, text, date, text) to authenticated;
 grant execute on function public.register_guardian_child(text, date, uuid) to authenticated;
 grant execute on function public.create_invitation(text, text, uuid, uuid, text) to authenticated;
 grant execute on function public.accept_invitation(text) to authenticated;
-grant execute on function public.save_attendance_plan(uuid, public.attendance_status, time, time, text) to authenticated;
+grant execute on function public.save_attendance_plan(uuid, public.attendance_status, time, time, text, text) to authenticated;
 grant execute on function public.set_child_attendance(uuid, text) to authenticated;
+grant execute on function public.list_child_box_items() to authenticated;
+grant execute on function public.save_child_box(uuid, jsonb) to authenticated;
 
 grant select, insert, update, delete on public.organizations, public.preschools, public.departments,
   public.profiles, public.children, public.child_health, public.child_guardians,
@@ -909,6 +989,8 @@ grant select, insert, update, delete on public.organizations, public.preschools,
   public.consents, public.invitations to authenticated;
 grant select on public.attendance to authenticated;
 revoke insert, update, delete on public.attendance from authenticated;
+grant select on public.child_box_items to authenticated;
+revoke insert, update, delete on public.child_box_items from authenticated;
 revoke update on public.profiles from authenticated;
 grant update (name, phone) on public.profiles to authenticated;
 revoke update on public.children from authenticated;

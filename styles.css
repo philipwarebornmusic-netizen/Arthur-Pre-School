@@ -264,6 +264,19 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .consent-choices button { min-height: 44px; background: var(--paper); border: 1px solid var(--line); border-radius: 13px; font-weight: 900; }
 .consent-choices button[aria-pressed="true"] { background: var(--sun); border-color: var(--sun); }
 .consent-grid { display: grid; gap: 12px; }
+.child-box-grid { display: grid; gap: 12px; }
+.child-box-item { margin: 0; padding: 14px; background: #fffcf7; border: 1px solid var(--line); border-radius: 18px; }
+.child-box-item legend { padding: 0 5px; font-size: 18px; font-weight: 900; }
+.child-box-item .form-hint { margin: 9px 0 0; text-align: right; }
+.child-box-levels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.child-box-levels label { position: relative; min-width: 0; }
+.child-box-levels input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.child-box-levels span { display: grid; place-items: center; min-height: 44px; padding: 6px; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; font-size: 13px; font-weight: 900; text-align: center; }
+.child-box-levels input:focus-visible + span { outline: 3px solid rgb(47 62 70 / 24%); outline-offset: 2px; }
+.child-box-levels input[value="none"]:checked + span { background: var(--coral-soft); border-color: #eab7a8; color: var(--coral-text); }
+.child-box-levels input[value="few"]:checked + span { background: var(--sun-soft); border-color: #dfc359; }
+.child-box-levels input[value="many"]:checked + span { background: var(--sage-soft); border-color: #a8c6ac; color: #28563d; }
+
 
 .term-overview, .term-admin-list, .term-managed-school { display: grid; gap: 14px; }
 .term-manager-toggle { align-items: center; min-height: 44px; margin-top: 8px; font-weight: 800; }
@@ -299,6 +312,7 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .attendance-state.in { background: #dcebdc; color: #28563d !important; }
 .attendance-state.picked_up { background: #e6edf2; }
 .attendance-state.absent_sick, .attendance-state.absent_leave { background: #f7e5df; color: #7a3d2c !important; }
+.absence-note { margin: 8px 0 0; color: var(--coral-text); font-size: 13px; font-weight: 800; line-height: 1.4; }
 .attendance-actions { display: grid; gap: 8px; }
 .attendance-primary { width: 100%; min-height: 48px; }
 .attendance-secondary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }

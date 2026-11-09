@@ -65,6 +65,7 @@ function dashboard(iso) {
     attendanceFor: () => null,
     contactsFor: () => [],
     childInfoChecklist: () => [],
+    childBoxNeedsRefill: () => [],
     attendanceState: (attendance) => attendance?.status || "not_in",
     attendanceLabel: (status) => status === "not_in" ? "Inte incheckad" : status,
     departmentName: () => "Testavdelningen",

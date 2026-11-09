@@ -96,6 +96,43 @@ Hela funktionspaketet ska planeras, men införas i kontrollerade etapper. Ärtan
 
 Etapp 5 kräver separat rättslig bedömning och konsekvensbedömning innan utveckling eller test med riktiga barnbilder.
 
+## Funktionsinventering 2026-11-09
+
+Statusorden nedan beskriver nuläget efter produktionspubliceringen 2026-11-09.
+
+### Önskad vardagsyta
+
+- [ ] **Korta rutor för dagens och veckans viktigaste — delvis implementerat.** Min dag visar barnets status, högst tre påminnelser, aktuell schemavecka och senaste meddelanden. Det saknas ett samlat, kompakt rutnät med exempelvis Idag, Hämtning, Veckan och Att göra.
+- [ ] **Röd/grön incheckningsikon längst upp — delvis implementerat.** Min dag visar status som text. Personalens närvarolista har färgkodade statusetiketter. Förälderns sidhuvud saknar fortfarande en tydlig ikon med grön status för incheckad och röd status för inte incheckad eller frånvarande; färg får inte vara den enda signalen.
+- [ ] **Mindre ikoner och mindre skroll — delvis implementerat.** Barnet, Skolor och Personer använder kompakta hubbkort och separata detaljvyer. Min dag, Hämtning, Meddelanden och Närvaro kan fortfarande bli långa. Nästa designsteg bör vara en kompakt översikt överst och progressiv öppning av detaljer, inte att ta bort information.
+- [x] **Ikon/status för blöjor och extrakläder — implementerat.** Barnets låda har Blöjor, Extrakläder, Regnkläder och Strumpor med Slut, Få eller Finns. Vårdnadshavare och behörig personal delar statusen. Databasstödet finns i den applicerade migrationen `supabase/021_child_box_absence_notes.sql`.
+
+### Schema, händelser och information
+
+- [ ] **Lägga schema för flera veckor samtidigt — delvis implementerat.** Standardveckan kan fylla återkommande tider, en vecka kan kopieras till nästa och hela terminen visas. Det saknas val av ett godtyckligt veckointervall, förhandsgranskning av alla berörda datum och en atomisk sparaåtgärd för flera veckor.
+- [ ] **Viktig banner från förskolan — saknas som egen funktion.** Officiella inlägg och behörighetsstyrda notiser finns, men inget tidsstyrt, prioriterat bannerläge för exempelvis magsjukeutbrott, stängning eller akut praktisk information. En banner behöver målgrupp, start/slut, allvarlighetsgrad, ansvarig avsändare och revisionslogg.
+- [ ] **Händelser i schema med påminnelser och OSA — delvis implementerat.** Publicerade terminer, stängningsdagar, kalenderprenumeration och privat OSA till födelsedagskalas finns. Verksamhetshändelser som utvecklingssamtal, julfirande och sommaravslutning saknar egen datamodell, OSA och tidsstyrda påminnelser.
+- [ ] **Kontaktuppgifter till förskola, rektor och avdelning — delvis implementerat.** Förskolan lagrar telefon, adress, ort och öppettider. Dessa visas främst för administratören, och Ärtan kan svara om öppettider. Avdelningar har bara namn; rektor, avdelningstelefon, e-post och en tydlig föräldrasida saknas.
+
+### Bilder, portfolio och borttappat
+
+- [ ] **Privat portfolio per barn — saknas.** Profilbild och samtyckeskontrollerade bilder i officiella inlägg finns, men ingen barnspecifik portfoliomapp. En portfolio måste vara separat från skolflödet, privat för barnets vårdnadshavare och behörig personal, ha ändamål, gallring, bildsamtycke och dokumenterad åtkomst.
+- [ ] **Borttappat och efterlysningar — saknas.** Det finns ingen aktiv tabell eller vy trots att ett gammalt tabellnamn förekommer i policyrensningen. Funktionen behöver avdelningsbegränsade efterlysningar och upphittade saker, valfri bild, status Öppen/Hittad/Återlämnad, automatisk gallring och ingen exponering av privata kontaktuppgifter.
+
+### Frånvaro och skola
+
+- [ ] **Strukturerad sjukanmälan — delvis implementerat lokalt.** Vårdnadshavaren kan välja Sjuk eller Ledig och skriva en behörighetsskyddad orsak via migration 021. Fasta val som diarré, kräkning, feber, ögoninfektion, hosta och löss saknas. De bör vara frivilliga flerval med Annat och fri anteckning, visas endast för behörig personal och aldrig återanvändas som publik smittstatistik om inte organisationen uttryckligen beslutar det.
+- [ ] **Läxor, missade uppgifter, progression och betyg — saknas.** Detta är ett separat skolmodulbehov, inte en förskolefunktion. Det kräver ämnen, kurs/årskurs, uppgifter, inlämningar, återkoppling och betyg med strikt elev-/vårdnadshavar-/lärarbehörighet, historik och tydlig skillnad mellan registrerad bedömning och automatisk sammanfattning. Ärtan får inte själv bedöma barnet eller föreslå betyg.
+
+### Rekommenderad leveransordning
+
+1. **Slutför redan påbörjad vardagsgrund:** granska och applicera migration 021, publicera Barnets låda och frånvaroanteckning, lägg därefter strukturerade sjukorsaker och den tydliga incheckningsikonen i samma närvaroflöde.
+2. **Korta startsidan:** samla Idag, Hämtning, Veckan och Att göra i kompakta rutor och låt detaljer öppnas separat. Detta minskar skroll innan fler moduler läggs till.
+3. **Gemensam verksamhetsinformation:** bygg föräldrasidan för kontaktuppgifter, prioriterade banners och därefter verksamhetshändelser med OSA och påminnelser.
+4. **Effektivisera schemat:** lägg till valbart veckointervall och atomisk flerveckorssparning ovanpå befintlig kalender och standardvecka.
+5. **Bild- och sakflöden efter integritetsgranskning:** portfolio och borttappat behöver privata lagringsytor, gallring och egna behörighetsprov innan UI byggs.
+6. **Skolmodul separat:** läxor, uppgifter, progression och betyg aktiveras endast för skolorganisationer efter egen datamodell, rättslig bedömning och behörighetsgranskning.
+
 ## Framtidsidé: bildsamtycke och säker publicering
 
 ### Problem

@@ -22,6 +22,8 @@ Together, the upgrade preflight and schema handle both a new database and the pr
 - provides an official school feed with comments, private parent–staff messaging, atomic staff messages to every guardian of a child, and consent-gated multi-image posts in a private Storage bucket;
 - separates guardian-planned attendance from staff-recorded check-in and check-out times;
 - lets administrators publish immutable, non-overlapping school terms with weekday hours and closures, then lets guardians save recurring Monday–Friday schedules for their children;
+- lets guardians record an optional reason for today's absence, visible only to authorized guardians and preschool staff;
+- gives each child a shared supply box for diapers and spare clothing that guardians and assigned staff/admins can update;
 - keeps parent-to-parent messaging and playdate requests off until both parents opt in;
 - provides private, same-department birthday invitations with separate mutual opt-in and recipient-isolated RSVP responses;
 - removes the known Solgläntan demo organization and exact @arthur.test accounts.
@@ -88,6 +90,12 @@ Pickup handoff people
 - A saved attending day has separate guardian/contact fields for the person leaving the child and the person picking the child up. Pickup passes remain pickup-only.
 - Existing guardian/contact pickup choices are copied to the drop-off choice during migration. Existing pickup-pass rows keep an empty drop-off choice until a guardian reviews and saves them.
 - The calendar, standard week, week copy, audit log and staff caption carry both choices. Direct table access remains revoked; guardians write through security-definer RPCs.
+
+Child supply box and absence notes
+- supabase/021_child_box_absence_notes.sql was applied in production on 2026-11-09. Do not run it there again.
+- The migration adds an optional, 500-character absence note to the existing attendance row. Saving a present plan or checking the child in clears an older absence note.
+- The fixed box items are diapers, spare clothes, rain clothes, and socks, each with Slut, Få, or Finns. Guardians, assigned staff, and organization administrators for the child can read and update them.
+- Direct writes to child_box_items stay revoked. save_child_box validates the child relationship, fixed item names, fixed levels, and duplicate items before an atomic update.
 
 Incident reports
 - supabase/012_incident_reports.sql is not applied in production. Do not run it until incident reports should go live.
