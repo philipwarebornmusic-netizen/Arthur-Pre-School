@@ -121,8 +121,8 @@ Statusorden nedan beskriver produktionen efter publiceringen 2026-11-09.
 
 ### Frånvaro och skola
 
-- [ ] **Strukturerad sjukanmälan — delvis implementerat.** Vårdnadshavaren kan välja Sjuk eller Ledig och skriva en behörighetsskyddad orsak via den applicerade migrationen 021. Fasta val som diarré, kräkning, feber, ögoninfektion, hosta och löss saknas. De bör vara frivilliga flerval med Annat och fri anteckning, visas endast för behörig personal och aldrig återanvändas som publik smittstatistik om inte organisationen uttryckligen beslutar det.
-- [x] **Läxor, missade uppgifter, progression och registrerade betyg — publicerat 2026-11-09.** Skolytan visar ämne, period, läge, skolans registrerade betyg, sammanfattning och nästa steg samt uppgifter med datum och status. Barnets vårdnadshavare har läsbehörighet; tilldelad personal och administratör kan skriva. Ärtan gör ingen automatisk bedömning eller betygsberäkning. Inlämningar och en fullständig kursplattform ingår inte i den här leveransen.
+- [ ] **Strukturerad sjukanmälan — delvis implementerat.** Vårdnadshavaren kan välja Sjuk eller Ledig, registrera dagens frånvaro till och med ett valt slutdatum inom 31 dagar och skriva en behörighetsskyddad orsak via migrationerna 021 och 023. Fasta val som diarré, kräkning, feber, ögoninfektion, hosta och löss saknas. De bör vara frivilliga flerval med Annat och fri anteckning, visas endast för behörig personal och aldrig återanvändas som publik smittstatistik om inte organisationen uttryckligen beslutar det.
+- [x] **Uppgifter, missade uppgifter och utveckling — publicerat 2026-11-09.** Skolytan visar ämne, period, utvecklingsläge, sammanfattning och nästa steg samt uppgifter med datum och status. Barnets vårdnadshavare har läsbehörighet; tilldelad personal och administratör kan skriva. Ärtan skapar inga automatiska omdömen. Inlämningar och en fullständig kursplattform ingår inte i den här leveransen.
 
 ### Rekommenderad leveransordning
 
@@ -131,7 +131,7 @@ Statusorden nedan beskriver produktionen efter publiceringen 2026-11-09.
 3. **Gemensam verksamhetsinformation:** bygg föräldrasidan för kontaktuppgifter, prioriterade banners och därefter verksamhetshändelser med OSA och påminnelser.
 4. **Effektivisera schemat:** lägg till valbart veckointervall och atomisk flerveckorssparning ovanpå befintlig kalender och standardvecka.
 5. **Bild- och sakflöden efter integritetsgranskning:** portfolio och borttappat behöver privata lagringsytor, gallring och egna behörighetsprov innan UI byggs.
-6. **Skolmodul separat:** läxor, uppgifter, progression och betyg aktiveras endast för skolorganisationer efter egen datamodell, rättslig bedömning och behörighetsgranskning.
+6. **Skolmodul separat:** uppgifter och utveckling aktiveras endast för skolorganisationer efter egen datamodell, rättslig bedömning och behörighetsgranskning.
 
 ## Framtidsidé: bildsamtycke och säker publicering
 

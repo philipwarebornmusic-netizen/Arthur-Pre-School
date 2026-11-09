@@ -537,6 +537,7 @@
       if (day.closed) classes.push("is-closed");
       if (day.outside) classes.push("is-outside");
       if (day.ledig) classes.push("is-ledig");
+      if (day.absenceStatus) classes.push("is-absence");
       if (day.today) classes.push("is-today");
       const dayMark = `<div class="week-day"><strong>${escapeHtml(name)}</strong><small>${escapeHtml(day.today ? "Idag" : shortDate(day.iso))}</small><span class="visually-hidden">${escapeHtml(dateLabel)}</span></div>`;
       if (!day.open) {
@@ -544,6 +545,10 @@
           ? `<span>Stängt</span>${day.closureReason ? `<small>${escapeHtml(day.closureReason)}</small>` : ""}`
           : "<span>Utanför</span>";
         return `<div class="${classes.join(" ")}" data-week-day="${escapeHtml(day.iso)}" data-weekday="${weekday}">${dayMark}<span class="week-closed">${note}</span></div>`;
+      }
+      if (day.absenceStatus) {
+        const absenceLabel = day.absenceStatus === "absent_sick" ? "Sjuk" : "Ledig";
+        return `<div class="${classes.join(" ")}" data-week-day="${escapeHtml(day.iso)}" data-weekday="${weekday}">${dayMark}<span class="week-absence"><strong>${absenceLabel}</strong><small>Ingen lämning eller hämtning</small></span></div>`;
       }
       const disabled = day.ledig ? "disabled" : "";
       const dropoffKind = day.dropoffKind === "contact" ? "is-contact" : "is-guardian";
@@ -555,9 +560,13 @@
     }).join("");
     const error = model?.error ? `<p class="notice error">${escapeHtml(model.error)}</p>` : "";
     const note = model?.note ? `<p class="form-hint" data-week-note>${escapeHtml(model.note)}</p>` : "";
-    const copyButton = model?.canCopyPrevious ? `<button class="week-copy link" type="button" data-action="same-as-previous-week">Samma som förra veckan</button>` : "";
+    const hasEditableDay = (model?.days || []).some((day) => day.open && !day.absenceStatus);
+    const copyButton = hasEditableDay && model?.canCopyPrevious ? `<button class="week-copy link" type="button" data-action="same-as-previous-week">Samma som förra veckan</button>` : "";
+    const controls = hasEditableDay
+      ? `${copyButton}<p class="form-hint">Lämnare och hämtare väljs var för sig. Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen.</p><button class="primary week-save" type="button" data-action="save-pickup-week">Spara veckan</button>`
+      : `<p class="form-hint">Frånvaron är registrerad på Min dag. Ändra dagens status där om barnet kommer tillbaka tidigare.</p>`;
     const range = weekRangeLabel(model?.days);
-    return `<section id="week-sheet" class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="week-sheet-title"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="week-sheet-title">Vecka ${escapeHtml(model?.weekNumber || "")}</h1></header><div class="week-sheet-body">${range ? `<p class="week-range">${escapeHtml(range)}</p>` : ""}${error}${note}<div class="week-rows">${rows}</div>${copyButton}<p class="form-hint">Lämnare och hämtare väljs var för sig. Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen.</p><button class="primary week-save" type="button" data-action="save-pickup-week">Spara veckan</button></div></section>`;
+    return `<section id="week-sheet" class="week-sheet" role="dialog" aria-modal="true" aria-labelledby="week-sheet-title"><header class="week-sheet-bar"><button class="week-back" type="button" data-action="close-pickup-editor" aria-label="Tillbaka">‹</button><h1 id="week-sheet-title">Vecka ${escapeHtml(model?.weekNumber || "")}</h1></header><div class="week-sheet-body">${range ? `<p class="week-range">${escapeHtml(range)}</p>` : ""}${error}${note}<div class="week-rows">${rows}</div>${controls}</div></section>`;
   }
 
   function renderPickerSheet(model) {

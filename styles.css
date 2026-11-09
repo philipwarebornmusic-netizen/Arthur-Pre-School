@@ -190,6 +190,10 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .hub-back { display: inline-flex; align-items: center; min-height: 44px; margin: 0 0 4px; padding: 0; background: transparent; border: 0; font-weight: 500; text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--line); }
 .hub-panel > .h1 { margin: 2px 0 16px; }
 .hub-icon-grid, .menu-icon-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 12px; }
+.message-category-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.message-category-grid .hub-icon-tile { min-height: 124px; padding: 16px; }
+.message-category-grid .hub-icon-tile .hub-card-title { font-size: 16px; }
+.message-category-grid .hub-icon-tile .hub-card-status { font-size: 12px; }
 .menu-section { margin-top: 20px; }
 .menu-section .menu-label { margin: 0 2px 9px; }
 .hub-icon-tile, .menu-icon-tile { display: grid; grid-template-rows: auto auto 1fr; justify-items: start; align-content: start; gap: 6px; min-width: 0; min-height: 106px; margin: 0; padding: 10px; background: var(--paper); border: 1px solid transparent; border-radius: 18px; box-shadow: none; text-align: left; }
@@ -206,6 +210,10 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .quick-panel > summary strong { font-size: 16px; }
 .quick-panel > summary small { color: var(--muted); font-size: 12px; }
 .quick-panel[open] > summary .menu-chevron { transform: rotate(90deg); }
+#daily-plan:not([open]) { display: none; }
+.today-status-card { position: relative; display: block; width: 100%; color: var(--ink); border: 0; text-align: left; cursor: pointer; }
+.today-status-card .soft-label, .today-status-card .soft-value, .today-status-card .soft-sub { display: flex; }
+.today-status-action { position: absolute; top: 22px; right: 18px; display: inline-flex; align-items: center; gap: 2px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .quick-panel-form { margin: 0; padding: 16px; border-top: 1px solid var(--hair); }
 .quick-panel-form .primary { width: 100%; }
 .present-day-content, .home-reminder-content { display: contents; }
@@ -220,6 +228,9 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .quick-panel-form [data-attendance-present-fields] { display: grid; gap: 12px; }
 .quick-panel-form .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .quick-panel-form input { min-height: 46px; }
+.absence-period-field { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; }
+.absence-period-field > span { font-size: 14px; font-weight: 800; }
+.absence-period-field input { width: 100%; }
 .screen:has(#daily-plan[open]) > .hi,
 .screen:has(#daily-plan[open]) > .h1,
 .screen:has(#daily-plan[open]) > .soft-card.is-today,
@@ -228,6 +239,7 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .quick-panel.is-disabled h2, .quick-panel.is-disabled p { margin: 0; }
 @media (min-width: 700px) {
   .hub-icon-grid, .menu-icon-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .message-category-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
 }
 @media (hover: hover) {
   .hub-icon-tile:hover, .menu-icon-tile:hover { background: #fffdf8; border-color: #e5c878; }
@@ -697,6 +709,7 @@ button.term-cell { width: 100%; }
 .week-row.is-closed { background: transparent; color: var(--coral-text); }
 .week-row.is-outside { background: transparent; color: var(--muted); }
 .week-row.is-ledig { opacity: .55; }
+.week-row.is-absence { background: var(--coral-soft); }
 .week-row.is-today .week-day small { color: #8a5d00; font-weight: 600; }
 .week-day strong { display: block; font-size: 15px; font-weight: 500; }
 .week-day small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 400; }
@@ -712,6 +725,9 @@ button.term-cell { width: 100%; }
 .week-ledig input { width: 18px; height: 18px; }
 .week-closed { display: flex; align-items: center; gap: 8px; color: var(--coral-text); font-weight: 500; }
 .week-closed small { display: block; color: var(--coral-text); font-size: 12px; font-weight: 400; }
+.week-absence { grid-column: 2 / -1; display: grid; gap: 3px; color: var(--coral-text); }
+.week-absence strong { font-size: 16px; }
+.week-absence small { font-size: 12px; }
 .week-avatar { display: inline-block; width: 8px; height: 8px; min-width: 8px; padding: 0; overflow: hidden; background: var(--sage); border-radius: 50%; color: transparent; font-size: 0; line-height: 0; }
 .picker-avatar { display: grid; place-items: center; width: 42px; height: 42px; padding: 0; background: var(--sun-soft); border-radius: 50%; font-size: 13px; font-weight: 600; }
 .week-avatar.is-contact, .week-avatar.is-pass { background: var(--sky); }

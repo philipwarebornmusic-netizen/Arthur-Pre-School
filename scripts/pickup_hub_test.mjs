@@ -228,6 +228,14 @@ assert(ArtanPickup.renderWeekEditor({ weekNumber: 47, canCopyPrevious: true, not
 assert(sheet.includes("Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen."), "hinten förklarar ifyllnaden");
 assert(!sheet.includes('data-week-ledig" checked') && !sheet.includes("checked"), "Ledig är avmarkerad när dagen inte är ledig");
 
+const sickSheet = ArtanPickup.renderWeekEditor({
+  weekNumber: 46,
+  days: [{ iso: "2026-11-09", weekday: 1, open: true, today: true, absenceStatus: "absent_sick", dropoff: "08:00", pickup: "16:30" }],
+});
+assert(sickSheet.includes("Sjuk") && sickSheet.includes("Ingen lämning eller hämtning"), "sjukfrånvaro ska synas i veckoschemat");
+assert(!sickSheet.includes('data-week-time=') && !sickSheet.includes('data-week-ledig'), "en sjuk dag ska inte visa redigerbara lämningstider eller Ledig-val");
+assert(!sickSheet.includes("Spara veckan") && sickSheet.includes("Frånvaron är registrerad på Min dag"), "en helt frånvarande vecka ska inte kunna sparas som hämtningsvecka");
+
 function editorDay(days, iso) {
   return days.find((item) => item.iso === iso);
 }

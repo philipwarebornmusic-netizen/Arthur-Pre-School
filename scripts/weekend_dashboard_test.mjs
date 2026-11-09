@@ -47,7 +47,7 @@ function fixedDate(iso) {
   };
 }
 
-function dashboard(iso, attendance = null) {
+function dashboard(iso, attendance = null, { assignments = [], posts = [] } = {}) {
   const child = { id: "child-1", name: "Arthur", department_id: "department-1" };
   const context = {
     Date: fixedDate(iso),
@@ -56,11 +56,15 @@ function dashboard(iso, attendance = null) {
       attendance: attendance ? [attendance] : [],
       children: [child],
       contacts: [],
-      posts: [],
+      posts,
       notices: [],
       incidentCopies: [],
       pickupWeekReady: false,
       attendanceNotesReady: true,
+      multiDayAbsenceReady: true,
+      familyFeaturesReady: true,
+      schoolAssignments: assignments,
+      schoolProgress: [],
     },
     selectedChild: () => child,
     attendanceFor: () => attendance,
@@ -79,7 +83,7 @@ function dashboard(iso, attendance = null) {
     renderPickupWeekNudge: () => "",
     renderPassRenewalCards: () => "",
     renderParentTermSchedules: () => "",
-    renderMealTodayCard: () => "",
+    renderMealTodayCard: () => '<section data-test-meal>Dagens mat</section>',
     renderSiblingRequestForm: () => "",
     renderPost: () => "",
     emptyState: () => "",
@@ -87,10 +91,14 @@ function dashboard(iso, attendance = null) {
     field: () => "<input>",
     esc: (value) => String(value ?? ""),
     navIcon: () => "",
+    formatTimestamp: () => "26 okt.",
+    ASSIGNMENT_STATUS: { homework: "Uppgift", missing: "Missad uppgift", submitted: "Inlämnad", completed: "Klar" },
   };
   vm.createContext(context);
   vm.runInContext([
     functionSource("todayIso"),
+    functionSource("formatDate"),
+    functionSource("addDaysIso"),
     functionSource("isWeekend"),
     functionSource("childFirstName"),
     functionSource("formatClock"),
@@ -100,6 +108,8 @@ function dashboard(iso, attendance = null) {
     functionSource("todayStatusCopy"),
     functionSource("pickupCardCopy"),
     functionSource("parentReminders"),
+    functionSource("schoolworkFor"),
+    functionSource("renderHomeAssignments"),
     functionSource("renderParentHome"),
   ].join("\n"), context);
   return {
@@ -115,26 +125,38 @@ assert(sunday.html.includes("Ingen dagsplan eller incheckning behövs under helg
 assert(!sunday.html.includes("Inte incheckad"), "helgen får inte visa vardagens frånvarostatus");
 assert(!sunday.html.includes('id="daily-plan"'), "helgen får inte visa dagens plan");
 assert(!sunday.reminders.some((item) => item.target === "daily-plan"), "helgen får inte påminna om dagsplanen");
-assert(sunday.html.includes("Sjukanmälan"), "helgen ska fortfarande visa var sjukanmälan finns");
+assert(sunday.html.includes("soft-card is-today"), "helgen ska fortfarande visa dagens status");
 
 const monday = dashboard("2026-10-26");
 assert(monday.html.includes("Inte incheckad"), "vardagen ska behålla incheckningsstatusen");
 assert(monday.html.includes('id="daily-plan"'), "vardagen ska behålla dagens plan");
 assert(monday.reminders.some((item) => item.target === "daily-plan"), "vardagen ska påminna om dagsplanen");
-assert(monday.html.includes("Anmäl sjuk eller ledig"), "sjukanmälan ska ha en tydlig rubrik");
-assert(monday.html.indexOf('id="daily-plan"') < monday.html.indexOf('class="soft-card is-pick"'), "sjukanmälan ska ligga före hämtning och övrigt dagsinnehåll");
+assert(monday.html.includes("Ändra dagens status"), "statusdelen ska ha en tydlig rubrik");
+assert(monday.html.includes('data-action="open-daily-plan"'), "dagens statuskort ska öppna statusdelen");
+assert(monday.html.indexOf('id="daily-plan"') < monday.html.indexOf('class="soft-card is-pick"'), "statusdelen ska ligga före hämtning och övrigt dagsinnehåll");
 
-const sick = dashboard("2026-10-26", { status: "absent_sick", absence_note: "Feber" });
+const sick = dashboard("2026-10-26", { status: "absent_sick", absence_note: "Feber", absence_ends_on: "2026-10-30" });
 assert(sick.html.includes("Anledning till sjukdom, valfritt"), "sjuk ska visa anledning till sjukdom");
 assert(sick.html.includes("data-attendance-present-fields hidden"), "sjuk ska dölja lämning, hämtning och hämtare");
 assert(sick.html.includes("data-present-day-content hidden"), "sjuk ska dölja irrelevanta dagskort");
 assert(!sick.html.includes('class="card quick-panel" open'), "sparad sjukstatus ska visas med stängd panel");
 assert(!sick.html.includes("data-home-reminder-content hidden"), "relevanta påminnelser ska återkomma efter sparning");
+assert(sick.html.includes('name="absence_ends_on"'), "sjuk ska kunna registreras över flera dagar");
+assert(sick.html.includes('value="2026-10-30"'), "sparat slutdatum ska visas i formuläret");
+assert(sick.html.includes("till och med 30 okt."), "sammanfattningen ska visa frånvarons slutdatum");
+assert(sick.html.includes("data-test-meal"), "dagens mat ska vara kvar när barnet är sjukt");
 
 const leave = dashboard("2026-10-26", { status: "absent_leave", absence_note: "Familjeledig" });
 assert(leave.html.includes("Anledning till ledighet, valfritt"), "ledig ska visa anledning till ledighet");
 assert(leave.html.includes("data-attendance-present-fields hidden"), "ledig ska dölja lämning, hämtning och hämtare");
 assert(!leave.html.includes('class="card quick-panel" open'), "sparad ledighet ska visas med stängd panel");
+
+const withOverviewItems = dashboard("2026-10-26", null, {
+  assignments: [{ child_id: "child-1", subject: "Matematik", title: "Tal 1–10", status: "homework", due_on: "2026-10-30" }],
+  posts: [{ title: "Veckobrev", created_at: "2026-10-26T08:00:00Z" }],
+});
+assert(withOverviewItems.html.includes("Matematik · Tal 1–10") && withOverviewItems.html.includes('data-section="skola"'), "aktuella uppgifter ska länka till sitt eget universum");
+assert(withOverviewItems.html.includes("Veckobrev") && withOverviewItems.html.includes('data-section="anslagstavla"'), "senaste meddelandet ska länka direkt till anslagstavlan");
 
 const roleContext = {};
 vm.createContext(roleContext);

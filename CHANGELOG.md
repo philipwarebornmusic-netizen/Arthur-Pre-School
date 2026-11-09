@@ -3,10 +3,13 @@
 ## 2026-11-09 — Tydligare menyer och sjukanmälan
 
 - Bytte de långa listorna under Mer och Barnet mot kompakta, märkta ikonrutor i tre kolumner på mobil.
-- Lade Sjukanmälan högst upp på Min dag som en infällbar panel och som en egen ikon under Mer → Barnet. Orsak visas först när Sjuk eller Ledig är valt.
+- Gjorde Idag-statuskortet klickbart och lät det öppna statusformulärets eget fokuserade läge. Det tidigare separata sjukanmälningskortet på Min dag är borttaget; Sjukanmälan finns kvar under Mer → Barnet.
 - Statusvalet är nu tre kompakta knappar: Kommer, Sjuk och Ledig. Sjuk och Ledig döljer lämning, hämtning och hämtare och visar i stället en kort, statusanpassad anledning.
 - När statuspanelen är öppen fokuseras hela mobilvyn på formuläret. Kommer, Sjuk och Ledig ryms utan sidskrollning vid 390 × 844 pixlar.
-- Efter sparning fälls statuspanelen ihop automatiskt. Min dag visar den registrerade statusen och relevanta påminnelser igen, medan hämtnings- och matsedelskorten förblir dolda när barnet är sjukt eller ledigt.
+- Efter sparning fälls statusformuläret ihop automatiskt. Min dag visar registrerad status, dagens mat, aktuella uppgifter, senaste meddelandet och relevanta påminnelser; hämtningsinnehåll döljs när barnet är sjukt eller ledigt.
+- Sjuk och Ledig kan registreras från idag till ett valt slutdatum, högst 31 dagar. Vardagarna sparas atomiskt och en förkortad period tar bort återstående dagar från den äldre perioden.
+- Hämtningsschemat visar Sjuk eller Ledig i stället för lämning och hämtning under den registrerade frånvaroperioden.
+- Delade Meddelanden i fyra tryckbara universum: Anslagstavla, Meddelanden, Inbjudningar och Lekträffar. Mobil visar ett kompakt 2 × 2-rutnät; desktop använder hela arbetsytan.
 - Gjorde Portfolio och Skola direkt nåbara under Mer → Barnet även när de ännu saknar innehåll.
 - Gjorde Viktig information, Händelser och OSA samt Borttappat direkt nåbara under Mer → Förskolan för vårdnadshavare.
 
@@ -16,7 +19,7 @@
 - Lade till **Borttappat** per avdelning med Saknad/Upphittad, valfri privat bild, sökning och statusarna Öppen, Hittad, Återlämnad och Avslutad. Bildsökvägen binder ihop avdelning, författare och inlägg så att en annan vårdnadshavare inte kan radera objektet.
 - Lade till tidsstyrda **banners** med målgrupp och allvarlighetsgrad. Aktiva banners visas på Min dag, Närvaro och administratörens Översikt; personal hanterar dem via Mer.
 - Lade till verksamhetshändelser med avdelnings- eller skolmålgrupp, barnspecifikt Ja/Nej-OSA och påminnelser från sju dagar före start till händelsens slut.
-- Lade till en separat skolvy för läxor, missade uppgifter, progression och registrerade betyg. Ärtan visar skolans registrerade värden och gör ingen automatisk bedömning eller betygsberäkning.
+- Lade till en separat skolvy för uppgifter, missade uppgifter och utveckling. Ärtan visar skolans registrerade uppgifter och utvecklingsanteckningar utan att skapa automatiska omdömen.
 - `supabase/022_family_school_features.sql` och samma kontrakt i `supabase/schema.sql` skapar tabeller, privata buckets, RLS och behörighetskontrollerade RPC:er. Migration 022 applicerades i produktion 2026-11-09.
 - Matsedelsmigrationerna är applicerade i ordningen `20261108190711_meal_menus.sql` och därefter `20261108223000_meal_term_horizon.sql`. Produktionskontrollen bekräftade 185-dagarsintervallet och `meal_edit_horizon()`.
 - `scripts/family_school_sql_test.py` provar portfolio-samtycke, barnisolering, avdelningsdelning, bildradering, OSA och spärrade direktwrites i en tillfällig PostgreSQL 16-instans.

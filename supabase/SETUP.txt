@@ -97,9 +97,15 @@ Child supply box and absence notes
 - The fixed box items are diapers, spare clothes, rain clothes, and socks, each with Slut, Få, or Finns. Guardians, assigned staff, and organization administrators for the child can read and update them.
 - Direct writes to child_box_items stay revoked. save_child_box validates the child relationship, fixed item names, fixed levels, and duplicate items before an atomic update.
 
+Multi-day absence
+- supabase/023_multi_day_absence.sql was applied in production on 2026-11-09. Do not run it there again.
+- Guardians can register sick leave or planned leave from today through an end date, up to 31 calendar days per save. Only weekdays receive attendance rows.
+- Every row keeps the shared end date. Shortening the period or changing today's status to present removes the obsolete future absence rows.
+- The database clears period metadata from present rows, rejects an end date before today or more than 30 days after today, and keeps direct writes behind the existing attendance policies plus the authorization-checking save_attendance_period RPC.
+
 
 Family and school features
-- supabase/022_family_school_features.sql was applied in production on 2026-11-09. Do not run it there again. It enables Portfolio, Borttappat, banners, verksamhetsevent, OSA, läxor, progression, and recorded grades.
+- supabase/022_family_school_features.sql was applied in production on 2026-11-09. Do not run it there again. It enables Portfolio, Borttappat, banners, verksamhetsevent, OSA, uppgifter, and utvecklingsanteckningar.
 - The migration creates private portfolio-images and lost-found-images buckets. No public object URLs are used. Portfolio uploads require the existing app_images consent and are limited to assigned staff/admins; authorized guardians can read their own child's portfolio.
 - Borttappat is scoped to departments. Guardians, assigned staff, and administrators can post; only the author or department staff/admin can change status or delete an image.
 - Banners and events may target one department or a whole school. Event OSA is stored per child, so linked guardians share the current Ja/Nej response.
