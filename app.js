@@ -724,9 +724,9 @@ function hubClosedBanner(hub) {
 }
 
 function renderHubGrid(cards) {
-  return `<div class="menu-group" role="group" aria-label="Delar">${cards.map((card) => {
+  return `<div class="hub-icon-grid" role="group" aria-label="Funktioner">${cards.map((card) => {
     const status = typeof card.status === "function" ? card.status() : (card.status || "");
-    return `<button type="button" class="menu-row" data-action="hub-open" data-section="${esc(card.id)}"><span class="menu-row-title">${esc(card.title)}</span>${status ? `<span class="menu-row-status">${esc(status)}</span>` : ""}<span class="menu-chevron" aria-hidden="true">${navIcon("chevron")}</span></button>`;
+    return `<button type="button" class="hub-icon-tile" data-action="hub-open" data-section="${esc(card.id)}"><span class="menu-icon-badge">${navIcon(card.icon || "more")}</span><span class="hub-card-title">${esc(card.title)}</span>${status ? `<span class="hub-card-status">${esc(status)}</span>` : ""}</button>`;
   }).join("")}</div>`;
 }
 
@@ -759,7 +759,10 @@ function showView(view, { section = "", scrollTarget = "", push = true } = {}) {
   if (scrollTarget) {
     const destination = document.getElementById(scrollTarget);
     const behavior = scrollTarget === "pickup-current-week" ? "auto" : "smooth";
-    if (destination) destination.scrollIntoView({ behavior, block: "start" });
+    if (destination) {
+      if (destination instanceof HTMLDetailsElement) destination.open = true;
+      destination.scrollIntoView({ behavior, block: "start" });
+    }
     else scrollTo({ top: 0, behavior });
     return;
   }
@@ -3721,17 +3724,20 @@ function renderParentHome() {
   const pickup = pickupCardCopy(child, summary);
   const renewal = renderPassRenewalCards(child);
   const editToday = `<button class="link" type="button" data-action="navigate" data-view="pickup">Visa hela schemat</button>`;
+  const absentToday = ["absent_sick", "absent_leave"].includes(attendance?.status);
   const dailyPlan = weekend
-    ? ""
-    : `<form id="daily-plan" class="card form-stack" data-form="parent-attendance" data-child-id="${esc(child.id)}"><h2>Om något ändras idag</h2>
-      ${selectField("Planerad status", "status", [["in", "Kommer"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]], ["absent_sick", "absent_leave"].includes(attendance?.status) ? attendance.status : "in", true)}
-      <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
-      <label>Vem hämtar?<input name="pickup_by" type="text" value="${esc(attendance?.pickup_by || "")}" list="pickup-contact-options" placeholder="Exempelvis mormor eller farfar"></label>
-      ${pickupContacts.length ? `<datalist id="pickup-contact-options">${pickupContacts.map((contact) => `<option value="${esc(contact.name)}"></option>`).join("")}</datalist>` : ""}
-      <p class="form-hint">Skriv vem som hämtar. Kontaktpersoner markerade med ”får hämta” visas som förslag.</p>
-      ${state.attendanceNotesReady ? `<label data-absence-note-field ${["absent_sick", "absent_leave"].includes(attendance?.status) ? "" : "hidden"}>Orsak till frånvaro, valfritt<textarea name="absence_note" maxlength="500" placeholder="Till exempel feber, hosta eller familjeledig">${esc(attendance?.absence_note || "")}</textarea><span class="form-hint">Anteckningen visas bara för behöriga vårdnadshavare och förskolans personal.</span></label>` : `<p class="form-hint">Frånvaroanteckningar är inte aktiverade i databasen ännu.</p>`}
-      <button class="link" type="submit">Spara dagens plan</button>
-    </form>`;
+    ? `<section class="card quick-panel is-disabled"><span class="menu-icon-badge">${navIcon("illness")}</span><div><h2>Sjukanmälan</h2><p class="form-hint">Dagens status kan ändras här på vardagar.</p></div></section>`
+    : `<details id="daily-plan" class="card quick-panel" ${absentToday ? "open" : ""}>
+      <summary><span class="menu-icon-badge">${navIcon("illness")}</span><span><strong>Anmäl sjuk eller ledig</strong><small>${absentToday ? `Registrerad som ${attendanceLabel(attendance.status).toLowerCase()}` : "Ändra dagens status"}</small></span><span class="menu-chevron" aria-hidden="true">${navIcon("chevron")}</span></summary>
+      <form class="form-stack quick-panel-form" data-form="parent-attendance" data-child-id="${esc(child.id)}">
+        ${selectField("Vad gäller idag?", "status", [["in", "Kommer"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]], absentToday ? attendance.status : "in", true)}
+        <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
+        <label>Vem hämtar?<input name="pickup_by" type="text" value="${esc(attendance?.pickup_by || "")}" list="pickup-contact-options" placeholder="Exempelvis mormor eller farfar"></label>
+        ${pickupContacts.length ? `<datalist id="pickup-contact-options">${pickupContacts.map((contact) => `<option value="${esc(contact.name)}"></option>`).join("")}</datalist>` : ""}
+        ${state.attendanceNotesReady ? `<label data-absence-note-field ${absentToday ? "" : "hidden"}>Orsak till frånvaro, valfritt<textarea name="absence_note" maxlength="500" placeholder="Till exempel feber, hosta eller familjeledig">${esc(attendance?.absence_note || "")}</textarea><span class="form-hint">Anteckningen visas bara för behöriga vårdnadshavare och förskolans personal.</span></label>` : `<p class="form-hint">Frånvaroanteckningar är inte aktiverade i databasen ännu.</p>`}
+        <button class="primary" type="submit">Spara dagens status</button>
+      </form>
+    </details>`;
   const reminderBlock = reminders.length
     ? `<section class="card"><h2>Att komma ihåg</h2><ul class="bot-reminders">${reminders.map((reminder) => `<li>${esc(reminder.text)}</li>`).join("")}</ul>${nextReminder ? `<button class="link" type="button" data-action="bot-reminder" data-view="${esc(nextReminder.view)}" data-target="${esc(nextReminder.target)}">Ta hand om nästa sak</button>` : ""}</section>`
     : "";
@@ -3740,6 +3746,7 @@ function renderParentHome() {
     : "";
   return `${noticeHtml()}${childTabs()}<p class="hi">${esc(dayGreeting())}</p><h1 class="h1">${esc(childFirstName(child) || child.name)}</h1>
     <section class="soft-card is-today"><p class="soft-label">Idag</p><p class="soft-value"><span class="status-dot ${status.dot}"></span>${esc(status.text)}</p><p class="soft-sub">${esc(status.sub)}</p></section>
+    ${dailyPlan}
     <section class="soft-card is-pick"><p class="soft-label">Hämtning</p><p class="soft-value">${esc(pickup.value)}</p>${pickup.sub ? `<p class="soft-sub">${esc(pickup.sub)}</p>` : ""}${editToday}</section>
     ${renderMealTodayCard(child)}
     ${renewal}
@@ -3749,7 +3756,6 @@ function renderParentHome() {
     ${reminderBlock}
     ${renderPickupWeekNudge(child)}
     ${renderParentTermSchedules(child)}
-    ${dailyPlan}
     ${latestRow}`;
 }
 
@@ -4462,23 +4468,18 @@ function renderTermCalendarCard() {
   return `<section class="card" id="term-calendar"><p class="kicker">Kalender</p><h2>Synka terminsschemat</h2>${intro}<p class="form-hint">Länken visas bara den här gången. Lägg till den i kalendern nu. Vi lagrar bara en kontrollsumma, så länken kan inte visas igen.</p><code class="secret-value">${esc(httpsUrl)}</code><div class="actions"><a class="secondary button-link" href="${esc(webcalUrl)}">Lägg till i Apple/Outlook</a><a class="secondary button-link" href="${esc(googleUrl)}" target="_blank" rel="noopener">Lägg till i Google</a><button class="secondary" type="button" data-action="copy-calendar-feed">Kopiera länk</button><button class="secondary" type="button" data-action="rotate-calendar-feed">Skapa ny länk</button><button class="danger" type="button" data-action="revoke-calendar-feed">Stäng av</button></div>${timing}</section>`;
 }
 
-registerHubCard("child", { id: "uppgifter", icon: "✎", title: "Grunduppgifter", status: childBasicsStatus, render: () => renderChildBasics(selectedChild()) });
-registerHubCard("child", { id: "halsa", icon: "✚", title: "Hälsa", status: childHealthStatus, render: () => renderChildHealth(selectedChild()) });
-registerHubCard("child", { id: "ladan", icon: "□", title: "Barnets låda", status: childBoxStatus, render: () => renderChildBox(selectedChild()) });
-registerHubCard("child", { id: "kontakter", icon: "☎", title: "Kontaktpersoner", status: childContactsStatus, render: () => renderChildContacts(selectedChild()) });
-registerHubCard("child", { id: "samtycken", icon: "✓", title: "Samtycken", status: childConsentsStatus, render: () => renderChildConsents(selectedChild()) });
-registerHubCard("child", { id: "portfolio", icon: "▧", title: "Portfolio", status: portfolioStatus, render: () => renderPortfolio(selectedChild()) });
-registerHubCard("child", { id: "skola", icon: "◇", title: "Skola", status: schoolworkStatus, visible: () => {
-  const child = selectedChild();
-  if (!child) return false;
-  const rows = schoolworkFor(child.id);
-  return rows.progress.length > 0 || rows.assignments.length > 0;
-}, render: () => renderSchoolwork(selectedChild()) });
-registerHubCard("child", { id: "syskon", icon: "☺", title: "Syskon", status: childSiblingStatus, render: () => renderSiblingRequestForm(true) });
-registerHubCard("child", { id: "profilbild", icon: "☺", title: "Profilbild", status: childPhotoStatus, render: () => renderChildPhoto(selectedChild()) });
-registerHubCard("child", { id: "klasslista", icon: "☰", title: "Klasslista", status: childClassListStatus, render: () => renderClassListConsent(selectedChild()) });
-registerHubCard("child", { id: "kalender", icon: "▦", title: "Kalender", status: calendarHubStatus, render: () => renderTermCalendarCard() });
-registerHubCard("child", { id: "information", icon: "⚑", title: "Information att läsa", status: incidentCopyStatus, visible: () => Boolean(state.incidentReady) && copiesForChild(selectedChild()).length > 0, render: renderChildIncidentCopies });
+registerHubCard("child", { id: "uppgifter", icon: "child", title: "Grunduppgifter", status: childBasicsStatus, render: () => renderChildBasics(selectedChild()) });
+registerHubCard("child", { id: "halsa", icon: "health", title: "Hälsa", status: childHealthStatus, render: () => renderChildHealth(selectedChild()) });
+registerHubCard("child", { id: "ladan", icon: "box", title: "Barnets låda", status: childBoxStatus, render: () => renderChildBox(selectedChild()) });
+registerHubCard("child", { id: "kontakter", icon: "contacts", title: "Kontaktpersoner", status: childContactsStatus, render: () => renderChildContacts(selectedChild()) });
+registerHubCard("child", { id: "samtycken", icon: "consent", title: "Samtycken", status: childConsentsStatus, render: () => renderChildConsents(selectedChild()) });
+registerHubCard("child", { id: "portfolio", icon: "camera", title: "Portfolio", status: portfolioStatus, render: () => renderPortfolio(selectedChild()) });
+registerHubCard("child", { id: "skola", icon: "school", title: "Skola", status: schoolworkStatus, render: () => renderSchoolwork(selectedChild()) });
+registerHubCard("child", { id: "syskon", icon: "siblings", title: "Syskon", status: childSiblingStatus, render: () => renderSiblingRequestForm(true) });
+registerHubCard("child", { id: "profilbild", icon: "profile", title: "Profilbild", status: childPhotoStatus, render: () => renderChildPhoto(selectedChild()) });
+registerHubCard("child", { id: "klasslista", icon: "people", title: "Klasslista", status: childClassListStatus, render: () => renderClassListConsent(selectedChild()) });
+registerHubCard("child", { id: "kalender", icon: "calendar", title: "Kalender", status: calendarHubStatus, render: () => renderTermCalendarCard() });
+registerHubCard("child", { id: "information", icon: "info", title: "Information att läsa", status: incidentCopyStatus, visible: () => Boolean(state.incidentReady) && copiesForChild(selectedChild()).length > 0, render: renderChildIncidentCopies });
 
 function groupedPrivateMessages() {
   const cards = [];
@@ -5516,6 +5517,22 @@ function navIcon(name) {
     people: '<circle cx="9" cy="8" r="3"/><path d="M3.6 18.5c.8-2.8 2.7-4.2 5.4-4.2s4.6 1.4 5.4 4.2"/><circle cx="17" cy="9" r="2.1"/><path d="M16.2 14.6c1.7.3 3 1.3 3.7 3.2"/>',
     overview: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
     meal: '<path d="M5 10h14M7 10c0 4 1.4 7 5 7s5-3 5-7"/><path d="M12 17v3"/>',
+    child: '<circle cx="12" cy="8" r="3"/><path d="M6.5 20c.6-4 2.4-6 5.5-6s4.9 2 5.5 6"/>',
+    health: '<path d="M12 20s-7-4.3-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.7-7 10-7 10z"/>',
+    illness: '<path d="M9 4h6v5l3.5 6.2A3.2 3.2 0 0 1 15.7 20H8.3a3.2 3.2 0 0 1-2.8-4.8L9 9z"/><path d="M8 14h8"/>',
+    box: '<path d="m4 8 8-4 8 4-8 4z"/><path d="M4 8v9l8 4 8-4V8M12 12v9"/>',
+    contacts: '<path d="M7 3h10v18H7z"/><path d="M10 6h4M10 18h4"/>',
+    consent: '<path d="M5 4h14v16H5z"/><path d="m8 12 2.5 2.5L16 9"/>',
+    camera: '<path d="M4 8h4l1.5-2h5L16 8h4v11H4z"/><circle cx="12" cy="13" r="3"/>',
+    school: '<path d="m3 9 9-5 9 5-9 5z"/><path d="M6 11v6h12v-6M9 14v3M15 14v3"/>',
+    siblings: '<circle cx="8" cy="8" r="2.5"/><circle cx="16" cy="8" r="2.5"/><path d="M3.5 19c.5-3.5 2-5 4.5-5s4 1.5 4.5 5M11.5 19c.5-3.5 2-5 4.5-5s4 1.5 4.5 5"/>',
+    profile: '<circle cx="12" cy="9" r="4"/><path d="M5 21c.7-4.3 3-6.5 7-6.5s6.3 2.2 7 6.5"/>',
+    calendar: '<rect x="4" y="5.5" width="16" height="15" rx="2"/><path d="M8 3v5M16 3v5M4 10h16"/>',
+    event: '<rect x="4" y="5.5" width="16" height="15" rx="2"/><path d="M8 3v5M16 3v5M8 14h3M8 17h6"/>',
+    banner: '<path d="M5 4v17M6 5h12l-2 4 2 4H6"/>',
+    lost: '<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
+    account: '<circle cx="12" cy="8" r="3"/><path d="M5 21c.7-4.5 3-6.8 7-6.8s6.3 2.3 7 6.8"/>',
     chevron: '<path d="m9 6 6 6-6 6"/>',
   };
   const size = name === "chevron" ? 16 : 22;
@@ -5527,7 +5544,7 @@ function moreDestinations(role) {
 }
 
 function renderMenuGroup(label, items) {
-  return `<p class="menu-label">${esc(label)}</p><div class="menu-group">${items.map(([view, title, status]) => `<button type="button" class="menu-row" data-action="navigate" data-view="${view}"><span class="menu-row-title">${esc(title)}</span>${status ? `<span class="menu-row-status">${esc(status)}</span>` : ""}<span class="menu-chevron" aria-hidden="true">${navIcon("chevron")}</span></button>`).join("")}</div>`;
+  return `<section class="menu-section"><h2 class="menu-label">${esc(label)}</h2><div class="menu-icon-grid">${items.map(([view, title, status, icon = "more", section = "", scrollTarget = ""]) => `<button type="button" class="menu-icon-tile" data-action="navigate" data-view="${esc(view)}" ${section ? `data-section="${esc(section)}"` : ""} ${scrollTarget ? `data-target="${esc(scrollTarget)}"` : ""}><span class="menu-icon-badge">${navIcon(icon)}</span><span class="menu-row-title">${esc(title)}</span>${status ? `<span class="menu-row-status">${esc(status)}</span>` : ""}</button>`).join("")}</div></section>`;
 }
 
 function renderMore() {
@@ -5537,11 +5554,11 @@ function renderMore() {
   const eventCount = groupedSchoolEvents().filter((event) => new Date(event.ends_at).getTime() >= Date.now()).length;
   const bannerCount = activeSchoolBanners().length;
   const groups = role === "admin"
-    ? [["Förskolan", [["overview", "Översikt", ""], ["schools", "Skolor", ""], ["people", "Personer", ""]]], ["Kommunikation", [["events", "Händelser och OSA", eventCount ? String(eventCount) : ""], ["banners", "Viktig information", bannerCount ? String(bannerCount) : ""], ["lost", "Borttappat", openLost ? String(openLost) : ""], ["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
+    ? [["Förskolan", [["overview", "Översikt", "", "overview"], ["schools", "Skolor", "", "school"], ["people", "Personer", "", "people"]]], ["Kommunikation", [["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"], ["incidents", "Avvikelser", incidentHubStatus(), "info"]]], ["Konto", [["account", "Konto", state.profile.email, "account"]]]]
     : role === "staff"
-      ? [["Arbete", [["people", "Barn", ""], ["events", "Händelser och OSA", eventCount ? String(eventCount) : ""], ["banners", "Viktig information", bannerCount ? String(bannerCount) : ""], ["lost", "Borttappat", openLost ? String(openLost) : ""], ["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
-      : [["Barnet", [["child", "Barnet", child?.name || "Inget barn"], ["classlist", "Klasslista", ""]]], ["Förskolan", [["events", "Händelser och OSA", eventCount ? String(eventCount) : ""], ["lost", "Borttappat", openLost ? String(openLost) : ""]]], ["Konto", [["account", "Konto", state.profile.email]]]];
-  return `${noticeHtml()}<h1 class="h1">Mer</h1>${groups.map(([label, items]) => renderMenuGroup(label, items)).join("")}<button class="link menu-logout" type="button" data-action="logout">Logga ut</button>`;
+      ? [["Arbete", [["people", "Barn", "", "child"], ["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"], ["incidents", "Avvikelser", incidentHubStatus(), "info"]]], ["Konto", [["account", "Konto", state.profile.email, "account"]]]]
+      : [["Barnet", [["home", "Sjukanmälan", "Sjuk eller ledig", "illness", "", "daily-plan"], ["child", "Barnets uppgifter", child?.name || "Inget barn", "child"], ["child", "Portfolio", portfolioStatus(), "camera", "portfolio"], ["child", "Skola", schoolworkStatus(), "school", "skola"], ["classlist", "Klasslista", "", "people"]]], ["Förskolan", [["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"]]], ["Konto", [["account", "Konto", state.profile.email, "account"]]]];
+  return `${noticeHtml()}<h1 class="h1">Mer</h1><p class="sub">Välj vad du vill göra.</p>${groups.map(([label, items]) => renderMenuGroup(label, items)).join("")}<button class="link menu-logout" type="button" data-action="logout">Logga ut</button>`;
 }
 
 function renderNav() {
@@ -6761,7 +6778,9 @@ document.body.addEventListener("click", (event) => {
       state.incidentId = null;
       state.incidentDetail = null;
     }
-    showView(view, view === "pickup" ? { scrollTarget: "pickup-current-week" } : {});
+    const section = target.dataset.section || "";
+    const scrollTarget = target.dataset.target || (view === "pickup" ? "pickup-current-week" : "");
+    showView(view, { section, scrollTarget });
     return;
   }
   if (action === "hub-open") {

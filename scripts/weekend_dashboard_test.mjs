@@ -85,6 +85,7 @@ function dashboard(iso) {
     selectField: () => "<select></select>",
     field: () => "<input>",
     esc: (value) => String(value ?? ""),
+    navIcon: () => "",
   };
   vm.createContext(context);
   vm.runInContext([
@@ -113,11 +114,14 @@ assert(sunday.html.includes("Ingen dagsplan eller incheckning behövs under helg
 assert(!sunday.html.includes("Inte incheckad"), "helgen får inte visa vardagens frånvarostatus");
 assert(!sunday.html.includes('id="daily-plan"'), "helgen får inte visa dagens plan");
 assert(!sunday.reminders.some((item) => item.target === "daily-plan"), "helgen får inte påminna om dagsplanen");
+assert(sunday.html.includes("Sjukanmälan"), "helgen ska fortfarande visa var sjukanmälan finns");
 
 const monday = dashboard("2026-10-26");
 assert(monday.html.includes("Inte incheckad"), "vardagen ska behålla incheckningsstatusen");
 assert(monday.html.includes('id="daily-plan"'), "vardagen ska behålla dagens plan");
 assert(monday.reminders.some((item) => item.target === "daily-plan"), "vardagen ska påminna om dagsplanen");
+assert(monday.html.includes("Anmäl sjuk eller ledig"), "sjukanmälan ska ha en tydlig rubrik");
+assert(monday.html.indexOf('id="daily-plan"') < monday.html.indexOf('class="soft-card is-pick"'), "sjukanmälan ska ligga före hämtning och övrigt dagsinnehåll");
 
 const roleContext = {};
 vm.createContext(roleContext);

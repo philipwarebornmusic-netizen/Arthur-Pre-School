@@ -191,13 +191,13 @@
   function buriedViews(role) {
     if (role === "admin") return ["overview", "schools", "people", "events", "banners", "lost", "incidents", "account"];
     if (role === "staff") return ["people", "events", "banners", "lost", "incidents", "account"];
-    return ["child", "classlist", "events", "lost", "account"];
+    return ["child", "classlist", "banners", "events", "lost", "account"];
   }
 
   function allowedViews(role) {
     if (role === "admin") return ["attendance", "meals", "messages", "more", "overview", "schools", "people", "events", "banners", "lost", "incidents", "account"];
     if (role === "staff") return ["attendance", "meals", "messages", "people", "more", "events", "banners", "lost", "incidents", "account"];
-    return ["home", "meals", "pickup", "messages", "more", "child", "classlist", "events", "lost", "account"];
+    return ["home", "meals", "pickup", "messages", "more", "child", "classlist", "banners", "events", "lost", "account"];
   }
 
   function exampleBundle(today) {

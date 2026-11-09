@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 2026-11-09 — Tydligare menyer och sjukanmälan
+
+- Bytte de långa listorna under Mer och Barnet mot kompakta, märkta ikonrutor i tre kolumner på mobil.
+- Lade Sjukanmälan högst upp på Min dag som en infällbar panel och som en egen ikon under Mer → Barnet. Orsak visas först när Sjuk eller Ledig är valt.
+- Gjorde Portfolio och Skola direkt nåbara under Mer → Barnet även när de ännu saknar innehåll.
+- Gjorde Viktig information, Händelser och OSA samt Borttappat direkt nåbara under Mer → Förskolan för vårdnadshavare.
+
 ## 2026-11-09 — Familjefunktioner och skolprogression
 
 - Lade till en privat, barnspecifik **Portfolio**. Behörig personal kan ladda upp JPEG-bilder först när samtycket Bilder i ärtan är aktivt; barnets vårdnadshavare och behörig personal kan läsa.
