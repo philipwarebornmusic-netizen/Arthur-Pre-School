@@ -46,6 +46,15 @@ const state = {
   incidentReady: true,
   childBoxReady: true,
   attendanceNotesReady: true,
+  familyFeaturesReady: true,
+  portfolioItems: [],
+  portfolioUrls: {},
+  lostFoundPosts: [],
+  lostFoundUrls: {},
+  schoolBanners: [],
+  schoolEvents: [],
+  schoolProgress: [],
+  schoolAssignments: [],
   notices: [],
   incidents: [],
   incidentCopies: [],
@@ -82,6 +91,7 @@ const state = {
   mealTermFixture: false,
   childPhotoUrls: {},
   contactPhotoUrls: {},
+  familyPreviewUrl: "",
   selectedChildId: null,
   view: inviteFromUrl ? "join" : "home",
   authView: inviteFromUrl ? "register" : "login",
@@ -611,6 +621,22 @@ function parentReminders(child) {
   if ((state.incidentCopies || []).some((copy) => copy.child_name === child.name && !copy.acknowledged_at)) {
     reminders.unshift({ text: "Bekräfta att du har läst informationen från förskolan.", view: "child", target: "incident-copies" });
   }
+  const now = Date.now();
+  const eventReminders = (state.schoolEvents || []).filter((event) => {
+    if (event.child_id !== child.id) return false;
+    const start = new Date(event.starts_at).getTime();
+    const end = new Date(event.ends_at).getTime();
+    return now >= start - (7 * 24 * 60 * 60 * 1000) && now <= end;
+  });
+  const seenEvents = new Set();
+  eventReminders.forEach((event) => {
+    if (seenEvents.has(event.event_id)) return;
+    seenEvents.add(event.event_id);
+    const text = event.rsvp_enabled && !event.response
+      ? `Svara Ja eller Nej för ${event.title}.`
+      : `${event.title} börjar ${formatTimestamp(event.starts_at)}.`;
+    reminders.unshift({ text, view: "events", target: "" });
+  });
   if (state.pickupWeekReady && typeof ArtanPickup !== "undefined" && ArtanPickup.buildTermGrid(pickupGridInput(child)).unfilled) {
     reminders.unshift({ text: "Fyll i lämning och hämtning för den närmaste veckan.", view: "pickup", target: "pickup-current-week" });
   }
@@ -634,6 +660,8 @@ const HUB_SECTION_BY_TARGET = {
   "child-consents": "samtycken",
   "child-box": "ladan",
   "incident-copies": "information",
+  "child-portfolio": "portfolio",
+  "child-schoolwork": "skola",
 };
 
 function registerHubCard(hub, card) {
@@ -997,6 +1025,46 @@ async function signPostImages(images) {
   return images.map((image) => ({ ...image, signed_url: storageSignedUrl(urls.get(image.storage_path)) }));
 }
 
+async function signStoragePaths(bucket, paths) {
+  const unique = [...new Set(paths.filter(Boolean))];
+  if (!unique.length || !state.familyFeaturesReady) return {};
+  const signed = await request(`/storage/v1/object/sign/${encodeURIComponent(bucket)}`, {
+    method: "POST",
+    body: JSON.stringify({ expiresIn: 3600, paths: unique }),
+  });
+  return Object.fromEntries((signed || []).map((item) => [
+    item.path,
+    storageSignedUrl(item.signedURL || item.signedUrl),
+  ]));
+}
+
+async function uploadStorageImage(bucket, path, blob) {
+  return request(`/storage/v1/object/${encodeURIComponent(bucket)}/${encodedStoragePath(path)}`, {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg", "x-upsert": "false" },
+    body: blob,
+  });
+}
+
+async function deleteStorageImage(bucket, path) {
+  if (!path) return;
+  await request(`/storage/v1/object/${encodeURIComponent(bucket)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ prefixes: [path] }),
+  });
+}
+
+function renderFamilyImagePreview(input) {
+  const preview = input.closest("form")?.querySelector("[data-family-image-preview]");
+  if (!preview) return;
+  if (state.familyPreviewUrl) URL.revokeObjectURL(state.familyPreviewUrl);
+  const file = input.files?.[0];
+  state.familyPreviewUrl = file ? URL.createObjectURL(file) : "";
+  preview.innerHTML = state.familyPreviewUrl
+    ? `<img src="${esc(state.familyPreviewUrl)}" alt="Förhandsvisning av vald bild">`
+    : "";
+}
+
 async function uploadPostImage(path, blob) {
   return request(`/storage/v1/object/post-images/${encodedStoragePath(path)}`, {
     method: "POST",
@@ -1190,6 +1258,15 @@ async function logout() {
       migrationReady: true,
       childBoxReady: true,
       attendanceNotesReady: true,
+      familyFeaturesReady: true,
+      portfolioItems: [],
+      portfolioUrls: {},
+      lostFoundPosts: [],
+      lostFoundUrls: {},
+      schoolBanners: [],
+      schoolEvents: [],
+      schoolProgress: [],
+      schoolAssignments: [],
       calendarReady: true,
       calendarFeed: null,
       calendarToken: null,
@@ -1208,6 +1285,7 @@ async function logout() {
       mealTermFixture: false,
       childPhotoUrls: {},
       contactPhotoUrls: {},
+      familyPreviewUrl: "",
       termEditor: null,
       pickupReady: true,
       pickupContacts: [],
@@ -1245,6 +1323,7 @@ async function loadData() {
   state.classListReady = true;
   state.childBoxReady = true;
   state.attendanceNotesReady = true;
+  state.familyFeaturesReady = true;
   const profileWithAccess = "id,auth_user_id,organization_id,name,email,phone,role,removed_at,allow_parent_messages,allow_playdate_requests,allow_birthday_invitations";
   const profileWithoutAccess = "id,auth_user_id,organization_id,name,email,phone,role,allow_parent_messages,allow_playdate_requests,allow_birthday_invitations";
   let profiles;
@@ -1429,6 +1508,17 @@ async function loadData() {
     state.classListConsents = state.classListReady ? (classListConsents || []) : [];
     state.classList = state.classListReady ? (classList || []) : [];
   }
+  const family = await optionalFamilyRpc("list_family_features");
+  state.portfolioItems = Array.isArray(family?.portfolio) ? family.portfolio : [];
+  state.lostFoundPosts = Array.isArray(family?.lost_found) ? family.lost_found : [];
+  state.schoolBanners = Array.isArray(family?.banners) ? family.banners : [];
+  state.schoolEvents = Array.isArray(family?.events) ? family.events : [];
+  state.schoolProgress = Array.isArray(family?.progress) ? family.progress : [];
+  state.schoolAssignments = Array.isArray(family?.assignments) ? family.assignments : [];
+  [state.portfolioUrls, state.lostFoundUrls] = await Promise.all([
+    signStoragePaths("portfolio-images", state.portfolioItems.map((item) => item.storage_path)),
+    signStoragePaths("lost-found-images", state.lostFoundPosts.map((item) => item.storage_path)),
+  ]);
   state.childPhotoUrls = await signChildPhotos([
     ...state.children.map((child) => child.photo_path),
     ...state.classList.map((child) => child.photo_path),
@@ -1477,6 +1567,15 @@ function clearLoadedData() {
     permanentPassesReady: true,
     childBoxReady: true,
     attendanceNotesReady: true,
+    familyFeaturesReady: true,
+    portfolioItems: [],
+    portfolioUrls: {},
+    lostFoundPosts: [],
+    lostFoundUrls: {},
+    schoolBanners: [],
+    schoolEvents: [],
+    schoolProgress: [],
+    schoolAssignments: [],
     pickupNotices: [],
     notices: [],
     incidents: [],
@@ -1510,6 +1609,7 @@ function clearLoadedData() {
     mealTermFixture: false,
     childPhotoUrls: {},
     contactPhotoUrls: {},
+    familyPreviewUrl: "",
     selectedChildId: null,
     hubSection: "",
   });
@@ -1636,6 +1736,18 @@ function optionalChildBoxRpc(name, args) {
     }
     throw error;
   });
+}
+
+async function optionalFamilyRpc(name, args) {
+  try {
+    return await rpc(name, args);
+  } catch (error) {
+    if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
+      state.familyFeaturesReady = false;
+      return null;
+    }
+    throw error;
+  }
 }
 
 function optionalClassListRpc(name, args) {
@@ -4139,11 +4251,183 @@ function renderChildPickupCard() {
   return renderPickupSection(child) || `<section class="card" id="pickup-list"><h2>Hämtlista</h2><p class="form-hint">Hämtlistan är inte aktiverad i databasen ännu.</p></section>`;
 }
 
+const FAMILY_STANDING = {
+  ahead: "Ligger före planeringen",
+  on_track: "I fas",
+  needs_support: "Behöver stöd",
+};
+const ASSIGNMENT_STATUS = {
+  homework: "Läxa",
+  missing: "Missad uppgift",
+  submitted: "Inlämnad",
+  completed: "Klar",
+};
+const LOST_STATUS = {
+  open: "Öppen",
+  matched: "Hittad",
+  returned: "Återlämnad",
+  closed: "Avslutad",
+};
+const BANNER_SEVERITY = {
+  info: "Information",
+  important: "Viktigt",
+  urgent: "Brådskande",
+};
+
+function familyFeatureNotice() {
+  return state.familyFeaturesReady ? "" : `<p class="notice error">Funktionen är förberedd i appen men databasmigrering 022 är inte aktiverad ännu.</p>`;
+}
+
+function familyScopeOptions() {
+  const departments = editableDepartments();
+  const schoolIds = new Set(departments.map((department) => department.preschool_id));
+  return [
+    ...state.schools.filter((school) => schoolIds.has(school.id)).map((school) => [`school:${school.id}`, `${school.name} · hela skolan`]),
+    ...departments.map((department) => [`department:${department.id}`, `${schoolName(department.preschool_id)} · ${department.name}`]),
+  ];
+}
+
+function familyScope(value) {
+  const [kind, id] = String(value || "").split(":");
+  if (kind === "school") return { preschoolId: id, departmentId: null };
+  const department = state.departments.find((item) => item.id === id);
+  return { preschoolId: department?.preschool_id || null, departmentId: department?.id || null };
+}
+
+function activeSchoolBanners() {
+  const now = Date.now();
+  return state.schoolBanners.filter((banner) => {
+    const starts = new Date(banner.starts_at).getTime();
+    const ends = new Date(banner.ends_at).getTime();
+    return starts <= now && ends > now;
+  });
+}
+
+function renderActiveSchoolBanners() {
+  const banners = activeSchoolBanners();
+  if (!banners.length) return "";
+  return `<section class="school-banner-stack" aria-label="Viktig information">${banners.map((banner) => `<article class="card school-banner severity-${esc(banner.severity)}" role="${banner.severity === "urgent" ? "alert" : "status"}"><p class="kicker">${esc(BANNER_SEVERITY[banner.severity] || "Information")} · ${esc(banner.department_name || banner.preschool_name || "Skolan")}</p><h2>${esc(banner.title)}</h2><p class="pre-line">${esc(banner.body)}</p><p class="meta">Visas till ${esc(formatTimestamp(banner.ends_at))}</p></article>`).join("")}</section>`;
+}
+
+function portfolioFor(childId) {
+  return state.portfolioItems.filter((item) => item.child_id === childId);
+}
+
+function portfolioStatus() {
+  if (!state.familyFeaturesReady) return "Inte aktiverad";
+  const count = portfolioFor(selectedChild()?.id).length;
+  return count ? `${count} ${count === 1 ? "minne" : "minnen"}` : "Inga minnen ännu";
+}
+
+function renderPortfolio(child) {
+  if (!child) return "";
+  const items = portfolioFor(child.id);
+  const canManage = state.profile.role === "staff" || state.profile.role === "admin";
+  const consent = consentFor(child.id, "app_images");
+  const form = canManage
+    ? consent
+      ? `<form class="card form-stack" data-form="portfolio-upload" data-child-id="${esc(child.id)}"><p class="kicker">Nytt minne</p><h2>Lägg till i portfolio</h2><p class="form-hint">Bilden är privat för barnets vårdnadshavare och behörig personal. Samtycket ”Bilder i ärtan” är aktivt.</p><label>Bild<input type="file" name="image" accept="image/*" capture="environment" data-action="family-image" required></label><div class="family-image-preview" data-family-image-preview></div>${field("Datum", "taken_on", todayIso(), { type: "date" })}${textareaField("Bildtext", "caption", "", "Vad gjorde barnet?", true)}<button class="primary" type="submit">Lägg till</button></form>`
+      : `<article class="card"><p class="notice error">Portfolio kan inte få nya bilder förrän vårdnadshavaren har godkänt ”Bilder i ärtan”.</p></article>`
+    : "";
+  const gallery = items.length
+    ? `<div class="family-gallery">${items.map((item) => {
+      const url = state.portfolioUrls[item.storage_path];
+      return `<figure class="card family-photo">${url ? `<img src="${esc(url)}" alt="${esc(item.caption || `Portfolio för ${child.name}`)}" loading="lazy">` : `<div class="post-image-missing">Bilden kunde inte laddas</div>`}<figcaption><strong>${esc(item.caption || "Ett minne")}</strong><span>${esc(formatDate(item.taken_on || String(item.created_at).slice(0, 10)))}</span>${item.can_manage ? `<button class="link danger-link" type="button" data-action="delete-portfolio" data-id="${esc(item.item_id)}">Ta bort</button>` : ""}</figcaption></figure>`;
+    }).join("")}</div>`
+    : emptyState("Portfolio är tom", canManage ? "Lägg till det första minnet när bildsamtycke finns." : "När personalen delar ett minne visas det privat här.");
+  return `${familyFeatureNotice()}${form}${gallery}`;
+}
+
+function schoolworkFor(childId) {
+  return {
+    progress: state.schoolProgress.filter((item) => item.child_id === childId),
+    assignments: state.schoolAssignments.filter((item) => item.child_id === childId),
+  };
+}
+
+function schoolworkStatus() {
+  if (!state.familyFeaturesReady) return "Inte aktiverad";
+  const child = selectedChild();
+  const rows = schoolworkFor(child?.id);
+  const attention = rows.assignments.filter((item) => item.status === "missing").length;
+  if (attention) return `${attention} ${attention === 1 ? "missad uppgift" : "missade uppgifter"}`;
+  const count = rows.progress.length + rows.assignments.length;
+  return count ? `${count} registrerade` : "Inga uppgifter";
+}
+
+function renderSchoolwork(child) {
+  if (!child) return "";
+  const { progress, assignments } = schoolworkFor(child.id);
+  const canManage = state.profile.role === "staff" || state.profile.role === "admin";
+  const assignmentList = assignments.length
+    ? `<div class="family-list">${assignments.map((item) => `<article class="card school-assignment status-${esc(item.status)}"><p class="kicker">${esc(ASSIGNMENT_STATUS[item.status] || item.status)} · senast ${esc(formatDate(item.due_on))}</p><h3>${esc(item.subject)} · ${esc(item.title)}</h3>${item.description ? `<p class="pre-line">${esc(item.description)}</p>` : ""}${canManage ? `<div class="actions">${item.status !== "completed" ? `<button class="link" type="button" data-action="assignment-status" data-id="${esc(item.assignment_id)}" data-status="completed">Markera klar</button>` : ""}<button class="link danger-link" type="button" data-action="delete-assignment" data-id="${esc(item.assignment_id)}">Ta bort</button></div>` : ""}</article>`).join("")}</div>`
+    : emptyState("Inga läxor eller uppgifter", "När skolan registrerar läxor och missade uppgifter visas de här.");
+  const progressList = progress.length
+    ? `<div class="family-list">${progress.map((item) => `<article class="card school-progress standing-${esc(item.standing)}"><p class="kicker">${esc(item.subject)} · ${esc(item.period)}</p><h3>${esc(FAMILY_STANDING[item.standing] || item.standing)}</h3>${item.current_grade ? `<p><strong>Registrerat betyg:</strong> ${esc(item.current_grade)}</p>` : ""}${item.summary ? `<p class="pre-line">${esc(item.summary)}</p>` : ""}${item.next_steps ? `<p><strong>Nästa steg:</strong> ${esc(item.next_steps)}</p>` : ""}${canManage ? `<button class="link danger-link" type="button" data-action="delete-progress" data-id="${esc(item.progress_id)}">Ta bort</button>` : ""}</article>`).join("")}</div>`
+    : emptyState("Ingen progression registrerad", "När skolan registrerar en ämnesbedömning visas den här.");
+  const forms = canManage ? `<details class="card family-editor"><summary>Lägg till läxa eller uppgift</summary><form class="form-stack" data-form="school-assignment" data-child-id="${esc(child.id)}">${field("Ämne", "subject", "", { required: true, maxlength: "80" })}${field("Rubrik", "title", "", { required: true, maxlength: "160" })}${textareaField("Beskrivning", "description")}${field("Senast", "due_on", shiftIsoDate(todayIso(), 7), { type: "date", required: true })}${selectField("Status", "status", Object.entries(ASSIGNMENT_STATUS), "homework", true)}<button class="primary" type="submit">Spara uppgift</button></form></details>
+    <details class="card family-editor"><summary>Registrera ämnesprogression</summary><form class="form-stack" data-form="subject-progress" data-child-id="${esc(child.id)}">${field("Ämne", "subject", "", { required: true, maxlength: "80" })}${field("Period", "period", "", { required: true, maxlength: "80", placeholder: "Exempelvis VT 2027" })}${selectField("Läge", "standing", Object.entries(FAMILY_STANDING), "on_track", true)}${field("Registrerat betyg", "grade", "", { maxlength: "20" })}${textareaField("Sammanfattning", "summary")}${textareaField("Nästa steg", "next_steps")}<button class="primary" type="submit">Spara progression</button></form></details>` : "";
+  return `${familyFeatureNotice()}<article class="card"><p class="form-hint">Det här är skolans registrerade uppgifter. Ärtan räknar inte ut betyg eller progression automatiskt.</p></article>${forms}<section><div class="section-head"><div><p class="kicker">Den här veckan och framåt</p><h2>Läxor och uppgifter</h2></div></div>${assignmentList}</section><section><div class="section-head"><div><p class="kicker">Ämnen</p><h2>Progression och betyg</h2></div></div>${progressList}</section>`;
+}
+
+function renderLostFound() {
+  const departments = state.profile.role === "parent"
+    ? [...new Map(state.children.map((child) => [child.department_id, [child.department_id, departmentName(child.department_id)]])).values()]
+    : departmentOptions();
+  const posts = state.lostFoundPosts;
+  const cards = posts.map((post) => {
+    const url = state.lostFoundUrls[post.storage_path];
+    const next = post.kind === "lost" ? "matched" : "returned";
+    const nextLabel = post.kind === "lost" ? "Saken är hittad" : "Saken är återlämnad";
+    return `<article class="card lost-found-card status-${esc(post.status)}" data-lost-card data-search="${esc(`${post.title} ${post.description} ${post.department_name}`.toLocaleLowerCase("sv-SE"))}">${url ? `<img class="lost-found-image" src="${esc(url)}" alt="${esc(post.title)}" loading="lazy">` : ""}<p class="kicker">${post.kind === "lost" ? "Saknad" : "Upphittad"} · ${esc(post.department_name)} · ${esc(LOST_STATUS[post.status] || post.status)}</p><h2>${esc(post.title)}</h2><p class="pre-line">${esc(post.description)}</p><p class="meta">${esc(post.author_name)} · ${esc(formatTimestamp(post.created_at))}</p>${post.can_manage ? `<div class="actions">${post.status === "open" ? `<button class="secondary" type="button" data-action="lost-status" data-id="${esc(post.post_id)}" data-status="${next}">${nextLabel}</button>` : `<button class="link" type="button" data-action="lost-status" data-id="${esc(post.post_id)}" data-status="open">Öppna igen</button>`}<button class="link danger-link" type="button" data-action="delete-lost" data-id="${esc(post.post_id)}">Ta bort</button></div>` : ""}</article>`;
+  }).join("");
+  const form = departments.length ? `<form class="card form-stack" data-form="lost-found"><p class="kicker">Nytt inlägg</p><h2>Efterlys eller registrera upphittat</h2>${selectField("Typ", "kind", [["lost", "Saknad"], ["found", "Upphittad"]], "lost", true)}${selectField("Avdelning", "department_id", departments, departments[0][0], true)}${field("Rubrik", "title", "", { required: true, minlength: "2", maxlength: "120" })}${textareaField("Beskrivning", "description", "", "Färg, storlek och var saken sågs senast. Skriv inga privata kontaktuppgifter.", true)}<label>Bild, valfri<input type="file" name="image" accept="image/*" capture="environment" data-action="family-image"></label><div class="family-image-preview" data-family-image-preview></div><button class="primary" type="submit">Publicera i Borttappat</button></form>` : "";
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">För avdelningen</p><h1 class="h1">Borttappat</h1><p class="sub">Efterlys eller visa något som hittats. Inga telefonnummer eller andra kontaktuppgifter behövs.</p></section>${familyFeatureNotice()}${form}<label class="family-search">Sök i Borttappat<input type="search" data-lost-query placeholder="Till exempel blå vante"></label><p class="form-hint" data-lost-empty hidden>Ingen träff.</p><div class="family-list">${cards || emptyState("Inga inlägg", "När någon efterlyser eller hittar något visas det här.")}</div>`;
+}
+
+function groupedSchoolEvents() {
+  const groups = new Map();
+  state.schoolEvents.forEach((row) => {
+    if (!groups.has(row.event_id)) groups.set(row.event_id, { ...row, children: [] });
+    if (row.child_id) groups.get(row.event_id).children.push({ id: row.child_id, name: row.child_name, response: row.response });
+  });
+  return [...groups.values()].sort((left, right) => new Date(left.starts_at) - new Date(right.starts_at));
+}
+
+function renderSchoolEvents() {
+  const groups = groupedSchoolEvents();
+  const parent = state.profile.role === "parent";
+  const scopeOptions = familyScopeOptions();
+  const eventStart = new Date(Date.now() + (7 * 24 * 60 * 60 * 1000));
+  const eventEnd = new Date(eventStart.getTime() + (60 * 60 * 1000));
+  const eventStartValue = dateTimeLocalValue(eventStart.toISOString());
+  const eventEndValue = dateTimeLocalValue(eventEnd.toISOString());
+  const form = !parent && scopeOptions.length ? `<form class="card form-stack" data-form="school-event"><p class="kicker">Ny händelse</p><h2>Verksamhetsevent</h2>${selectField("Målgrupp", "scope", scopeOptions, scopeOptions[0][0], true)}${field("Rubrik", "title", "", { required: true, maxlength: "160" })}${textareaField("Beskrivning", "body")}${field("Plats", "location", "", { maxlength: "300" })}<div class="form-grid">${field("Start", "starts_at", eventStartValue, { type: "datetime-local", required: true })}${field("Slut", "ends_at", eventEndValue, { type: "datetime-local", required: true })}</div><label class="check"><input type="checkbox" name="rsvp_enabled"> Vårdnadshavare ska svara Ja eller Nej</label>${field("Svara senast", "rsvp_due", eventStart.toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" }), { type: "date" })}<button class="primary" type="submit">Publicera händelse</button></form>` : "";
+  const cards = groups.map((event) => {
+    const open = event.rsvp_enabled && event.rsvp_due >= todayIso();
+    const children = event.children.map((child) => {
+      if (!parent) return `<li><strong>${esc(child.name)}</strong><span>${child.response === "yes" ? "Ja" : child.response === "no" ? "Nej" : "Ej svarat"}</span></li>`;
+      return `<li><strong>${esc(child.name)}</strong><span>${child.response === "yes" ? "Svar: Ja" : child.response === "no" ? "Svar: Nej" : "Ej svarat"}</span>${open ? `<div class="actions"><button class="${child.response === "yes" ? "primary" : "secondary"}" type="button" data-action="event-rsvp" data-id="${esc(event.event_id)}" data-child-id="${esc(child.id)}" data-response="yes">Ja</button><button class="${child.response === "no" ? "primary" : "secondary"}" type="button" data-action="event-rsvp" data-id="${esc(event.event_id)}" data-child-id="${esc(child.id)}" data-response="no">Nej</button></div>` : ""}</li>`;
+    }).join("");
+    return `<article class="card school-event"><p class="kicker">${esc(formatTimestamp(event.starts_at))}–${esc(formatTimestamp(event.ends_at))}</p><h2>${esc(event.title)}</h2><p class="meta">${esc(event.department_name || event.preschool_name)}${event.location ? ` · ${esc(event.location)}` : ""}</p>${event.body ? `<p class="pre-line">${esc(event.body)}</p>` : ""}${event.rsvp_enabled ? `<p><strong>OSA senast ${esc(formatDate(event.rsvp_due))}</strong></p><ul class="event-rsvp-list">${children || "<li>Inga barn i målgruppen.</li>"}</ul>` : ""}${event.can_manage ? `<button class="link danger-link" type="button" data-action="delete-event" data-id="${esc(event.event_id)}">Ta bort händelse</button>` : ""}</article>`;
+  }).join("");
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Kalender och OSA</p><h1 class="h1">Händelser</h1><p class="sub">Utvecklingssamtal, firanden och andra verksamhetshändelser. Påminnelser visas från en vecka före start.</p></section>${familyFeatureNotice()}${form}<div class="family-list">${cards || emptyState("Inga händelser", "När skolan publicerar en händelse visas den här.")}</div>`;
+}
+
+function renderSchoolBanners() {
+  if (state.profile.role === "parent") return renderActiveSchoolBanners() || emptyState("Ingen viktig information", "Aktiva meddelanden visas på Min dag.");
+  const scopeOptions = familyScopeOptions();
+  const bannerStart = new Date();
+  const bannerEnd = new Date(bannerStart.getTime() + (24 * 60 * 60 * 1000));
+  const form = scopeOptions.length ? `<form class="card form-stack" data-form="school-banner"><p class="kicker">Ny banner</p><h2>Viktig information</h2>${selectField("Målgrupp", "scope", scopeOptions, scopeOptions[0][0], true)}${selectField("Allvarlighetsgrad", "severity", Object.entries(BANNER_SEVERITY), "important", true)}${field("Rubrik", "title", "", { required: true, maxlength: "120" })}${textareaField("Text", "body", "", "", true)}<div class="form-grid">${field("Visas från", "starts_at", dateTimeLocalValue(bannerStart.toISOString()), { type: "datetime-local", required: true })}${field("Visas till", "ends_at", dateTimeLocalValue(bannerEnd.toISOString()), { type: "datetime-local", required: true })}</div><button class="primary" type="submit">Publicera banner</button></form>` : "";
+  const list = state.schoolBanners.map((banner) => `<article class="card school-banner severity-${esc(banner.severity)}"><p class="kicker">${esc(BANNER_SEVERITY[banner.severity])} · ${esc(banner.department_name || banner.preschool_name)}</p><h2>${esc(banner.title)}</h2><p class="pre-line">${esc(banner.body)}</p><p class="meta">${esc(formatTimestamp(banner.starts_at))}–${esc(formatTimestamp(banner.ends_at))}</p>${banner.can_manage ? `<button class="link danger-link" type="button" data-action="delete-banner" data-id="${esc(banner.banner_id)}">Ta bort</button>` : ""}</article>`).join("");
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Prioriterad information</p><h1 class="h1">Banners</h1><p class="sub">Tidsstyrd information om till exempel sjukdomsläge, stängning eller viktiga händelser.</p></section>${familyFeatureNotice()}${form}<div class="family-list">${list || emptyState("Inga banners", "Publicera en tidsbegränsad banner när informationen behöver synas direkt.")}</div>`;
+}
 function renderChildInfo() {
   if (state.profile.role !== "parent") {
     const child = selectedChild();
     if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">Inget barn att visa</h1></section>`;
-    return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">Vårdnadshavarna äger uppgifterna. Du kan läsa dem här.</p></section><article class="card" id="child-info-read">${renderChildFacts(child)}</article>${renderChildBox(child)}`;
+    return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">${esc(child.name)}</h1><p class="sub">Vårdnadshavarna äger uppgifterna. Du kan läsa dem här.</p></section><article class="card" id="child-info-read">${renderChildFacts(child)}</article>${renderChildBox(child)}<section><div class="section-head"><div><p class="kicker">Privat</p><h2>Portfolio</h2></div></div>${renderPortfolio(child)}</section><section><div class="section-head"><div><p class="kicker">Skola</p><h2>Progression och uppgifter</h2></div></div>${renderSchoolwork(child)}</section>`;
   }
   const child = selectedChild();
   if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Barnuppgifter</p><h1 class="h1">Inget barn kopplat</h1><p class="sub">Personalen bjuder in dig till ett barn, eller godkänner en förfrågan innan barnet syns här.</p></section>${renderTermCalendarCard()}${renderSiblingRequestForm()}`;
@@ -4183,6 +4467,13 @@ registerHubCard("child", { id: "halsa", icon: "✚", title: "Hälsa", status: ch
 registerHubCard("child", { id: "ladan", icon: "□", title: "Barnets låda", status: childBoxStatus, render: () => renderChildBox(selectedChild()) });
 registerHubCard("child", { id: "kontakter", icon: "☎", title: "Kontaktpersoner", status: childContactsStatus, render: () => renderChildContacts(selectedChild()) });
 registerHubCard("child", { id: "samtycken", icon: "✓", title: "Samtycken", status: childConsentsStatus, render: () => renderChildConsents(selectedChild()) });
+registerHubCard("child", { id: "portfolio", icon: "▧", title: "Portfolio", status: portfolioStatus, render: () => renderPortfolio(selectedChild()) });
+registerHubCard("child", { id: "skola", icon: "◇", title: "Skola", status: schoolworkStatus, visible: () => {
+  const child = selectedChild();
+  if (!child) return false;
+  const rows = schoolworkFor(child.id);
+  return rows.progress.length > 0 || rows.assignments.length > 0;
+}, render: () => renderSchoolwork(selectedChild()) });
 registerHubCard("child", { id: "syskon", icon: "☺", title: "Syskon", status: childSiblingStatus, render: () => renderSiblingRequestForm(true) });
 registerHubCard("child", { id: "profilbild", icon: "☺", title: "Profilbild", status: childPhotoStatus, render: () => renderChildPhoto(selectedChild()) });
 registerHubCard("child", { id: "klasslista", icon: "☰", title: "Klasslista", status: childClassListStatus, render: () => renderClassListConsent(selectedChild()) });
@@ -4853,7 +5144,7 @@ function peopleDetailCards() {
     id: `barn-${child.id}`,
     detail: true,
     title: child.name || "Barn",
-    render: () => `<article class="card" id="child-info-read">${renderChildFacts(child)}</article>${renderChildBox(child)}`,
+    render: () => `<article class="card" id="child-info-read">${renderChildFacts(child)}</article>${renderChildBox(child)}<section><div class="section-head"><div><p class="kicker">Privat</p><h2>Portfolio</h2></div></div>${renderPortfolio(child)}</section><section><div class="section-head"><div><p class="kicker">Skola</p><h2>Progression och uppgifter</h2></div></div>${renderSchoolwork(child)}</section>`,
   }));
   guardianDirectoryRows().forEach((row) => {
     cards.push({
@@ -5242,11 +5533,14 @@ function renderMenuGroup(label, items) {
 function renderMore() {
   const role = state.profile.role;
   const child = selectedChild();
+  const openLost = state.lostFoundPosts.filter((post) => post.status === "open").length;
+  const eventCount = groupedSchoolEvents().filter((event) => new Date(event.ends_at).getTime() >= Date.now()).length;
+  const bannerCount = activeSchoolBanners().length;
   const groups = role === "admin"
-    ? [["Förskolan", [["overview", "Översikt", ""], ["schools", "Skolor", ""], ["people", "Personer", ""], ["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
+    ? [["Förskolan", [["overview", "Översikt", ""], ["schools", "Skolor", ""], ["people", "Personer", ""]]], ["Kommunikation", [["events", "Händelser och OSA", eventCount ? String(eventCount) : ""], ["banners", "Viktig information", bannerCount ? String(bannerCount) : ""], ["lost", "Borttappat", openLost ? String(openLost) : ""], ["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
     : role === "staff"
-      ? [["Arbete", [["people", "Barn", ""], ["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
-      : [["Barnet", [["child", "Barnet", child?.name || "Inget barn"], ["classlist", "Klasslista", ""]]], ["Konto", [["account", "Konto", state.profile.email]]]];
+      ? [["Arbete", [["people", "Barn", ""], ["events", "Händelser och OSA", eventCount ? String(eventCount) : ""], ["banners", "Viktig information", bannerCount ? String(bannerCount) : ""], ["lost", "Borttappat", openLost ? String(openLost) : ""], ["incidents", "Avvikelser", incidentHubStatus()]]], ["Konto", [["account", "Konto", state.profile.email]]]]
+      : [["Barnet", [["child", "Barnet", child?.name || "Inget barn"], ["classlist", "Klasslista", ""]]], ["Förskolan", [["events", "Händelser och OSA", eventCount ? String(eventCount) : ""], ["lost", "Borttappat", openLost ? String(openLost) : ""]]], ["Konto", [["account", "Konto", state.profile.email]]]];
   return `${noticeHtml()}<h1 class="h1">Mer</h1>${groups.map(([label, items]) => renderMenuGroup(label, items)).join("")}<button class="link menu-logout" type="button" data-action="logout">Logga ut</button>`;
 }
 
@@ -5311,6 +5605,9 @@ function render() {
     classlist: renderClassList,
     messages: renderMessages,
     attendance: renderAttendance,
+    lost: renderLostFound,
+    events: renderSchoolEvents,
+    banners: renderSchoolBanners,
     overview: renderOverview,
     schools: renderSchools,
     people: renderPeople,
@@ -5318,8 +5615,9 @@ function render() {
     account: renderAccount,
   };
   const fallback = views[defaultViewForRole(state.profile.role)] || renderParentHome;
-  const banner = state.mealDemo ? ArtanMeals.demoBanner(formatDate(state.mealDemoToday)) : "";
-  screen.innerHTML = banner + (views[state.view] || fallback)();
+  const mealBanner = state.mealDemo ? ArtanMeals.demoBanner(formatDate(state.mealDemoToday)) : "";
+  const priorityBanners = ["home", "attendance", "overview"].includes(state.view) ? renderActiveSchoolBanners() : "";
+  screen.innerHTML = mealBanner + priorityBanners + (views[state.view] || fallback)();
   renderNav();
   renderAssistant();
   prefetchGuardianAttachments();
@@ -5388,6 +5686,127 @@ document.body.addEventListener("submit", (event) => {
     state.assistantResponse = assistantAnswer(assistantIntentForQuestion(question));
     renderAssistant();
     requestAnimationFrame(() => document.getElementById("assistantAnswer")?.focus());
+    return;
+  }
+  if (type === "portfolio-upload") {
+    const file = form.querySelector('input[name="image"]')?.files?.[0];
+    if (!file) return;
+    runMutation(async () => {
+      const itemId = crypto.randomUUID();
+      const path = `${form.dataset.childId}/${itemId}.jpg`;
+      const { blob } = await transcodePostImage(file);
+      await uploadStorageImage("portfolio-images", path, blob);
+      try {
+        await rpc("save_portfolio_item", {
+          target_item_id: itemId,
+          target_child_id: form.dataset.childId,
+          object_path: path,
+          item_caption: values.caption.trim(),
+          item_taken_on: values.taken_on || null,
+        });
+      } catch (error) {
+        await deleteStorageImage("portfolio-images", path);
+        throw error;
+      }
+      if (state.familyPreviewUrl) URL.revokeObjectURL(state.familyPreviewUrl);
+      state.familyPreviewUrl = "";
+      await loadData();
+    }, "Minnet är sparat i barnets privata portfolio.");
+    return;
+  }
+  if (type === "lost-found") {
+    const file = form.querySelector('input[name="image"]')?.files?.[0];
+    runMutation(async () => {
+      const postId = crypto.randomUUID();
+      const path = file ? `${values.department_id}/${state.profile.id}/${postId}.jpg` : null;
+      if (file) {
+        const { blob } = await transcodePostImage(file);
+        await uploadStorageImage("lost-found-images", path, blob);
+      }
+      try {
+        await rpc("save_lost_found_post", {
+          target_post_id: postId,
+          target_department_id: values.department_id,
+          post_kind: values.kind,
+          post_title: values.title.trim(),
+          post_description: values.description.trim(),
+          object_path: path,
+        });
+      } catch (error) {
+        if (path) await deleteStorageImage("lost-found-images", path);
+        throw error;
+      }
+      if (state.familyPreviewUrl) URL.revokeObjectURL(state.familyPreviewUrl);
+      state.familyPreviewUrl = "";
+      await loadData();
+    }, "Inlägget är publicerat i Borttappat.");
+    return;
+  }
+  if (type === "school-banner") {
+    const scope = familyScope(values.scope);
+    runMutation(async () => {
+      await rpc("save_school_banner", {
+        target_banner_id: null,
+        target_preschool_id: scope.preschoolId,
+        target_department_id: scope.departmentId,
+        banner_severity: values.severity,
+        banner_title: values.title.trim(),
+        banner_body: values.body.trim(),
+        banner_starts_at: new Date(values.starts_at).toISOString(),
+        banner_ends_at: new Date(values.ends_at).toISOString(),
+      });
+      await loadData();
+    }, "Bannern är publicerad.");
+    return;
+  }
+  if (type === "school-event") {
+    const scope = familyScope(values.scope);
+    runMutation(async () => {
+      await rpc("save_school_event", {
+        target_event_id: null,
+        target_preschool_id: scope.preschoolId,
+        target_department_id: scope.departmentId,
+        event_title: values.title.trim(),
+        event_body: values.body.trim() || null,
+        event_location: values.location.trim() || null,
+        event_starts_at: new Date(values.starts_at).toISOString(),
+        event_ends_at: new Date(values.ends_at).toISOString(),
+        event_rsvp_enabled: values.rsvp_enabled === "on",
+        event_rsvp_due: values.rsvp_enabled === "on" ? values.rsvp_due || null : null,
+      });
+      await loadData();
+    }, "Händelsen är publicerad.");
+    return;
+  }
+  if (type === "subject-progress") {
+    runMutation(async () => {
+      await rpc("save_subject_progress", {
+        target_progress_id: null,
+        target_child_id: form.dataset.childId,
+        progress_subject: values.subject.trim(),
+        progress_period: values.period.trim(),
+        progress_standing: values.standing,
+        progress_grade: values.grade.trim() || null,
+        progress_summary: values.summary.trim() || null,
+        progress_next_steps: values.next_steps.trim() || null,
+      });
+      await loadData();
+    }, "Ämnesprogressionen är sparad.");
+    return;
+  }
+  if (type === "school-assignment") {
+    runMutation(async () => {
+      await rpc("save_school_assignment", {
+        target_assignment_id: null,
+        target_child_id: form.dataset.childId,
+        assignment_subject: values.subject.trim(),
+        assignment_title: values.title.trim(),
+        assignment_description: values.description.trim() || null,
+        assignment_due_on: values.due_on,
+        assignment_status: values.status,
+      });
+      await loadData();
+    }, "Uppgiften är sparad.");
     return;
   }
   if (type === "incident-draft") {
@@ -5907,6 +6326,20 @@ function onPeopleDirectoryFilter(event) {
   applyPeopleDirectoryFilter(root);
 }
 
+function onLostFoundFilter(event) {
+  if (!event.target.matches?.("[data-lost-query]")) return;
+  const query = event.target.value.trim().toLocaleLowerCase("sv-SE");
+  const cards = [...screen.querySelectorAll("[data-lost-card]")];
+  let shown = 0;
+  cards.forEach((card) => {
+    const visible = !query || (card.dataset.search || "").includes(query);
+    card.hidden = !visible;
+    if (visible) shown += 1;
+  });
+  const empty = screen.querySelector("[data-lost-empty]");
+  if (empty) empty.hidden = shown > 0 || cards.length === 0;
+}
+
 function primeEmptyWeekTime(input) {
   if (!input?.matches?.("[data-week-time]") || input.disabled || input.value || state.pickupEditor?.mode !== "week") return;
   const field = input.dataset.weekTime === "pickup" ? "pickup" : "dropoff";
@@ -5922,11 +6355,13 @@ document.body.addEventListener("focusin", (event) => {
 });
 
 document.body.addEventListener("input", onPeopleDirectoryFilter);
+document.body.addEventListener("input", onLostFoundFilter);
 document.body.addEventListener("change", onPeopleDirectoryFilter);
 
 document.body.addEventListener("change", (event) => {
   const input = event.target;
   if (input.matches('[data-action="post-images"]')) renderSelectedPostImages(input);
+  if (input.matches('[data-action="family-image"]')) renderFamilyImagePreview(input);
   if (input.matches('[data-action="child-photo"]')) {
     const file = input.files?.[0];
     const childId = input.dataset.childId;
@@ -6095,6 +6530,91 @@ document.body.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
+  if (action === "delete-portfolio") {
+    if (!window.confirm("Ta bort minnet ur barnets portfolio? Bilden raderas permanent.")) return;
+    runMutation(async () => {
+      const path = await rpc("delete_portfolio_item", { target_item_id: target.dataset.id });
+      await deleteStorageImage("portfolio-images", path);
+      await loadData();
+    }, "Minnet är borttaget.");
+    return;
+  }
+  if (action === "lost-status") {
+    runMutation(async () => {
+      await rpc("set_lost_found_status", { target_post_id: target.dataset.id, next_status: target.dataset.status });
+      await loadData();
+    }, "Statusen är uppdaterad.");
+    return;
+  }
+  if (action === "delete-lost") {
+    if (!window.confirm("Ta bort inlägget och dess bild?")) return;
+    runMutation(async () => {
+      const path = await rpc("delete_lost_found_post", { target_post_id: target.dataset.id });
+      await deleteStorageImage("lost-found-images", path);
+      await loadData();
+    }, "Inlägget är borttaget.");
+    return;
+  }
+  if (action === "delete-banner") {
+    if (!window.confirm("Ta bort bannern? Den slutar visas direkt.")) return;
+    runMutation(async () => {
+      await rpc("delete_school_banner", { target_banner_id: target.dataset.id });
+      await loadData();
+    }, "Bannern är borttagen.");
+    return;
+  }
+  if (action === "event-rsvp") {
+    runMutation(async () => {
+      await rpc("respond_school_event", {
+        target_event_id: target.dataset.id,
+        target_child_id: target.dataset.childId,
+        event_response: target.dataset.response,
+      });
+      await loadData();
+    }, "Svaret är sparat.");
+    return;
+  }
+  if (action === "delete-event") {
+    if (!window.confirm("Ta bort händelsen och alla OSA-svar?")) return;
+    runMutation(async () => {
+      await rpc("delete_school_event", { target_event_id: target.dataset.id });
+      await loadData();
+    }, "Händelsen är borttagen.");
+    return;
+  }
+  if (action === "delete-progress") {
+    if (!window.confirm("Ta bort den registrerade ämnesprogressionen?")) return;
+    runMutation(async () => {
+      await rpc("delete_subject_progress", { target_progress_id: target.dataset.id });
+      await loadData();
+    }, "Progressionsposten är borttagen.");
+    return;
+  }
+  if (action === "assignment-status") {
+    const item = state.schoolAssignments.find((row) => row.assignment_id === target.dataset.id);
+    if (!item) return;
+    runMutation(async () => {
+      await rpc("save_school_assignment", {
+        target_assignment_id: item.assignment_id,
+        target_child_id: item.child_id,
+        assignment_subject: item.subject,
+        assignment_title: item.title,
+        assignment_description: item.description,
+        assignment_due_on: item.due_on,
+        assignment_status: target.dataset.status,
+      });
+      await loadData();
+    }, "Uppgiften är uppdaterad.");
+    return;
+  }
+  if (action === "delete-assignment") {
+    if (!window.confirm("Ta bort uppgiften?")) return;
+    runMutation(async () => {
+      await rpc("delete_school_assignment", { target_assignment_id: target.dataset.id });
+      await loadData();
+    }, "Uppgiften är borttagen.");
+    return;
+  }
   if (/^(share|print)-(term|post|attachment|message)$/.test(action)) {
     const [kind, what] = action.split("-");
     runShareAction(kind, what, target.dataset.id);

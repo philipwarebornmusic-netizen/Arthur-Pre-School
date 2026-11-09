@@ -1,5 +1,5 @@
--- Matsedel. NOT APPLIED to production.
--- Review and run this file manually in the Supabase SQL editor only after approval.
+-- Matsedel.
+-- Applied to production before the 2026-11-09 release verification.
 -- It creates tables, private helpers, and two private Storage buckets.
 -- It does not read or change existing rows, consents, or child health.
 -- It does not delete storage.objects. The browser removes a file first;

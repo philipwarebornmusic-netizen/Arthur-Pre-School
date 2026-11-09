@@ -1,5 +1,16 @@
 # Ändringslogg
 
+## 2026-11-09 — Familjefunktioner och skolprogression, inte publicerat
+
+- Lade till en privat, barnspecifik **Portfolio**. Behörig personal kan ladda upp JPEG-bilder först när samtycket Bilder i ärtan är aktivt; barnets vårdnadshavare och behörig personal kan läsa.
+- Lade till **Borttappat** per avdelning med Saknad/Upphittad, valfri privat bild, sökning och statusarna Öppen, Hittad, Återlämnad och Avslutad. Bildsökvägen binder ihop avdelning, författare och inlägg så att en annan vårdnadshavare inte kan radera objektet.
+- Lade till tidsstyrda **banners** med målgrupp och allvarlighetsgrad. Aktiva banners visas på Min dag, Närvaro och administratörens Översikt; personal hanterar dem via Mer.
+- Lade till verksamhetshändelser med avdelnings- eller skolmålgrupp, barnspecifikt Ja/Nej-OSA och påminnelser från sju dagar före start till händelsens slut.
+- Lade till en separat skolvy för läxor, missade uppgifter, progression och registrerade betyg. Ärtan visar skolans registrerade värden och gör ingen automatisk bedömning eller betygsberäkning.
+- `supabase/022_family_school_features.sql` och samma kontrakt i `supabase/schema.sql` skapar tabeller, privata buckets, RLS och behörighetskontrollerade RPC:er. Migration 022 applicerades i produktion 2026-11-09.
+- Matsedelsmigrationerna är applicerade i ordningen `20261108190711_meal_menus.sql` och därefter `20261108223000_meal_term_horizon.sql`. Produktionskontrollen bekräftade 185-dagarsintervallet och `meal_edit_horizon()`.
+- `scripts/family_school_sql_test.py` provar portfolio-samtycke, barnisolering, avdelningsdelning, bildradering, OSA och spärrade direktwrites i en tillfällig PostgreSQL 16-instans.
+
 ## 2026-11-09 — Barnets låda, frånvaroorsak och bättre schematolkning
 
 - Lade till **Barnets låda** med statusarna Slut, Få och Finns för blöjor, extrakläder, regnkläder och strumpor. Vårdnadshavare samt behörig personal ser och uppdaterar samma status, och Min dag påminner när något behöver fyllas på.

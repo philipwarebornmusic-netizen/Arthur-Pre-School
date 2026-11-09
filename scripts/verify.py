@@ -268,6 +268,19 @@ def check_child_care(errors):
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "child care sql test failed").strip()
         errors.append(detail)
+
+
+def check_family_school(errors):
+    script = ROOT / "scripts" / "family_school_sql_test.py"
+    if not script.exists():
+        errors.append("scripts/family_school_sql_test.py is missing")
+        return
+    result = subprocess.run(["python3", str(script)], cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "family and school sql test failed").strip()
+        errors.append(detail)
+
+
 def check_menu_import(errors):
     for name in ("menu_read_test.mjs", "menu_pdf_test.mjs"):
         script = ROOT / "scripts" / name
@@ -296,6 +309,7 @@ def main():
     check_menu_import(errors)
     check_contact_photos(errors)
     check_child_care(errors)
+    check_family_school(errors)
 
     if errors:
         print("Arthur verification FAILED", file=sys.stderr)

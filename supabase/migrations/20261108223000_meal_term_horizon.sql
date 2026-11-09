@@ -1,4 +1,4 @@
--- Prepared only. Do not apply to production until a new approval.
+-- Applied to production before the 2026-11-09 release verification.
 -- A normal Swedish spring term, from early January to mid-June, is about 160 days.
 -- Six months is 183 days. 186 days covers that term when it is entered near its start
 -- and still refuses a write a whole school year ahead. A menu file may cover the same
