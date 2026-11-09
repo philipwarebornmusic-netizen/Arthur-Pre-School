@@ -48,6 +48,7 @@ const state = {
   attendanceNotesReady: true,
   multiDayAbsenceReady: true,
   familyFeaturesReady: true,
+  schoolExperienceReady: true,
   portfolioItems: [],
   portfolioUrls: {},
   lostFoundPosts: [],
@@ -56,6 +57,13 @@ const state = {
   schoolEvents: [],
   schoolProgress: [],
   schoolAssignments: [],
+  schoolExperienceSchools: [],
+  schoolTimetable: [],
+  afterSchoolSchedules: [],
+  childDocuments: [],
+  childDocumentUrls: {},
+  childTeachers: [],
+  schoolNotices: [],
   notices: [],
   incidents: [],
   incidentCopies: [],
@@ -610,19 +618,22 @@ function childInfoChecklist(child) {
 function parentReminders(child) {
   const reminders = [];
   const attendance = attendanceFor(child.id);
-  if (!isWeekend() && !attendance) {
+  const preschoolAttendance = featureEnabled(child, "attendance") && !isSchoolChild(child);
+  if (preschoolAttendance && !isWeekend() && !attendance) {
     reminders.push({ text: "Fyll i dagens plan med lämning och hämtning.", view: "home", target: "daily-plan" });
-  } else if (!isWeekend() && attendance.status === "in" && !attendance.pickup_at) {
+  } else if (preschoolAttendance && !isWeekend() && attendance.status === "in" && !attendance.pickup_at) {
     reminders.push({ text: "Komplettera dagens plan med hämtningstid.", view: "home", target: "daily-plan" });
   }
-  const boxNeedsRefill = childBoxNeedsRefill(child.id);
-  if (boxNeedsRefill.length) {
-    const labels = new Map(CHILD_BOX_ITEMS);
-    reminders.unshift({
-      text: `${boxNeedsRefill.map((item) => labels.get(item.item_type)).filter(Boolean).join(" och ")} behöver fyllas på i barnets låda.`,
-      view: "child",
-      target: "child-box",
-    });
+  if (featureEnabled(child, "child_box")) {
+    const boxNeedsRefill = childBoxNeedsRefill(child.id);
+    if (boxNeedsRefill.length) {
+      const labels = new Map(CHILD_BOX_ITEMS);
+      reminders.unshift({
+        text: `${boxNeedsRefill.map((item) => labels.get(item.item_type)).filter(Boolean).join(" och ")} behöver fyllas på i barnets låda.`,
+        view: "child",
+        target: "child-box",
+      });
+    }
   }
   childInfoChecklist(child)
     .filter((item) => !item.complete)
@@ -631,12 +642,12 @@ function parentReminders(child) {
     reminders.unshift({ text: "Bekräfta att du har läst informationen från förskolan.", view: "child", target: "incident-copies" });
   }
   const now = Date.now();
-  const eventReminders = (state.schoolEvents || []).filter((event) => {
+  const eventReminders = featureEnabled(child, "events") ? (state.schoolEvents || []).filter((event) => {
     if (event.child_id !== child.id) return false;
     const start = new Date(event.starts_at).getTime();
     const end = new Date(event.ends_at).getTime();
     return now >= start - (7 * 24 * 60 * 60 * 1000) && now <= end;
-  });
+  }) : [];
   const seenEvents = new Set();
   eventReminders.forEach((event) => {
     if (seenEvents.has(event.event_id)) return;
@@ -646,7 +657,7 @@ function parentReminders(child) {
       : `${event.title} börjar ${formatTimestamp(event.starts_at)}.`;
     reminders.unshift({ text, view: "events", target: "" });
   });
-  if (state.pickupWeekReady && typeof ArtanPickup !== "undefined" && ArtanPickup.buildTermGrid(pickupGridInput(child)).unfilled) {
+  if (!isSchoolChild(child) && featureEnabled(child, "schedule") && featureEnabled(child, "pickup") && state.pickupWeekReady && typeof ArtanPickup !== "undefined" && ArtanPickup.buildTermGrid(pickupGridInput(child)).unfilled) {
     reminders.unshift({ text: "Fyll i lämning och hämtning för den närmaste veckan.", view: "pickup", target: "pickup-current-week" });
   }
   return reminders.slice(0, 3);
@@ -1043,7 +1054,7 @@ async function signPostImages(images) {
 
 async function signStoragePaths(bucket, paths) {
   const unique = [...new Set(paths.filter(Boolean))];
-  if (!unique.length || !state.familyFeaturesReady) return {};
+  if (!unique.length) return {};
   const signed = await request(`/storage/v1/object/sign/${encodeURIComponent(bucket)}`, {
     method: "POST",
     body: JSON.stringify({ expiresIn: 3600, paths: unique }),
@@ -1068,6 +1079,60 @@ async function deleteStorageImage(bucket, path) {
     method: "DELETE",
     body: JSON.stringify({ prefixes: [path] }),
   });
+}
+
+const CHILD_DOCUMENT_TYPES = Object.freeze({
+  "application/pdf": "pdf",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+});
+
+function validateChildDocument(file) {
+  if (!file) return null;
+  const extension = CHILD_DOCUMENT_TYPES[file.type];
+  if (!extension) throw new Error("Bilagan måste vara PDF, JPEG, PNG eller DOCX.");
+  if (file.size < 1 || file.size > 10 * 1024 * 1024) throw new Error("Bilagan får vara högst 10 MB.");
+  return { extension, mime: file.type };
+}
+
+async function uploadChildDocument(childId, kind, file, { assignmentId = null, relatedDate = null } = {}) {
+  const meta = validateChildDocument(file);
+  if (!meta) return null;
+  const documentId = crypto.randomUUID();
+  const path = `${childId}/${kind}/${documentId}.${meta.extension}`;
+  await request(`/storage/v1/object/child-documents/${encodedStoragePath(path)}`, {
+    method: "POST",
+    headers: { "Content-Type": meta.mime, "x-upsert": "false" },
+    body: file,
+  });
+  try {
+    await rpc("save_child_document", {
+      target_document_id: documentId,
+      target_child_id: childId,
+      target_document_kind: kind,
+      target_assignment_id: assignmentId,
+      target_related_date: relatedDate,
+      object_path: path,
+      original_name: file.name,
+    });
+  } catch (error) {
+    try { await deleteStorageImage("child-documents", path); } catch { /* Metadata failed; cleanup can be retried. */ }
+    throw error;
+  }
+  return documentId;
+}
+
+function renderChildDocuments(childId, kind, emptyText) {
+  const documents = documentsForChild(childId, kind);
+  if (!documents.length) return `<p class="form-hint">${esc(emptyText)}</p>`;
+  return `<ul class="document-list">${documents.map((document) => {
+    const url = state.childDocumentUrls[document.storage_path];
+    const link = url
+      ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(document.display_name)}</a>`
+      : `<span>${esc(document.display_name)}</span>`;
+    return `<li><div>${navIcon("document")}<span>${link}<small>${esc(formatTimestamp(document.created_at))}</small></span></div>${document.can_delete ? `<button class="link danger-link" type="button" data-action="delete-child-document" data-id="${esc(document.document_id)}" data-path="${esc(document.storage_path)}">Ta bort</button>` : ""}</li>`;
+  }).join("")}</ul>`;
 }
 
 function renderFamilyImagePreview(input) {
@@ -1276,6 +1341,7 @@ async function logout() {
       attendanceNotesReady: true,
       multiDayAbsenceReady: true,
       familyFeaturesReady: true,
+      schoolExperienceReady: true,
       portfolioItems: [],
       portfolioUrls: {},
       lostFoundPosts: [],
@@ -1284,6 +1350,13 @@ async function logout() {
       schoolEvents: [],
       schoolProgress: [],
       schoolAssignments: [],
+      schoolExperienceSchools: [],
+      schoolTimetable: [],
+      afterSchoolSchedules: [],
+      childDocuments: [],
+      childDocumentUrls: {},
+      childTeachers: [],
+      schoolNotices: [],
       calendarReady: true,
       calendarFeed: null,
       calendarToken: null,
@@ -1342,6 +1415,7 @@ async function loadData() {
   state.attendanceNotesReady = true;
   state.familyFeaturesReady = true;
   state.multiDayAbsenceReady = true;
+  state.schoolExperienceReady = true;
   const profileWithAccess = "id,auth_user_id,organization_id,name,email,phone,role,removed_at,allow_parent_messages,allow_playdate_requests,allow_birthday_invitations";
   const profileWithoutAccess = "id,auth_user_id,organization_id,name,email,phone,role,allow_parent_messages,allow_playdate_requests,allow_birthday_invitations";
   let profiles;
@@ -1533,9 +1607,17 @@ async function loadData() {
   state.schoolEvents = Array.isArray(family?.events) ? family.events : [];
   state.schoolProgress = Array.isArray(family?.progress) ? family.progress : [];
   state.schoolAssignments = Array.isArray(family?.assignments) ? family.assignments : [];
-  [state.portfolioUrls, state.lostFoundUrls] = await Promise.all([
+  const schoolExperience = await optionalSchoolExperienceRpc("list_school_experience");
+  state.schoolExperienceSchools = Array.isArray(schoolExperience?.schools) ? schoolExperience.schools : [];
+  state.schoolTimetable = Array.isArray(schoolExperience?.timetable) ? schoolExperience.timetable : [];
+  state.afterSchoolSchedules = Array.isArray(schoolExperience?.after_school) ? schoolExperience.after_school : [];
+  state.childDocuments = Array.isArray(schoolExperience?.documents) ? schoolExperience.documents : [];
+  state.childTeachers = Array.isArray(schoolExperience?.teachers) ? schoolExperience.teachers : [];
+  state.schoolNotices = Array.isArray(schoolExperience?.notices) ? schoolExperience.notices : [];
+  [state.portfolioUrls, state.lostFoundUrls, state.childDocumentUrls] = await Promise.all([
     signStoragePaths("portfolio-images", state.portfolioItems.map((item) => item.storage_path)),
     signStoragePaths("lost-found-images", state.lostFoundPosts.map((item) => item.storage_path)),
+    signStoragePaths("child-documents", state.childDocuments.map((item) => item.storage_path)),
   ]);
   state.childPhotoUrls = await signChildPhotos([
     ...state.children.map((child) => child.photo_path),
@@ -1586,6 +1668,7 @@ function clearLoadedData() {
     childBoxReady: true,
     attendanceNotesReady: true,
     familyFeaturesReady: true,
+    schoolExperienceReady: true,
     portfolioItems: [],
     portfolioUrls: {},
     lostFoundPosts: [],
@@ -1594,6 +1677,13 @@ function clearLoadedData() {
     schoolEvents: [],
     schoolProgress: [],
     schoolAssignments: [],
+    schoolExperienceSchools: [],
+    schoolTimetable: [],
+    afterSchoolSchedules: [],
+    childDocuments: [],
+    childDocumentUrls: {},
+    childTeachers: [],
+    schoolNotices: [],
     pickupNotices: [],
     notices: [],
     incidents: [],
@@ -1772,6 +1862,18 @@ async function optionalFamilyRpc(name, args) {
   } catch (error) {
     if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
       state.familyFeaturesReady = false;
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function optionalSchoolExperienceRpc(name, args) {
+  try {
+    return await rpc(name, args);
+  } catch (error) {
+    if (/schema cache|could not find the function|pgrst202/i.test(error.message)) {
+      state.schoolExperienceReady = false;
       return null;
     }
     throw error;
@@ -2287,6 +2389,75 @@ function renderSiblingRequestForm(additional = false) {
 
 function childSchoolId(child) {
   return state.departments.find((department) => department.id === child.department_id)?.preschool_id || null;
+}
+
+const SCHOOL_FEATURE_DEFAULTS = Object.freeze({
+  attendance: true,
+  important: true,
+  events: true,
+  meals: true,
+  assignments: true,
+  schedule: true,
+  pickup: true,
+  documents: true,
+  teachers: true,
+  portfolio: true,
+  classlist: true,
+  child_box: true,
+});
+
+const SCHOOL_FEATURE_LABELS = Object.freeze({
+  attendance: "Sjukanmälan",
+  important: "Viktig information",
+  events: "Händelser",
+  meals: "Matsedel",
+  assignments: "Uppgifter och utveckling",
+  schedule: "Schema",
+  pickup: "Hämtpersoner och hämtpass",
+  documents: "Intyg och bilagor",
+  teachers: "Lärare",
+  portfolio: "Portfolio",
+  classlist: "Klasslista",
+  child_box: "Barnets låda",
+});
+
+function schoolExperienceFor(preschoolId) {
+  const saved = state.schoolExperienceSchools.find((school) => school.preschool_id === preschoolId);
+  return {
+    education_stage: saved?.education_stage || "preschool",
+    feature_config: { ...SCHOOL_FEATURE_DEFAULTS, ...(saved?.feature_config || {}) },
+  };
+}
+
+function childSchoolExperience(child) {
+  return schoolExperienceFor(childSchoolId(child));
+}
+
+function isSchoolChild(child) {
+  return Boolean(child) && childSchoolExperience(child).education_stage === "school";
+}
+
+function featureEnabled(child, feature) {
+  if (!child || !state.schoolExperienceReady) return SCHOOL_FEATURE_DEFAULTS[feature] !== false;
+  return childSchoolExperience(child).feature_config[feature] !== false;
+}
+
+function documentsForChild(childId, kind = "") {
+  return state.childDocuments.filter((document) => document.child_id === childId && (!kind || document.document_kind === kind));
+}
+
+function teachersForChild(childId, kind = "") {
+  return state.childTeachers.filter((teacher) => teacher.child_id === childId && (!kind || teacher.teacher_kind === kind));
+}
+
+function timetableForDepartment(departmentId, weekday = null) {
+  return state.schoolTimetable
+    .filter((entry) => entry.department_id === departmentId && (weekday === null || Number(entry.weekday) === Number(weekday)))
+    .sort((left, right) => Number(left.weekday) - Number(right.weekday) || left.starts_at.localeCompare(right.starts_at));
+}
+
+function afterSchoolForChild(childId) {
+  return state.afterSchoolSchedules.filter((row) => row.child_id === childId);
 }
 
 function closuresForTerm(termId) {
@@ -2934,7 +3105,7 @@ function renderCreatedPass(childId) {
 
 function renderPermanentPassSection(child) {
   if (!state.permanentPassesReady) {
-    return `<section class="card" id="permanent-passes"><h2>Permanent hämtpass</h2><p class="form-hint">Permanenta hämtpass är inte aktiverade i databasen ännu.</p></section>`;
+    return `<details class="compact-tool" id="permanent-passes"><summary><span>${navIcon("pass")}<strong>Permanenta hämtpass</strong></span><small>Inte aktiverat</small></summary><div class="compact-tool-body"><p class="form-hint">Permanenta hämtpass är inte aktiverade i databasen ännu.</p></div></details>`;
   }
   const passes = permanentPassesForChild(child.id);
   const allowed = state.pickupContacts.filter((contact) => contact.child_id === child.id && !contact.blocked);
@@ -2959,35 +3130,63 @@ function renderPermanentPassSection(child) {
   const form = allowed.length
     ? `<form class="form-stack" data-form="permanent-pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa permanent hämtpass</h3>${selectField("Person som får hämta", "contact_id", allowed.map((contact) => [contact.contact_id, `${contact.relation} ${contact.name}`]), firstContact, true)}${field("Slutdatum", "ends_on", defaultPermanentEnd(child), { type: "date", min: today, max: addDaysIso(today, 1825) })}<div data-permanent-linked-slot>${renderPermanentLinkedField(firstContact)}</div><p class="form-hint">Passet kan användas flera gånger. Slutdatumet är terminens sista dag. Töm fältet om passet ska gälla tills det återkallas. Datumet visas på passet. Du kan öppna QR-koden igen så länge passet gäller.</p><button class="primary" type="submit">Skapa permanent hämtpass</button></form>`
     : `<p class="form-hint">Lägg först till personen på hämtlistan. Ett permanent pass kan bara kopplas till någon som får hämta.</p>`;
-  return `<section class="card" id="permanent-passes"><h2>Permanent hämtpass</h2><p class="form-hint">För någon som redan får hämta, till exempel en mor- eller farförälder. Båda vårdnadshavarna kan se och återkalla passet. Det slutar fungera om personen spärras, tas bort eller inte längre får hämta.</p>${rows ? `<ul class="invite-list">${rows}</ul>` : `<p class="form-hint">Inget permanent hämtpass är skapat.</p>`}${form}</section>`;
+  return `<details class="compact-tool" id="permanent-passes"><summary><span>${navIcon("pass")}<strong>Permanenta hämtpass</strong></span><small>${passes.length || "Inga"} aktiva</small></summary><div class="compact-tool-body"><p class="form-hint">För någon som redan får hämta, till exempel en mor- eller farförälder. Båda vårdnadshavarna kan se och återkalla passet.</p>${rows ? `<ul class="invite-list">${rows}</ul>` : `<p class="form-hint">Inget permanent hämtpass är skapat.</p>`}${form}</div></details>`;
 }
 
 function renderPickupSection(child) {
-  if (!state.pickupReady || state.profile.role !== "parent") return "";
+  if (!state.pickupReady || state.profile.role !== "parent" || !featureEnabled(child, "pickup")) return "";
   const contacts = state.pickupContacts.filter((contact) => contact.child_id === child.id);
   const passes = state.pickupPasses.filter((pass) => pass.child_id === child.id);
   const maxDate = addDaysIso(todayIso(), 14);
-  return `<section id="pickup-list" class="card child-step"><p class="kicker">Hämtning</p><h2>Hämtlista</h2><p class="form-hint">Lägg till personer som brukar hämta. En administratör kan sätta spärren får ej hämta. Den gäller före pass och manuell utcheckning.</p><p class="form-hint">Valfri bild. Personalen ser den vid utcheckning och när ett hämtpass skannas. Bilden förminskas till 512 pixlar.</p>${contacts.length ? `<ul class="contact-list">${contacts.map((contact) => renderPickupContactItem(contact)).join("")}</ul>` : `<p class="form-hint">Ingen person är tillagd ännu.</p>`}</section>
-    <form class="card form-stack" data-form="pickup-contact" data-child-id="${esc(child.id)}"><h3>Lägg till på hämtlistan</h3><div class="form-grid">${field("Namn", "name", "", { required: true, maxlength: "80" })}${field("Relation", "relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "phone", "", { type: "tel", maxlength: "40", autocomplete: "tel" })}<button class="primary" type="submit">Spara på hämtlistan</button></form>
+  const passRows = passes.length ? `<ul class="invite-list">${passes.map((pass) => {
+    const openable = pass.pass_status === "active" || pass.pass_status === "scheduled";
+    return `<li><div><strong>${esc(pass.person_relation || "")} ${esc(pass.person_name || "Personuppgiften är rensad")}</strong><span>${esc(formatDate(pass.pickup_date))} · ${esc(pass.window_start)}–${esc(pass.window_end)} · ${esc(passStatusLabel(pass.pass_status))}</span></div><div class="invite-actions">${openable ? `<button class="link" type="button" data-action="open-pass" data-id="${esc(pass.pass_id)}" data-kind="day">Visa pass</button><button class="link danger-link" type="button" data-action="revoke-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>` : ""}</div></li>`;
+  }).join("")}</ul>` : `<p class="form-hint">Inget hämtpass är skapat.</p>`;
+  return `<section class="schedule-tools"><div class="section-head"><div><p class="kicker">Vid behov</p><h2>Hämtning och behörigheter</h2></div></div>
     ${renderCreatedPass(child.id)}
-    <section class="card" id="pickup-passes"><h2>Hämtpass</h2><p class="form-hint">Ett pass gäller ett barn och en dag, kan användas en gång och kan återkallas av båda vårdnadshavarna. Ett pass som fortfarande gäller kan öppnas igen.</p>${passes.length ? `<ul class="invite-list">${passes.map((pass) => {
-      const openable = pass.pass_status === "active" || pass.pass_status === "scheduled";
-      return `<li><div><strong>${esc(pass.person_relation || "")} ${esc(pass.person_name || "Personuppgiften är rensad")}</strong><span>${esc(formatDate(pass.pickup_date))} · ${esc(pass.window_start)}–${esc(pass.window_end)} · ${esc(passStatusLabel(pass.pass_status))}</span></div><div class="invite-actions">${openable ? `<button class="link" type="button" data-action="open-pass" data-id="${esc(pass.pass_id)}" data-kind="day">Visa pass</button><button class="link danger-link" type="button" data-action="revoke-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>` : ""}</div></li>`;
-    }).join("")}</ul>` : `<p class="form-hint">Inget hämtpass är skapat.</p>`}</section>
-    <form class="card form-stack" data-form="pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa hämtpass</h3>${field("Datum", "pickup_date", todayIso(), { type: "date", required: true, min: todayIso(), max: maxDate })}<div class="form-grid">${field("Från", "window_start", "14:00", { type: "time", required: true })}${field("Till", "window_end", "17:00", { type: "time", required: true })}</div><div class="form-grid">${field("Hämtas av", "person_name", "", { required: true, maxlength: "80" })}${field("Relation", "person_relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "person_phone", "", { type: "tel", maxlength: "40" })}<p class="form-hint">Passet visas direkt, med QR-kod och den sexsiffriga koden. Bilden på hämtlistan syns för personalen när passet skannas, inte på själva passet.</p><button class="primary" type="submit">Skapa hämtpass</button></form>
-    ${renderPermanentPassSection(child)}`;
+    <details class="compact-tool" id="pickup-list"><summary><span>${navIcon("people")}<strong>Hämtpersoner</strong></span><small>${contacts.length || "Inga"} sparade</small></summary><div class="compact-tool-body"><p class="form-hint">Personer som brukar hämta. Personalen ser eventuell bild vid utcheckning.</p>${contacts.length ? `<ul class="contact-list">${contacts.map((contact) => renderPickupContactItem(contact)).join("")}</ul>` : `<p class="form-hint">Ingen person är tillagd ännu.</p>`}<form class="form-stack" data-form="pickup-contact" data-child-id="${esc(child.id)}"><h3>Lägg till person</h3><div class="form-grid">${field("Namn", "name", "", { required: true, maxlength: "80" })}${field("Relation", "relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "phone", "", { type: "tel", maxlength: "40", autocomplete: "tel" })}<button class="secondary" type="submit">Spara person</button></form></div></details>
+    <details class="compact-tool" id="pickup-passes"><summary><span>${navIcon("pass")}<strong>Hämtpass för en dag</strong></span><small>${passes.length || "Inga"} sparade</small></summary><div class="compact-tool-body"><p class="form-hint">Ett engångspass gäller ett barn, en dag och ett tidsfönster.</p>${passRows}<form class="form-stack" data-form="pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa hämtpass</h3>${field("Datum", "pickup_date", todayIso(), { type: "date", required: true, min: todayIso(), max: maxDate })}<div class="form-grid">${field("Från", "window_start", "14:00", { type: "time", required: true })}${field("Till", "window_end", "17:00", { type: "time", required: true })}</div><div class="form-grid">${field("Hämtas av", "person_name", "", { required: true, maxlength: "80" })}${field("Relation", "person_relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "person_phone", "", { type: "tel", maxlength: "40" })}<button class="secondary" type="submit">Skapa pass</button></form></div></details>
+    ${renderPermanentPassSection(child)}
+  </section>`;
+}
+
+function renderSchoolTimetable(child) {
+  const groups = WEEKDAYS.map((label, index) => {
+    const entries = timetableForDepartment(child.department_id, index + 1);
+    return `<section class="school-day-column"><h3>${esc(label)}</h3>${entries.length ? `<ul>${entries.map((entry) => `<li><time>${esc(entry.starts_at)}–${esc(entry.ends_at)}</time><div><strong>${esc(entry.subject)}</strong>${entry.teacher_name || entry.room ? `<span>${esc([entry.teacher_name, entry.room].filter(Boolean).join(" · "))}</span>` : ""}</div></li>`).join("")}</ul>` : `<p>Inget publicerat.</p>`}</section>`;
+  }).join("");
+  return `<section class="card school-timetable"><div class="section-head"><div><p class="kicker">Bestäms av skolan</p><h2>Veckans ämnen</h2></div></div><div class="school-week-columns">${groups}</div></section>`;
+}
+
+function renderAfterSchoolSchedule(child) {
+  const saved = new Map(afterSchoolForChild(child.id).map((row) => [Number(row.weekday), row]));
+  const rows = WEEKDAYS.map((label, index) => {
+    const weekday = index + 1;
+    const row = saved.get(weekday);
+    return `<div class="after-school-row" data-weekday="${weekday}"><label class="check"><input type="checkbox" name="attending_${weekday}" ${row?.attending ? "checked" : ""}> ${esc(label)}</label>${field("Till", `ends_at_${weekday}`, row?.ends_at || "16:00", { type: "time" })}${field("Notering", `note_${weekday}`, row?.note || "", { maxlength: "300", placeholder: "Valfritt" })}</div>`;
+  }).join("");
+  return `<details class="card compact-tool"><summary><span>${navIcon("clock")}<strong>Fritidsschema</strong></span><small>Fylls i av vårdnadshavare</small></summary><div class="compact-tool-body"><form class="form-stack" data-form="after-school-schedule" data-child-id="${esc(child.id)}"><p class="form-hint">Markera bara dagarna barnet går på fritids och ange sluttid. Skolans lektioner ovan ändras inte.</p><div class="after-school-grid">${rows}</div><button class="primary" type="submit">Spara fritidsschema</button></form></div></details>`;
+}
+
+function renderSchoolScheduleHub(child) {
+  return `${noticeHtml()}${childTabs()}<h1 class="h1">Schema</h1><p class="page-sub">${esc(childFirstName(child) || child.name)} · ${esc(departmentName(child.department_id))}</p>${renderSchoolTimetable(child)}${renderAfterSchoolSchedule(child)}`;
 }
 
 function renderPickupHub() {
   if (state.profile.role !== "parent") return "";
   const child = selectedChild();
-  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Hämtning</p><h1 class="h1">Inget barn ännu</h1></section>`;
-  const grid = typeof ArtanPickup === "undefined" ? "" : ArtanPickup.renderTermGrid(pickupGridInput(child), { editable: state.pickupWeekReady });
+  if (!child) return `${noticeHtml()}<section class="hero-card"><p class="kicker">Schema</p><h1 class="h1">Inget barn ännu</h1></section>`;
+  if (!featureEnabled(child, "schedule")) return `${noticeHtml()}${childTabs()}<h1 class="h1">Schema</h1>${emptyState("Schema används inte", "Skolan har dolt den här funktionen för verksamheten.")}`;
+  if (isSchoolChild(child)) return renderSchoolScheduleHub(child);
+  const calendarInput = pickupGridInput(child);
+  const currentGrid = typeof ArtanPickup === "undefined" ? "" : ArtanPickup.renderTermGrid(calendarInput, { editable: state.pickupWeekReady, currentWeekOnly: true });
+  const otherGrid = typeof ArtanPickup === "undefined" ? "" : ArtanPickup.renderTermGrid(calendarInput, { editable: state.pickupWeekReady, excludeCurrentWeek: true });
+  const grid = `${currentGrid}${otherGrid ? `<details class="term-more"><summary>Visa övriga veckor</summary><div class="term-more-body">${otherGrid}</div></details>` : ""}`;
   const schedule = state.pickupWeekReady
     ? `${grid || `<p class="form-hint">Ingen publicerad termin att visa ännu.</p>`}<button class="term-add no-print" type="button" data-action="pickup-add" aria-label="Planera vecka">+</button>${renderPickupOverlay(child)}`
-    : `<section class="card"><h2>Veckoschema</h2><p class="form-hint">Veckoschemat för hämtning är inte aktiverat i databasen ännu.</p>${grid}</section>`;
-  return `${noticeHtml()}${childTabs()}<h1 class="h1">Hämtning</h1><p class="page-sub">${esc(childFirstName(child) || child.name)} · ${esc(departmentName(child.department_id))}</p>
-    <section class="card term-card" id="pickup-schedule"><div class="section-head"><div><p class="kicker">Schema</p><h2>Terminen</h2></div></div>${schedule}<p class="form-hint">Tryck på en vecka för att ändra. Bara sparade dagar är ifyllda. En svag tid är standardveckan, och Ej ifylld betyder att veckan inte är sparad. En personikon betyder att någon annan än du hämtar.</p></section>
+    : `<p class="form-hint">Veckoschemat är inte aktiverat i databasen ännu.</p>${grid}`;
+  return `${noticeHtml()}${childTabs()}<h1 class="h1">Schema</h1><p class="page-sub">${esc(childFirstName(child) || child.name)} · ${esc(departmentName(child.department_id))}</p>
+    <section class="card term-card" id="pickup-schedule"><div class="section-head"><div><p class="kicker">Lämning och hämtning</p><h2>Veckor</h2></div></div>${schedule}<p class="form-hint">Välj en vecka för att ange tider. Sparade dagar visas tydligt; övriga dagar följer standardveckan.</p></section>
     ${renderPickupSection(child)}`;
 }
 
@@ -3737,7 +3936,7 @@ function saveMealDemo(form, values) {
 }
 
 function renderHomeAssignments(child) {
-  if (!state.familyFeaturesReady) return "";
+  if (!state.familyFeaturesReady || !featureEnabled(child, "assignments")) return "";
   const assignments = schoolworkFor(child.id).assignments
     .filter((item) => item.status !== "completed")
     .sort((left, right) => {
@@ -3751,16 +3950,54 @@ function renderHomeAssignments(child) {
   return `<p class="menu-label">Uppgifter</p><div class="menu-group"><button type="button" class="menu-row" data-action="navigate" data-view="child" data-section="skola"><span class="menu-row-title">${esc(next.subject)} · ${esc(next.title)}</span><span class="menu-row-status">${esc(status)}</span></button></div>`;
 }
 
+function renderHomeQuickActions(child) {
+  const bannerCount = activeSchoolBanners().length;
+  const eventCount = groupedSchoolEvents().filter((event) => new Date(event.ends_at).getTime() >= Date.now()).length;
+  const actions = [];
+  if (featureEnabled(child, "attendance") && !isWeekend()) {
+    actions.push(`<button type="button" class="home-quick-action" data-action="open-daily-plan" aria-controls="daily-plan"><span class="menu-icon-badge">${navIcon("illness")}</span><strong>Sjukanmälan</strong><small>Sjuk eller ledig</small></button>`);
+  }
+  if (featureEnabled(child, "important")) {
+    actions.push(`<button type="button" class="home-quick-action" data-action="navigate" data-view="banners"><span class="menu-icon-badge">${navIcon("banner")}</span><strong>Viktig information</strong><small>${bannerCount ? `${bannerCount} aktiva` : "Ingen ny"}</small></button>`);
+  }
+  if (featureEnabled(child, "events")) {
+    actions.push(`<button type="button" class="home-quick-action" data-action="navigate" data-view="events"><span class="menu-icon-badge">${navIcon("event")}</span><strong>Händelser</strong><small>${eventCount ? `${eventCount} kommande` : "Inga kommande"}</small></button>`);
+  }
+  return actions.length ? `<section class="home-quick-grid" aria-label="Genvägar">${actions.join("")}</section>` : "";
+}
+
+function renderTodaySubjects(child) {
+  if (!isSchoolChild(child) || !featureEnabled(child, "schedule")) return "";
+  const weekday = new Date(`${todayIso()}T12:00:00`).getDay();
+  if (weekday < 1 || weekday > 5) return "";
+  const entries = timetableForDepartment(child.department_id, weekday);
+  const rows = entries.length
+    ? entries.map((entry) => `<li><time>${esc(entry.starts_at)}–${esc(entry.ends_at)}</time><span><strong>${esc(entry.subject)}</strong>${entry.teacher_name || entry.room ? `<small>${esc([entry.teacher_name, entry.room].filter(Boolean).join(" · "))}</small>` : ""}</span></li>`).join("")
+    : `<li class="empty-subjects">Skolan har inte publicerat dagens ämnen ännu.</li>`;
+  return `<section class="card today-subjects"><div class="section-head"><div><p class="kicker">Idag</p><h2>Dagens ämnen</h2></div><button class="link" type="button" data-action="navigate" data-view="pickup">Hela schemat</button></div><ul>${rows}</ul></section>`;
+}
+
+function renderSchoolNotices(child) {
+  const notices = state.schoolNotices.filter((notice) => notice.child_id === child.id && !notice.read_at);
+  if (!notices.length) return "";
+  return `<section class="card school-notices"><p class="kicker">Nytt från skolan</p><h2>Att göra den här veckan</h2><div class="menu-group">${notices.map((notice) => `<button type="button" class="menu-row" data-action="school-notice" data-id="${esc(notice.notice_id)}"><span class="menu-row-title">${esc(notice.title)}</span><span class="menu-row-status">${esc(notice.body)}</span></button>`).join("")}</div></section>`;
+}
+
 function renderParentHome() {
   const child = selectedChild();
   if (!child) return `${noticeHtml()}<p class="hi">Välkommen</p><h1 class="h1">Inget barn ännu</h1><p class="sub">När personalen har kopplat ett barn syns dagen här. Du kan också be om en koppling.</p>${renderSiblingRequestForm()}`;
   const attendance = attendanceFor(child.id);
+  const schoolMode = isSchoolChild(child);
+  const showAttendance = featureEnabled(child, "attendance");
+  const showPickup = featureEnabled(child, "pickup") && !schoolMode;
   const weekend = isWeekend();
   const pickupContacts = contactsFor(child.id).filter((contact) => contact.can_pickup);
   const latest = state.posts.find((post) => !post.child_id || post.child_id === child.id);
   const reminders = parentReminders(child);
   const nextReminder = reminders[0];
-  const status = todayStatusCopy(child, attendance);
+  const status = schoolMode && !weekend && !["absent_sick", "absent_leave"].includes(attendance?.status)
+    ? { text: "Ingen frånvaro anmäld", sub: departmentName(child.department_id), dot: "" }
+    : todayStatusCopy(child, attendance);
   const summary = todayGridDay(child);
   const pickup = pickupCardCopy(child, summary);
   const renewal = renderPassRenewalCards(child);
@@ -3771,22 +4008,23 @@ function renderParentHome() {
   const today = todayIso();
   const absenceEndsOn = absentToday && attendance?.absence_ends_on >= today ? attendance.absence_ends_on : today;
   const absencePeriodSummary = absenceEndsOn > today ? ` till och med ${formatDate(absenceEndsOn)}` : "";
-  const statusChoices = [["in", "Kommer"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]]
+  const statusChoices = [["in", schoolMode ? "Ingen frånvaro" : "Kommer"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]]
     .map(([value, label]) => `<label><input type="radio" name="status" value="${value}" ${planStatus === value ? "checked" : ""}><span>${label}</span></label>`)
     .join("");
-  const dailyPlan = weekend
+  const dailyPlan = !showAttendance || weekend
     ? ""
     : `<details id="daily-plan" class="card quick-panel">
-      <summary><span class="menu-icon-badge">${navIcon("illness")}</span><span><strong>Ändra dagens status</strong><small>${absentToday ? `${attendanceLabel(attendance.status)}${absencePeriodSummary}` : "Kommer idag"}</small></span><span class="menu-chevron" aria-hidden="true">${navIcon("chevron")}</span></summary>
+      <summary><span class="menu-icon-badge">${navIcon("illness")}</span><span><strong>${schoolMode ? "Anmäl eller ändra frånvaro" : "Ändra dagens status"}</strong><small>${absentToday ? `${attendanceLabel(attendance.status)}${absencePeriodSummary}` : schoolMode ? "Ingen frånvaro anmäld" : "Kommer idag"}</small></span><span class="menu-chevron" aria-hidden="true">${navIcon("chevron")}</span></summary>
       <form class="form-stack quick-panel-form" data-form="parent-attendance" data-child-id="${esc(child.id)}">
         <fieldset class="attendance-status-options"><legend>Vad gäller idag?</legend><div>${statusChoices}</div></fieldset>
-        <div data-attendance-present-fields ${absentToday ? "hidden" : ""}>
+        ${schoolMode ? "" : `<div data-attendance-present-fields ${absentToday ? "hidden" : ""}>
           <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
           <label>Vem hämtar?<input name="pickup_by" type="text" value="${esc(attendance?.pickup_by || "")}" list="pickup-contact-options" placeholder="Exempelvis mormor eller farfar"></label>
           ${pickupContacts.length ? `<datalist id="pickup-contact-options">${pickupContacts.map((contact) => `<option value="${esc(contact.name)}"></option>`).join("")}</datalist>` : ""}
-        </div>
+        </div>`}
         ${state.multiDayAbsenceReady ? `<label class="absence-period-field" data-absence-period-field ${absentToday ? "" : "hidden"}><span>Till och med</span><input name="absence_ends_on" type="date" min="${today}" max="${addDaysIso(today, 30)}" value="${esc(absenceEndsOn)}" required ${absentToday ? "" : "disabled"}></label>` : ""}
         ${state.attendanceNotesReady ? `<label data-absence-note-field ${absentToday ? "" : "hidden"}><span data-absence-note-title>${absenceTitle}</span><input name="absence_note" maxlength="500" value="${esc(attendance?.absence_note || "")}" placeholder="${planStatus === "absent_leave" ? "Till exempel familjeledig" : "Till exempel feber eller hosta"}"><span class="form-hint">Syns bara för vårdnadshavare och personal.</span></label>` : `<p class="form-hint" data-absence-note-field ${absentToday ? "" : "hidden"}>Frånvaroanteckningar är inte aktiverade i databasen ännu.</p>`}
+        ${state.schoolExperienceReady && featureEnabled(child, "documents") ? `<label data-absence-note-field ${absentToday ? "" : "hidden"}>Bilaga, valfritt<input name="absence_document" type="file" accept=".pdf,.jpg,.jpeg,.png,.docx,application/pdf,image/jpeg,image/png,application/vnd.openxmlformats-officedocument.wordprocessingml.document"><span class="form-hint">Till exempel reseuppgifter eller underlag för frånvaron. Högst 10 MB.</span></label>` : ""}
         <button class="primary" type="submit" data-attendance-submit>${absentToday ? "Spara frånvaro" : "Spara dagens status"}</button>
       </form>
     </details>`;
@@ -3797,24 +4035,29 @@ function renderParentHome() {
   const latestRow = latest
     ? `<p class="menu-label">Senaste meddelande</p><div class="menu-group"><button type="button" class="menu-row" data-action="navigate" data-view="messages" data-section="anslagstavla"><span class="menu-row-title">${esc(latest.title)}</span><span class="menu-row-status">${esc(formatTimestamp(latest.created_at))}</span></button></div>`
     : "";
-  const todayCard = weekend
-    ? `<section class="soft-card is-today"><p class="soft-label">Idag</p><p class="soft-value"><span class="status-dot ${status.dot}"></span>${esc(status.text)}</p><p class="soft-sub">${esc(status.sub)}</p></section>`
-    : `<button type="button" class="soft-card is-today today-status-card" data-action="open-daily-plan" aria-controls="daily-plan"><span class="soft-label">Idag</span><span class="soft-value"><span class="status-dot ${status.dot}"></span>${esc(status.text)}</span><span class="soft-sub">${esc(status.sub)}</span><span class="today-status-action">Ändra ${navIcon("chevron")}</span></button>`;
+  const todayCard = !showAttendance
+    ? ""
+    : weekend
+      ? `<section class="soft-card is-today"><p class="soft-label">Idag</p><p class="soft-value"><span class="status-dot ${status.dot}"></span>${esc(status.text)}</p><p class="soft-sub">${esc(status.sub)}</p></section>`
+      : `<button type="button" class="soft-card is-today today-status-card" data-action="open-daily-plan" aria-controls="daily-plan"><span class="soft-label">Idag</span><span class="soft-value"><span class="status-dot ${status.dot}"></span>${esc(status.text)}</span><span class="soft-sub">${esc(status.sub)}</span><span class="today-status-action">Ändra ${navIcon("chevron")}</span></button>`;
   return `${noticeHtml()}${childTabs()}<p class="hi">${esc(dayGreeting())}</p><h1 class="h1">${esc(childFirstName(child) || child.name)}</h1>
+    ${renderHomeQuickActions(child)}
     ${todayCard}
     ${dailyPlan}
-    ${renderMealTodayCard(child)}
+    ${renderTodaySubjects(child)}
+    ${featureEnabled(child, "meals") ? renderMealTodayCard(child) : ""}
     ${assignmentRow}
     ${latestRow}
-    <div class="present-day-content" data-present-day-content ${absentToday ? "hidden" : ""}>
-      <section class="soft-card is-pick"><p class="soft-label">Hämtning</p><p class="soft-value">${esc(pickup.value)}</p>${pickup.sub ? `<p class="soft-sub">${esc(pickup.sub)}</p>` : ""}${editToday}</section>
+    ${renderSchoolNotices(child)}
+    ${showPickup ? `<div class="present-day-content" data-present-day-content ${absentToday ? "hidden" : ""}>
+      <section class="soft-card is-pick"><p class="soft-label">Schema</p><p class="soft-value">${esc(pickup.value)}</p>${pickup.sub ? `<p class="soft-sub">${esc(pickup.sub)}</p>` : ""}${editToday}</section>
       ${renewal}
       ${renderPickupNotices()}
       ${renderPickupWeekNudge(child)}
       ${renderParentTermSchedules(child)}
-    </div>
+    </div>` : ""}
     ${renderIncidentCopies()}
-    ${renderNoticeList("Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}
+    ${renderNoticeList(isSchoolChild(child) ? "Skolan" : "Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}
     <div class="home-reminder-content" data-home-reminder-content>${reminderBlock}</div>`;
 }
 
@@ -4194,7 +4437,7 @@ function renderChildBasics(child) {
 
 function renderChildHealth(child) {
   const health = healthFor(child.id);
-  return `<form id="child-health" class="card form-stack child-step" data-form="child-health" data-child-id="${esc(child.id)}"><p class="kicker">Steg 2 av 4</p><h2>Hälsa och omsorg</h2><p class="form-hint">Gå igenom steget och spara även om barnet inte har allergier, medicin eller andra särskilda behov. Ett tomt fält tar bort just den uppgiften. De andra fälten behålls.</p>
+  const form = `<form id="child-health" class="card form-stack child-step" data-form="child-health" data-child-id="${esc(child.id)}"><p class="kicker">Steg 2 av 4</p><h2>Hälsa och omsorg</h2><p class="form-hint">Gå igenom steget och spara även om barnet inte har allergier, medicin eller andra särskilda behov. Ett tomt fält tar bort just den uppgiften. De andra fälten behålls.</p>
       ${field("Allergier, separera med kommatecken", "allergies", health.allergies?.join(", ") || "")}
       ${field("Sjukdomar eller tillstånd", "conditions", health.conditions?.join(", ") || "")}
       ${textareaField("Specialkost", "diet", health.diet || "")}
@@ -4203,11 +4446,13 @@ function renderChildHealth(child) {
       <button class="primary" type="submit">Spara och markera som genomgånget</button>
       ${health.updated_at ? `<p class="form-hint">Senast uppdaterad ${esc(formatTimestamp(health.updated_at))}</p>` : ""}
     </form>`;
+  if (!state.schoolExperienceReady || !featureEnabled(child, "documents")) return form;
+  return `${form}<details class="card compact-tool"><summary><span>${navIcon("document")}<strong>Intyg och underlag</strong></span><small>${documentsForChild(child.id, "medical").length || "Inga"} filer</small></summary><div class="compact-tool-body">${renderChildDocuments(child.id, "medical", "Inget intyg är inskickat.")}<form class="form-stack" data-form="child-document" data-child-id="${esc(child.id)}" data-kind="medical"><label>Lägg till intyg eller underlag<input name="document" type="file" accept=".pdf,.jpg,.jpeg,.png,.docx,application/pdf,image/jpeg,image/png,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required></label><p class="form-hint">Filen är privat för barnets vårdnadshavare och behörig personal. Högst 10 MB.</p><button class="secondary" type="submit">Skicka in fil</button></form></div></details>`;
 }
 
 function renderChildContacts(child) {
   const contacts = contactsFor(child.id);
-  return `<section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2><p class="form-hint">Ändra namn, relation, telefon, om personen får hämta och om kontakten är primär. Ta bort frågar en gång till innan kontakten försvinner. Hämtlistan, hämtpassen och veckoschemat finns under Hämtning.</p><button class="secondary" type="button" data-action="navigate" data-view="pickup">Öppna Hämtning</button>
+  return `<section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2><p class="form-hint">Ändra namn, relation, telefon, om personen får hämta och om kontakten är primär. Ta bort frågar en gång till innan kontakten försvinner. Hämtpersoner, hämtpass och veckoschema finns under Schema.</p><button class="secondary" type="button" data-action="navigate" data-view="pickup">Öppna Schema</button>
       ${renderPickupContactPhotos(child)}
       <div class="contact-editors">${contacts.map((contact) => renderContactEditor(child, contact)).join("")}${renderContactEditor(child)}</div>
     </section>`;
@@ -4420,19 +4665,51 @@ function schoolworkStatus() {
   return count ? `${count} registrerade` : "Inga uppgifter";
 }
 
+function staffOptionsForChild(child) {
+  const assigned = new Set(state.staffAssignments.filter((row) => row.department_id === child.department_id).map((row) => row.staff_id));
+  return state.organizationPeople
+    .filter((person) => person.role === "staff" && !person.removed_at && assigned.has(person.id))
+    .map((person) => [person.id, person.name]);
+}
+
+function renderTeacherCards(child, kind) {
+  const rows = teachersForChild(child.id, kind);
+  const label = kind === "main" ? "Huvudlärare" : "Ämneslärare";
+  if (!rows.length) return emptyState(`Ingen ${label.toLocaleLowerCase("sv-SE")} registrerad`, "När skolan kopplar en lärare visas personen här.");
+  return `<div class="teacher-card-grid">${rows.map((teacher) => `<article class="card teacher-card"><span class="menu-icon-badge">${navIcon(kind === "main" ? "main-teacher" : "subject-teacher")}</span><div><p class="kicker">${esc(kind === "main" ? label : teacher.subject)}</p><h3>${esc(teacher.teacher_name)}</h3></div>${teacher.can_manage ? `<button class="link danger-link" type="button" data-action="delete-child-teacher" data-child-id="${esc(child.id)}" data-staff-id="${esc(teacher.staff_profile_id)}" data-kind="${esc(kind)}" data-subject="${esc(teacher.subject || "")}">Ta bort</button>` : ""}</article>`).join("")}</div>`;
+}
+
+function renderTeacherSection(child, canManage) {
+  if (!isSchoolChild(child) || !featureEnabled(child, "teachers") || !state.schoolExperienceReady) return "";
+  const staffOptions = staffOptionsForChild(child);
+  const forms = canManage && staffOptions.length
+    ? `<details class="card compact-tool"><summary><span>${navIcon("main-teacher")}<strong>Koppla lärare</strong></span></summary><div class="compact-tool-body"><form class="form-stack" data-form="child-teacher" data-child-id="${esc(child.id)}">${selectField("Lärare", "staff_profile_id", staffOptions, staffOptions[0][0], true)}${selectField("Roll", "teacher_kind", [["main", "Huvudlärare"], ["subject", "Ämneslärare"]], "main", true)}${field("Ämne för ämneslärare", "subject", "", { maxlength: "80" })}<button class="secondary" type="submit">Koppla lärare</button></form></div></details>`
+    : "";
+  return `<section class="teacher-section"><div class="section-head"><div><p class="kicker">Kontaktvägar</p><h2>Lärare</h2></div></div>${forms}<h3>Huvudlärare</h3>${renderTeacherCards(child, "main")}<h3>Ämneslärare</h3>${renderTeacherCards(child, "subject")}</section>`;
+}
+
+function renderAssignmentDocuments(assignmentId) {
+  const documents = state.childDocuments.filter((document) => document.assignment_id === assignmentId);
+  if (!documents.length) return "";
+  return `<div class="assignment-documents"><strong>Bilagor</strong>${documents.map((document) => {
+    const url = state.childDocumentUrls[document.storage_path];
+    return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${navIcon("document")}${esc(document.display_name)}</a>` : `<span>${navIcon("document")}${esc(document.display_name)}</span>`;
+  }).join("")}</div>`;
+}
+
 function renderSchoolwork(child) {
   if (!child) return "";
   const { progress, assignments } = schoolworkFor(child.id);
   const canManage = state.profile.role === "staff" || state.profile.role === "admin";
   const assignmentList = assignments.length
-    ? `<div class="family-list">${assignments.map((item) => `<article class="card school-assignment status-${esc(item.status)}"><p class="kicker">${esc(ASSIGNMENT_STATUS[item.status] || item.status)} · senast ${esc(formatDate(item.due_on))}</p><h3>${esc(item.subject)} · ${esc(item.title)}</h3>${item.description ? `<p class="pre-line">${esc(item.description)}</p>` : ""}${canManage ? `<div class="actions">${item.status !== "completed" ? `<button class="link" type="button" data-action="assignment-status" data-id="${esc(item.assignment_id)}" data-status="completed">Markera klar</button>` : ""}<button class="link danger-link" type="button" data-action="delete-assignment" data-id="${esc(item.assignment_id)}">Ta bort</button></div>` : ""}</article>`).join("")}</div>`
+    ? `<div class="family-list">${assignments.map((item) => `<article class="card school-assignment status-${esc(item.status)}"><p class="kicker">${esc(ASSIGNMENT_STATUS[item.status] || item.status)} · senast ${esc(formatDate(item.due_on))}</p><h3>${esc(item.subject)} · ${esc(item.title)}</h3>${item.description ? `<p class="pre-line">${esc(item.description)}</p>` : ""}${renderAssignmentDocuments(item.assignment_id)}${canManage ? `<div class="actions">${item.status !== "completed" ? `<button class="link" type="button" data-action="assignment-status" data-id="${esc(item.assignment_id)}" data-status="completed">Markera klar</button>` : ""}<button class="link danger-link" type="button" data-action="delete-assignment" data-id="${esc(item.assignment_id)}">Ta bort</button></div>` : ""}</article>`).join("")}</div>`
     : emptyState("Inga uppgifter", "När skolan registrerar uppgifter visas de här.");
   const progressList = progress.length
     ? `<div class="family-list">${progress.map((item) => `<article class="card school-progress standing-${esc(item.standing)}"><p class="kicker">${esc(item.subject)} · ${esc(item.period)}</p><h3>${esc(FAMILY_STANDING[item.standing] || item.standing)}</h3>${item.current_grade ? `<p><strong>Registrerad utvecklingsnivå:</strong> ${esc(item.current_grade)}</p>` : ""}${item.summary ? `<p class="pre-line">${esc(item.summary)}</p>` : ""}${item.next_steps ? `<p><strong>Nästa steg:</strong> ${esc(item.next_steps)}</p>` : ""}${canManage ? `<button class="link danger-link" type="button" data-action="delete-progress" data-id="${esc(item.progress_id)}">Ta bort</button>` : ""}</article>`).join("")}</div>`
     : emptyState("Ingen utveckling registrerad", "När skolan registrerar barnets utveckling visas den här.");
-  const forms = canManage ? `<details class="card family-editor"><summary>Lägg till uppgift</summary><form class="form-stack" data-form="school-assignment" data-child-id="${esc(child.id)}">${field("Ämne", "subject", "", { required: true, maxlength: "80" })}${field("Rubrik", "title", "", { required: true, maxlength: "160" })}${textareaField("Beskrivning", "description")}${field("Senast", "due_on", shiftIsoDate(todayIso(), 7), { type: "date", required: true })}${selectField("Status", "status", Object.entries(ASSIGNMENT_STATUS), "homework", true)}<button class="primary" type="submit">Spara uppgift</button></form></details>
+  const forms = canManage ? `<details class="card family-editor"><summary>Lägg till uppgift</summary><form class="form-stack" data-form="school-assignment" data-child-id="${esc(child.id)}">${field("Ämne", "subject", "", { required: true, maxlength: "80" })}${field("Rubrik", "title", "", { required: true, maxlength: "160" })}${textareaField("Beskrivning", "description")}${field("Senast", "due_on", shiftIsoDate(todayIso(), 7), { type: "date", required: true })}${selectField("Status", "status", Object.entries(ASSIGNMENT_STATUS), "homework", true)}${state.schoolExperienceReady && featureEnabled(child, "documents") ? `<label>Bilaga, valfritt<input name="document" type="file" accept=".pdf,.jpg,.jpeg,.png,.docx,application/pdf,image/jpeg,image/png,application/vnd.openxmlformats-officedocument.wordprocessingml.document"><span class="form-hint">Reseuppgift, veckoinformation eller annat underlag. Högst 10 MB.</span></label>` : ""}<button class="primary" type="submit">Spara uppgift</button></form></details>
     <details class="card family-editor"><summary>Registrera utveckling</summary><form class="form-stack" data-form="subject-progress" data-child-id="${esc(child.id)}">${field("Ämne", "subject", "", { required: true, maxlength: "80" })}${field("Period", "period", "", { required: true, maxlength: "80", placeholder: "Exempelvis VT 2027" })}${selectField("Läge", "standing", Object.entries(FAMILY_STANDING), "on_track", true)}${field("Utvecklingsnivå, valfritt", "grade", "", { maxlength: "20" })}${textareaField("Sammanfattning", "summary")}${textareaField("Nästa steg", "next_steps")}<button class="primary" type="submit">Spara utveckling</button></form></details>` : "";
-  return `${familyFeatureNotice()}<article class="card"><p class="form-hint">Det här är skolans registrerade uppgifter och utvecklingsanteckningar. Ärtan skapar inga automatiska omdömen.</p></article>${forms}<section><div class="section-head"><div><p class="kicker">Den här veckan och framåt</p><h2>Uppgifter</h2></div></div>${assignmentList}</section><section><div class="section-head"><div><p class="kicker">Ämnen</p><h2>Utveckling</h2></div></div>${progressList}</section>`;
+  return `${familyFeatureNotice()}<article class="card"><p class="form-hint">Det här är skolans registrerade uppgifter och utvecklingsanteckningar. Ärtan skapar inga automatiska omdömen.</p></article>${renderTeacherSection(child, canManage)}${canManage && isSchoolChild(child) ? renderTimetableManager(child.department_id) : ""}${forms}<section><div class="section-head"><div><p class="kicker">Den här veckan och framåt</p><h2>Uppgifter</h2></div></div>${assignmentList}</section><section><div class="section-head"><div><p class="kicker">Ämnen</p><h2>Utveckling</h2></div></div>${progressList}</section>`;
 }
 
 function renderLostFound() {
@@ -4460,6 +4737,7 @@ function groupedSchoolEvents() {
 }
 
 function renderSchoolEvents() {
+  if (state.profile.role === "parent" && !featureEnabled(selectedChild(), "events")) return emptyState("Händelser används inte", "Skolan har dolt den här funktionen.");
   const groups = groupedSchoolEvents();
   const parent = state.profile.role === "parent";
   const scopeOptions = familyScopeOptions();
@@ -4480,7 +4758,10 @@ function renderSchoolEvents() {
 }
 
 function renderSchoolBanners() {
-  if (state.profile.role === "parent") return renderActiveSchoolBanners() || emptyState("Ingen viktig information", "Aktiva meddelanden visas på Min dag.");
+  if (state.profile.role === "parent") {
+    if (!featureEnabled(selectedChild(), "important")) return emptyState("Viktig information används inte", "Skolan har dolt den här funktionen.");
+    return renderActiveSchoolBanners() || emptyState("Ingen viktig information", "Aktiva meddelanden visas på Min dag.");
+  }
   const scopeOptions = familyScopeOptions();
   const bannerStart = new Date();
   const bannerEnd = new Date(bannerStart.getTime() + (24 * 60 * 60 * 1000));
@@ -4527,16 +4808,31 @@ function renderTermCalendarCard() {
   return `<section class="card" id="term-calendar"><p class="kicker">Kalender</p><h2>Synka terminsschemat</h2>${intro}<p class="form-hint">Länken visas bara den här gången. Lägg till den i kalendern nu. Vi lagrar bara en kontrollsumma, så länken kan inte visas igen.</p><code class="secret-value">${esc(httpsUrl)}</code><div class="actions"><a class="secondary button-link" href="${esc(webcalUrl)}">Lägg till i Apple/Outlook</a><a class="secondary button-link" href="${esc(googleUrl)}" target="_blank" rel="noopener">Lägg till i Google</a><button class="secondary" type="button" data-action="copy-calendar-feed">Kopiera länk</button><button class="secondary" type="button" data-action="rotate-calendar-feed">Skapa ny länk</button><button class="danger" type="button" data-action="revoke-calendar-feed">Stäng av</button></div>${timing}</section>`;
 }
 
+function teacherHubStatus(kind) {
+  const rows = teachersForChild(selectedChild()?.id, kind);
+  if (!rows.length) return "Inte tilldelad";
+  return rows.map((teacher) => kind === "subject" ? `${teacher.subject}: ${teacher.teacher_name}` : teacher.teacher_name).join(" · ");
+}
+
+function renderTeacherUniverse(kind) {
+  const child = selectedChild();
+  if (!child) return "";
+  const title = kind === "main" ? "Huvudlärare" : "Ämneslärare";
+  return `<section><div class="section-head"><div><p class="kicker">Skolan</p><h2>${title}</h2></div></div>${renderTeacherCards(child, kind)}</section>`;
+}
+
 registerHubCard("child", { id: "uppgifter", icon: "child", title: "Grunduppgifter", status: childBasicsStatus, render: () => renderChildBasics(selectedChild()) });
 registerHubCard("child", { id: "halsa", icon: "health", title: "Hälsa", status: childHealthStatus, render: () => renderChildHealth(selectedChild()) });
-registerHubCard("child", { id: "ladan", icon: "box", title: "Barnets låda", status: childBoxStatus, render: () => renderChildBox(selectedChild()) });
+registerHubCard("child", { id: "ladan", icon: "box", title: "Barnets låda", status: childBoxStatus, visible: () => featureEnabled(selectedChild(), "child_box"), render: () => renderChildBox(selectedChild()) });
 registerHubCard("child", { id: "kontakter", icon: "contacts", title: "Kontaktpersoner", status: childContactsStatus, render: () => renderChildContacts(selectedChild()) });
 registerHubCard("child", { id: "samtycken", icon: "consent", title: "Samtycken", status: childConsentsStatus, render: () => renderChildConsents(selectedChild()) });
-registerHubCard("child", { id: "portfolio", icon: "camera", title: "Portfolio", status: portfolioStatus, render: () => renderPortfolio(selectedChild()) });
-registerHubCard("child", { id: "skola", icon: "school", title: "Skola", status: schoolworkStatus, render: () => renderSchoolwork(selectedChild()) });
+registerHubCard("child", { id: "portfolio", icon: "camera", title: "Portfolio", status: portfolioStatus, visible: () => featureEnabled(selectedChild(), "portfolio"), render: () => renderPortfolio(selectedChild()) });
+registerHubCard("child", { id: "skola", icon: "school", title: "Skola", status: schoolworkStatus, visible: () => featureEnabled(selectedChild(), "assignments"), render: () => renderSchoolwork(selectedChild()) });
+registerHubCard("child", { id: "huvudlarare", icon: "main-teacher", title: "Huvudlärare", status: () => teacherHubStatus("main"), visible: () => isSchoolChild(selectedChild()) && featureEnabled(selectedChild(), "teachers"), render: () => renderTeacherUniverse("main") });
+registerHubCard("child", { id: "amneslarare", icon: "subject-teacher", title: "Ämneslärare", status: () => teacherHubStatus("subject"), visible: () => isSchoolChild(selectedChild()) && featureEnabled(selectedChild(), "teachers"), render: () => renderTeacherUniverse("subject") });
 registerHubCard("child", { id: "syskon", icon: "siblings", title: "Syskon", status: childSiblingStatus, render: () => renderSiblingRequestForm(true) });
 registerHubCard("child", { id: "profilbild", icon: "profile", title: "Profilbild", status: childPhotoStatus, render: () => renderChildPhoto(selectedChild()) });
-registerHubCard("child", { id: "klasslista", icon: "people", title: "Klasslista", status: childClassListStatus, render: () => renderClassListConsent(selectedChild()) });
+registerHubCard("child", { id: "klasslista", icon: "people", title: "Klasslista", status: childClassListStatus, visible: () => featureEnabled(selectedChild(), "classlist"), render: () => renderClassListConsent(selectedChild()) });
 registerHubCard("child", { id: "kalender", icon: "calendar", title: "Kalender", status: calendarHubStatus, render: () => renderTermCalendarCard() });
 registerHubCard("child", { id: "information", icon: "info", title: "Information att läsa", status: incidentCopyStatus, visible: () => Boolean(state.incidentReady) && copiesForChild(selectedChild()).length > 0, render: renderChildIncidentCopies });
 
@@ -4995,6 +5291,37 @@ function renderStaffAccess() {
   </section>`;
 }
 
+function renderSchoolExperienceConfiguration() {
+  if (!state.schoolExperienceReady) return `<article class="card"><p class="notice error">Skolans funktionsval är inte aktiverade i databasen ännu.</p></article>`;
+  return `<div class="family-list">${state.schools.map((school) => {
+    const experience = schoolExperienceFor(school.id);
+    const choices = Object.entries(SCHOOL_FEATURE_LABELS).map(([key, label]) => `<label class="check"><input type="checkbox" name="feature_${esc(key)}" ${experience.feature_config[key] !== false ? "checked" : ""}> ${esc(label)}</label>`).join("");
+    return `<form class="card form-stack school-experience-form" data-form="school-experience" data-preschool-id="${esc(school.id)}"><p class="kicker">${esc(school.name)}</p><h2>Vad ska visas?</h2>${selectField("Verksamhet", "education_stage", [["preschool", "Förskola"], ["school", "Skola"]], experience.education_stage, true)}<fieldset class="feature-choice-grid"><legend>Ikoner och rubriker</legend>${choices}</fieldset><p class="form-hint">Dolda funktioner försvinner från vårdnadshavarens första sida och menyer. Uppgifterna raderas inte.</p><button class="primary" type="submit">Spara upplägg</button></form>`;
+  }).join("")}</div>`;
+}
+
+function timetableManagerDepartments(onlyDepartmentId = "") {
+  const editable = editableDepartments().filter((department) => schoolExperienceFor(department.preschool_id).education_stage === "school");
+  return onlyDepartmentId ? editable.filter((department) => department.id === onlyDepartmentId) : editable;
+}
+
+function renderTimetableManager(onlyDepartmentId = "") {
+  if (!state.schoolExperienceReady) return "";
+  const departments = timetableManagerDepartments(onlyDepartmentId);
+  if (!departments.length) return "";
+  const allowedIds = new Set(departments.map((department) => department.id));
+  const rows = state.schoolTimetable.filter((entry) => allowedIds.has(entry.department_id));
+  const staffOptions = [["", "Ingen vald"], ...state.organizationPeople.filter((person) => person.role === "staff").map((person) => [person.id, person.name])];
+  const list = rows.length ? `<ul class="timetable-admin-list">${rows.map((entry) => `<li><div><strong>${esc(WEEKDAYS[Number(entry.weekday) - 1])} ${esc(entry.starts_at)}–${esc(entry.ends_at)} · ${esc(entry.subject)}</strong><span>${esc([entry.teacher_name, entry.room, departmentName(entry.department_id)].filter(Boolean).join(" · "))}</span></div>${entry.can_manage ? `<button class="link danger-link" type="button" data-action="delete-timetable-entry" data-id="${esc(entry.entry_id)}">Ta bort</button>` : ""}</li>`).join("")}</ul>` : `<p class="form-hint">Inga lektioner är publicerade ännu.</p>`;
+  return `<section class="card timetable-manager"><p class="kicker">Skolans ansvar</p><h2>Lektionsschema</h2>${list}<details class="compact-tool"><summary><span>${navIcon("calendar")}<strong>Lägg till lektion</strong></span></summary><div class="compact-tool-body"><form class="form-stack" data-form="timetable-entry">${selectField("Klass", "department_id", departments.map((department) => [department.id, `${schoolName(department.preschool_id)} · ${department.name}`]), departments[0].id, true)}${selectField("Veckodag", "weekday", WEEKDAYS.map((label, index) => [String(index + 1), label]), "1", true)}<div class="form-grid">${field("Start", "starts_at", "08:00", { type: "time", required: true })}${field("Slut", "ends_at", "08:45", { type: "time", required: true })}</div>${field("Ämne", "subject", "", { required: true, maxlength: "80" })}${field("Sal, valfritt", "room", "", { maxlength: "80" })}${selectField("Lärare, valfritt", "teacher_profile_id", staffOptions, "")}<button class="primary" type="submit">Publicera lektion</button></form></div></details></section>`;
+}
+
+function schoolExperienceHubStatus() {
+  if (!state.schoolExperienceReady) return "Inte aktiverat";
+  const schools = state.schoolExperienceSchools.filter((school) => school.education_stage === "school").length;
+  return schools ? `${schools} ${schools === 1 ? "skola" : "skolor"}` : "Förskoleläge";
+}
+
 function renderSchools() {
   if (state.profile.role !== "admin") return renderAttendance();
   return renderHubView({
@@ -5003,10 +5330,12 @@ function renderSchools() {
   });
 }
 
-registerHubCard("schools", { id: "avdelningar", icon: "🏫", title: "Avdelningar", status: departmentHubStatus, render: renderSchoolDepartments });
-registerHubCard("schools", { id: "terminer", icon: "▦", title: "Terminer", status: termHubStatus, render: renderSchoolTerms });
-registerHubCard("schools", { id: "personal", icon: "👥", title: "Personal", status: staffHubStatus, render: () => `${renderInviteResult("staff")}${renderStaffAccess()}` });
-registerHubCard("schools", { id: "ny-skola", icon: "+", title: "Ny skola", status: () => "Skapa en till", render: renderSchoolCreateForm });
+registerHubCard("schools", { id: "avdelningar", icon: "school", title: "Avdelningar", status: departmentHubStatus, render: renderSchoolDepartments });
+registerHubCard("schools", { id: "upplagg", icon: "overview", title: "Upplägg", status: schoolExperienceHubStatus, render: renderSchoolExperienceConfiguration });
+registerHubCard("schools", { id: "lektionsschema", icon: "calendar", title: "Lektionsschema", status: () => `${state.schoolTimetable.length} poster`, render: () => renderTimetableManager() || emptyState("Ingen skolverksamhet", "Välj Skola under Upplägg först.") });
+registerHubCard("schools", { id: "terminer", icon: "calendar", title: "Terminer", status: termHubStatus, render: renderSchoolTerms });
+registerHubCard("schools", { id: "personal", icon: "people", title: "Personal", status: staffHubStatus, render: () => `${renderInviteResult("staff")}${renderStaffAccess()}` });
+registerHubCard("schools", { id: "ny-skola", icon: "school", title: "Ny skola", status: () => "Skapa en till", render: renderSchoolCreateForm });
 
 function invitationLink(code) {
   return `${location.origin}${location.pathname}?invite=${encodeURIComponent(code)}`;
@@ -5602,6 +5931,10 @@ function navIcon(name) {
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
     account: '<circle cx="12" cy="8" r="3"/><path d="M5 21c.7-4.5 3-6.8 7-6.8s6.3 2.3 7 6.8"/>',
     chevron: '<path d="m9 6 6 6-6 6"/>',
+    document: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+    pass: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h6M7 14h4M17 10v4"/>',
+    "main-teacher": '<circle cx="10" cy="8" r="3"/><path d="M4 20c.6-4 2.6-6 6-6s5.4 2 6 6"/><path d="m18 5 .7 1.5 1.7.2-1.2 1.2.3 1.7-1.5-.8-1.5.8.3-1.7-1.2-1.2 1.7-.2z"/>',
+    "subject-teacher": '<circle cx="8" cy="8" r="3"/><path d="M2.8 20c.6-4 2.3-6 5.2-6s4.6 2 5.2 6"/><path d="M15 7h6v10h-6zM18 7v10"/>',
   };
   const size = name === "chevron" ? 16 : 22;
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.more}</svg>`;
@@ -5621,21 +5954,40 @@ function renderMore() {
   const openLost = state.lostFoundPosts.filter((post) => post.status === "open").length;
   const eventCount = groupedSchoolEvents().filter((event) => new Date(event.ends_at).getTime() >= Date.now()).length;
   const bannerCount = activeSchoolBanners().length;
+  const parentChildItems = [
+    ...(featureEnabled(child, "attendance") ? [["home", "Sjukanmälan", "Sjuk eller ledig", "illness", "", "daily-plan"]] : []),
+    ["child", "Barnets uppgifter", child?.name || "Inget barn", "child"],
+    ...(featureEnabled(child, "portfolio") ? [["child", "Portfolio", portfolioStatus(), "camera", "portfolio"]] : []),
+    ...(featureEnabled(child, "assignments") ? [["child", "Uppgifter", schoolworkStatus(), "school", "skola"]] : []),
+    ...(featureEnabled(child, "classlist") ? [["classlist", isSchoolChild(child) ? "Klasslista" : "Avdelningen", "", "people"]] : []),
+  ];
+  const parentSchoolItems = [
+    ...(featureEnabled(child, "important") ? [["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"]] : []),
+    ...(featureEnabled(child, "events") ? [["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"]] : []),
+    ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"],
+  ];
   const groups = role === "admin"
-    ? [["Förskolan", [["overview", "Översikt", "", "overview"], ["schools", "Skolor", "", "school"], ["people", "Personer", "", "people"]]], ["Kommunikation", [["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"], ["incidents", "Avvikelser", incidentHubStatus(), "info"]]], ["Konto", [["account", "Konto", state.profile.email, "account"]]]]
+    ? [["Verksamheten", [["overview", "Översikt", "", "overview"], ["schools", "Skolor och förskolor", "", "school"], ["people", "Personer", "", "people"]]], ["Kommunikation", [["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"], ["incidents", "Avvikelser", incidentHubStatus(), "info"]]], ["Konto", [["account", "Konto", state.profile.email, "account"]]]]
     : role === "staff"
       ? [["Arbete", [["people", "Barn", "", "child"], ["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"], ["incidents", "Avvikelser", incidentHubStatus(), "info"]]], ["Konto", [["account", "Konto", state.profile.email, "account"]]]]
-      : [["Barnet", [["home", "Sjukanmälan", "Sjuk eller ledig", "illness", "", "daily-plan"], ["child", "Barnets uppgifter", child?.name || "Inget barn", "child"], ["child", "Portfolio", portfolioStatus(), "camera", "portfolio"], ["child", "Skola", schoolworkStatus(), "school", "skola"], ["classlist", "Klasslista", "", "people"]]], ["Förskolan", [["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"]]], ["Konto", [["account", "Konto", state.profile.email, "account"]]]];
+      : [["Barnet", parentChildItems], [isSchoolChild(child) ? "Skolan" : "Förskolan", parentSchoolItems], ["Konto", [["account", "Konto", state.profile.email, "account"]]]];
   return `${noticeHtml()}<h1 class="h1">Mer</h1><p class="sub">Välj vad du vill göra.</p>${groups.map(([label, items]) => renderMenuGroup(label, items)).join("")}<button class="link menu-logout" type="button" data-action="logout">Logga ut</button>`;
 }
 
 function renderNav() {
   const role = state.profile?.role;
-  const items = ArtanMeals.tabsForRole(role);
+  let items = ArtanMeals.tabsForRole(role);
+  if (role === "parent") {
+    const child = selectedChild();
+    items = items
+      .filter(([view]) => view !== "pickup" || featureEnabled(child, "schedule"))
+      .filter(([view]) => view !== "meals" || featureEnabled(child, "meals"))
+      .map(([view, icon, label]) => [view, icon, view === "pickup" ? "Schema" : label]);
+  }
   const buried = new Set(moreDestinations(role));
   nav.innerHTML = items.map(([view, icon, label]) => {
     const current = state.view === view || (view === "more" && buried.has(state.view)) || (view === "home" && state.view === "meals" && role === "parent");
-    return `<button data-action="navigate" data-view="${view}" aria-current="${current ? "page" : "false"}"><span class="ico">${navIcon(icon)}</span>${label}</button>`;
+    return `<button data-action="navigate" data-view="${view}" aria-current="${current ? "page" : "false"}"><span class="ico">${navIcon(icon)}</span>${esc(label)}</button>`;
   }).join("");
 }
 
@@ -5701,7 +6053,7 @@ function render() {
   };
   const fallback = views[defaultViewForRole(state.profile.role)] || renderParentHome;
   const mealBanner = state.mealDemo ? ArtanMeals.demoBanner(formatDate(state.mealDemoToday)) : "";
-  const priorityBanners = ["home", "attendance", "overview"].includes(state.view) ? renderActiveSchoolBanners() : "";
+  const priorityBanners = ["home", "attendance", "overview"].includes(state.view) && (state.profile.role !== "parent" || featureEnabled(selectedChild(), "important")) ? renderActiveSchoolBanners() : "";
   screen.innerHTML = mealBanner + priorityBanners + (views[state.view] || fallback)();
   renderNav();
   renderAssistant();
@@ -5873,6 +6225,73 @@ document.body.addEventListener("submit", (event) => {
     }, "Händelsen är publicerad.");
     return;
   }
+  if (type === "school-experience") {
+    runMutation(async () => {
+      const features = Object.fromEntries(Object.keys(SCHOOL_FEATURE_LABELS).map((key) => [key, values[`feature_${key}`] === "on"]));
+      await rpc("save_school_experience_config", {
+        target_preschool_id: form.dataset.preschoolId,
+        target_stage: values.education_stage,
+        target_features: features,
+      });
+      await loadData();
+    }, "Skolans upplägg är sparat.");
+    return;
+  }
+  if (type === "timetable-entry") {
+    runMutation(async () => {
+      await rpc("save_school_timetable_entry", {
+        target_entry_id: null,
+        target_department_id: values.department_id,
+        target_weekday: Number(values.weekday),
+        target_starts_at: values.starts_at,
+        target_ends_at: values.ends_at,
+        target_subject: values.subject.trim(),
+        target_room: values.room.trim() || null,
+        target_teacher_profile_id: values.teacher_profile_id || null,
+      });
+      await loadData();
+    }, "Lektionen är publicerad.");
+    return;
+  }
+  if (type === "after-school-schedule") {
+    const scheduleRows = WEEKDAYS.map((_, index) => {
+      const weekday = index + 1;
+      const attending = values[`attending_${weekday}`] === "on";
+      return {
+        weekday,
+        attending,
+        ends_at: attending ? values[`ends_at_${weekday}`] : null,
+        note: values[`note_${weekday}`]?.trim() || null,
+      };
+    });
+    runMutation(async () => {
+      await rpc("save_after_school_schedule", { target_child_id: form.dataset.childId, schedule_rows: scheduleRows });
+      await loadData();
+    }, "Fritidsschemat är sparat.");
+    return;
+  }
+  if (type === "child-teacher") {
+    runMutation(async () => {
+      await rpc("save_child_teacher", {
+        target_child_id: form.dataset.childId,
+        target_staff_profile_id: values.staff_profile_id,
+        target_teacher_kind: values.teacher_kind,
+        target_subject: values.teacher_kind === "subject" ? values.subject.trim() : null,
+      });
+      await loadData();
+    }, "Läraren är kopplad till barnet.");
+    return;
+  }
+  if (type === "child-document") {
+    const file = form.querySelector('input[name="document"]')?.files?.[0];
+    if (!file) return;
+    runMutation(async () => {
+      await uploadChildDocument(form.dataset.childId, form.dataset.kind, file);
+      await loadData();
+    }, "Bilagan är inskickad.");
+    return;
+  }
+
   if (type === "subject-progress") {
     runMutation(async () => {
       await rpc("save_subject_progress", {
@@ -5890,8 +6309,9 @@ document.body.addEventListener("submit", (event) => {
     return;
   }
   if (type === "school-assignment") {
+    const file = form.querySelector('input[name="document"]')?.files?.[0];
     runMutation(async () => {
-      await rpc("save_school_assignment", {
+      const args = {
         target_assignment_id: null,
         target_child_id: form.dataset.childId,
         assignment_subject: values.subject.trim(),
@@ -5899,9 +6319,34 @@ document.body.addEventListener("submit", (event) => {
         assignment_description: values.description.trim() || null,
         assignment_due_on: values.due_on,
         assignment_status: values.status,
-      });
+      };
+      if (!file) {
+        await rpc("save_school_assignment", args);
+      } else {
+        const meta = validateChildDocument(file);
+        const assignmentId = crypto.randomUUID();
+        const documentId = crypto.randomUUID();
+        const path = `${form.dataset.childId}/assignment/${documentId}.${meta.extension}`;
+        await request(`/storage/v1/object/child-documents/${encodedStoragePath(path)}`, {
+          method: "POST",
+          headers: { "Content-Type": meta.mime, "x-upsert": "false" },
+          body: file,
+        });
+        try {
+          await rpc("save_school_assignment_with_document", {
+            ...args,
+            target_assignment_id: assignmentId,
+            target_document_id: documentId,
+            object_path: path,
+            original_name: file.name,
+          });
+        } catch (error) {
+          try { await deleteStorageImage("child-documents", path); } catch { /* RPC failed; orphan cleanup can be retried. */ }
+          throw error;
+        }
+      }
       await loadData();
-    }, "Uppgiften är sparad.");
+    }, file ? "Uppgiften och bilagan är sparade." : "Uppgiften är sparad.");
     return;
   }
   if (type === "incident-draft") {
@@ -6319,7 +6764,12 @@ document.body.addEventListener("submit", (event) => {
       return;
     }
     if (type === "parent-attendance") {
+      const file = form.querySelector('input[name="absence_document"]')?.files?.[0];
+      if (file) validateChildDocument(file);
       await saveAttendancePlan(form.dataset.childId, values);
+      if (file && ["absent_sick", "absent_leave"].includes(values.status)) {
+        await uploadChildDocument(form.dataset.childId, "absence", file, { relatedDate: todayIso() });
+      }
       await loadData();
       return;
     }
@@ -6693,6 +7143,47 @@ document.body.addEventListener("click", (event) => {
       await rpc("delete_school_event", { target_event_id: target.dataset.id });
       await loadData();
     }, "Händelsen är borttagen.");
+    return;
+  }
+  if (action === "delete-child-document") {
+    if (!window.confirm("Ta bort bilagan permanent?")) return;
+    runMutation(async () => {
+      const path = await rpc("delete_child_document", { target_document_id: target.dataset.id });
+      await deleteStorageImage("child-documents", path);
+      await loadData();
+    }, "Bilagan är borttagen.");
+    return;
+  }
+  if (action === "delete-child-teacher") {
+    if (!window.confirm("Ta bort lärarkopplingen?")) return;
+    runMutation(async () => {
+      await rpc("delete_child_teacher", {
+        target_child_id: target.dataset.childId,
+        target_staff_profile_id: target.dataset.staffId,
+        target_teacher_kind: target.dataset.kind,
+        target_subject: target.dataset.subject || null,
+      });
+      await loadData();
+    }, "Lärarkopplingen är borttagen.");
+    return;
+  }
+  if (action === "delete-timetable-entry") {
+    if (!window.confirm("Ta bort lektionen från schemat?")) return;
+    runMutation(async () => {
+      await rpc("delete_school_timetable_entry", { target_entry_id: target.dataset.id });
+      await loadData();
+    }, "Lektionen är borttagen.");
+    return;
+  }
+  if (action === "school-notice") {
+    const notice = state.schoolNotices.find((item) => item.notice_id === target.dataset.id);
+    if (!notice) return;
+    state.selectedChildId = notice.child_id;
+    runMutation(async () => {
+      await rpc("mark_school_notice_read", { target_notice_id: notice.notice_id });
+      await loadData();
+      showView("children", { section: "skola" });
+    }, "");
     return;
   }
   if (action === "delete-progress") {

@@ -182,7 +182,7 @@
     }
     return [
       ["home", "home", "Min dag"],
-      ["pickup", "clock", "Hämtning"],
+      ["pickup", "clock", "Schema"],
       ["messages", "messages", "Meddelanden"],
       ["more", "more", "Mer"],
     ];

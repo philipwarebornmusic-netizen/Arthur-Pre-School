@@ -670,6 +670,12 @@ form[data-incident-type="mistreatment"] .incident-extra[data-incident-extra="mis
 }
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.term-more { margin-top: 14px; border-top: 1px solid var(--hair); }
+.term-more > summary { width: fit-content; margin: 12px auto 0; padding: 8px 12px; cursor: pointer; color: var(--ink); font-size: 13px; font-weight: 900; list-style: none; }
+.term-more > summary::-webkit-details-marker { display: none; }
+.term-more > summary::after { content: " +"; color: var(--muted); }
+.term-more[open] > summary::after { content: " −"; }
+.term-more-body { margin-top: 12px; }
 .term-grid { display: grid; gap: 6px; max-width: 100%; overflow-x: auto; }
 .term-grid-head, .term-grid-week { display: grid; grid-template-columns: minmax(68px, 92px) repeat(5, minmax(0, 1fr)); gap: 4px; align-items: stretch; }
 #pickup-current-week { scroll-margin-top: 88px; }
@@ -747,6 +753,75 @@ body:has(.picker-sheet) .assistant-launcher { display: none; }
 .guardian-pass .pass-share .primary { min-height: 64px; font-size: 22px; }
 .pickup-nudge { border-color: #f3c2bb; }
 .pickup-plan-week { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 800; }
+
+.home-quick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 16px; }
+.home-quick-action { display: grid; align-content: start; justify-items: start; gap: 4px; min-width: 0; min-height: 112px; padding: 14px 10px; background: var(--paper); border: 1px solid var(--hair); border-radius: 18px; color: var(--ink); text-align: left; }
+.home-quick-action .menu-icon-badge { width: 32px; height: 32px; }
+.home-quick-action strong { font-size: 13px; line-height: 1.15; }
+.home-quick-action small { color: var(--muted); font-size: 11px; line-height: 1.2; }
+.today-subjects, .school-notices, .teacher-section, .schedule-tools { margin: 20px 0; }
+
+.today-subjects ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.today-subjects li { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 8px; padding-top: 8px; border-top: 1px solid var(--hair); }
+.today-subjects li:first-child { padding-top: 0; border-top: 0; }
+.today-subjects time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.today-subjects li > span, .today-subjects li > span strong, .today-subjects li > span small { display: block; min-width: 0; }
+.today-subjects li > span small { margin-top: 2px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.school-notices .menu-row { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; gap: 3px; text-align: left; }
+.school-notices .menu-row-title, .school-notices .menu-row-status { min-width: 0; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
+
+.compact-tool { min-width: 0; margin: 8px 0; padding: 0; background: var(--paper); border: 1px solid var(--hair); border-radius: 16px; }
+.compact-tool > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px; padding: 10px 14px; cursor: pointer; list-style: none; }
+.compact-tool > summary::-webkit-details-marker { display: none; }
+.compact-tool > summary > span { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.compact-tool > summary small { color: var(--muted); font-size: 11px; text-align: right; }
+.compact-tool[open] > summary { border-bottom: 1px solid var(--hair); }
+.compact-tool-body { display: grid; gap: 14px; padding: 14px; }
+.schedule-tools > .section-head { margin-bottom: 8px; }
+
+.school-week-columns { display: grid; grid-auto-columns: minmax(168px, 1fr); grid-auto-flow: column; gap: 8px; padding-bottom: 6px; overflow-x: auto; }
+.school-day-column { min-width: 0; padding: 10px; background: var(--sand); border-radius: 14px; }
+.school-day-column h3 { margin: 0 0 8px; font-size: 14px; }
+.school-day-column ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.school-day-column li { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 6px; padding-top: 8px; border-top: 1px solid var(--hair); }
+.school-day-column li:first-child { padding-top: 0; border-top: 0; }
+.school-day-column time, .school-day-column span { color: var(--muted); font-size: 11px; }
+.school-day-column strong, .school-day-column span { display: block; overflow-wrap: anywhere; }
+.after-school-grid { display: grid; gap: 8px; }
+.after-school-row { display: grid; grid-template-columns: minmax(84px, .7fr) minmax(90px, .6fr) minmax(130px, 1.7fr); align-items: end; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--hair); }
+.after-school-row .check { align-self: center; }
+
+.document-list, .timetable-admin-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.document-list li, .timetable-admin-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; padding: 9px 0; border-bottom: 1px solid var(--hair); }
+.document-list li > div, .timetable-admin-list li > div { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.document-list li span, .timetable-admin-list li div { min-width: 0; }
+.document-list a, .assignment-documents a { overflow-wrap: anywhere; font-weight: 800; }
+.document-list small, .timetable-admin-list span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+.assignment-documents { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.assignment-documents a, .assignment-documents span { display: inline-flex; align-items: center; gap: 5px; padding: 7px 9px; background: var(--sand); border-radius: 10px; }
+.teacher-card-grid { display: grid; gap: 8px; margin-bottom: 16px; }
+.teacher-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px; }
+.teacher-card h3, .teacher-card p { margin: 0; }
+.feature-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 14px; border: 1px solid var(--hair); border-radius: 14px; }
+.feature-choice-grid legend { padding: 0 6px; font-weight: 900; }
+.feature-choice-grid .check { min-width: 0; font-size: 13px; }
+
+@media (min-width: 700px) {
+  .home-quick-action { min-height: 104px; padding: 16px; }
+  .teacher-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .after-school-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .after-school-row { grid-template-columns: 1fr; align-content: start; padding: 10px; background: var(--sand); border: 0; border-radius: 14px; }
+}
+
+@media (max-width: 460px) {
+  .after-school-row { grid-template-columns: minmax(82px, .7fr) minmax(86px, .6fr); }
+  .after-school-row label:last-child { grid-column: 1 / -1; }
+  .feature-choice-grid { grid-template-columns: 1fr; }
+}
+
+@media (min-width: 1200px) {
+  .school-week-columns { grid-auto-columns: minmax(150px, 1fr); overflow-x: visible; }
+}
 
 .bottom-nav button { white-space: nowrap; }
 

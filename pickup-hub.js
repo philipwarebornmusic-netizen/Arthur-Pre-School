@@ -219,9 +219,11 @@
     if (!grid.weeks.length) return "";
     const editable = Boolean(options.editable);
     const currentMonday = anchorMonday(grid.weeks, input?.today || "");
-    const visibleWeeks = options.currentWeekOnly
+    let visibleWeeks = options.currentWeekOnly
       ? [grid.weeks.find((week) => week.monday === currentMonday) || grid.weeks[0]]
       : grid.weeks;
+    if (options.excludeCurrentWeek) visibleWeeks = visibleWeeks.filter((week) => week.monday !== currentMonday);
+    if (!visibleWeeks.length) return "";
     const year = String(input?.today || visibleWeeks[0].monday || "").slice(0, 4);
     const head = [year, "Mån", "Tis", "Ons", "Tor", "Fre"].map((label) => `<span>${label}</span>`).join("");
     const weeks = visibleWeeks.map((week) => {

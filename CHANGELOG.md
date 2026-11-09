@@ -1,5 +1,17 @@
 # Ändringslogg
 
+## 2026-11-09 — Anpassat för både förskola och skola
+
+- Min dag har nu tydliga genvägar till Sjukanmälan, Viktig information och Händelser. Skolelever ser dagens ämnen, aktuella uppgifter och veckans nya skolnotiser direkt.
+- Vårdnadshavarens Hämtning heter nu **Schema**. Förskolan behåller lämning och hämtning; skolan visar ett skolstyrt lektionsschema och ett separat fritidsschema som vårdnadshavaren fyller i.
+- Hämtpersoner, engångspass och permanenta hämtpass ligger som små, stängda verktyg under schemat i stället för som en lång rad formulär.
+- Administratören väljer per skola eller förskola vilka ikoner och rubriker som visas. Dolda funktioner försvinner utan att befintliga uppgifter raderas.
+- Skolläget döljer lämning, hämtning och barnets låda när verksamheten inte använder dem. Frånvarokortet säger Ingen frånvaro anmäld i stället för Inte incheckad.
+- Skolan kan publicera lektioner och koppla huvudlärare samt ämneslärare. Vårdnadshavare kan skicka privata intyg och frånvarounderlag; personal kan bifoga underlag till uppgifter.
+- Nya uppgifter skapar en barnspecifik vårdnadshavarnotis. Bilagorna ligger i den privata bucketen `child-documents` med barn-, roll- och filtypskontroll.
+- `supabase/024_adaptive_school_experience.sql` och samma kontrakt i `supabase/schema.sql` skapar konfiguration, schema, lärarkopplingar, dokument, notiser, RLS och behörighetsstyrda RPC:er.
+- `scripts/adaptive_school_experience_sql_test.py` provar skola/förskola, klasschema, fritidsschema, lärarkoppling, privata bilagor, notiser, barnisolering och spärrade direktwrites i PostgreSQL 16.
+
 ## 2026-11-09 — Tydligare menyer och sjukanmälan
 
 - Bytte de långa listorna under Mer och Barnet mot kompakta, märkta ikonrutor i tre kolumner på mobil.

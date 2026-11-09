@@ -156,6 +156,8 @@ assert(editable.includes("term-person") === false || editable.includes('aria-lab
 const currentWeekOnly = ArtanPickup.renderTermGrid(base, { currentWeekOnly: true });
 eq((currentWeekOnly.match(/class="term-grid-week/g) || []).length, 1, "förstasidan visar bara en schemavecka");
 assert(currentWeekOnly.includes("19 okt–23 okt") && !currentWeekOnly.includes("26 okt–30 okt"), "förstasidan visar veckan som innehåller idag");
+const otherWeeks = ArtanPickup.renderTermGrid(base, { excludeCurrentWeek: true });
+assert(!otherWeeks.includes("19 okt–23 okt") && otherWeeks.includes("26 okt–30 okt"), "terminsöversikten kan lägga övriga veckor bakom ett eget val");
 
 const savedContact = ArtanPickup.buildTermGrid({
   ...base,
@@ -447,15 +449,15 @@ vm.createContext(mealContext);
 vm.runInContext(mealSource, mealContext);
 const mealApi = mealContext.ArtanMeals;
 const parentTabs = mealApi.tabsForRole("parent");
-assert(parentTabs.some(([view, , label]) => view === "pickup" && label === "Hämtning"), "Hämtning ligger i vårdnadshavarens meny");
+assert(parentTabs.some(([view, , label]) => view === "pickup" && label === "Schema"), "Schema ligger i vårdnadshavarens meny");
 assert(parentTabs.map(([view]) => view).join(",") === "home,pickup,messages,more", "vårdnadshavarens huvudmeny har fyra avsedda flikar");
 const staffTabs = mealApi.tabsForRole("staff");
 assert(staffTabs.some(([view, , label]) => view === "meals" && label === "Matsedel") && !staffTabs.some(([view]) => view === "pickup"), "personal får Matsedel och ingen Hämtning-knapp");
 const staffViews = mealApi.allowedViews("staff");
 assert(["attendance", "meals", "messages", "people", "more", "events", "banners", "lost", "incidents", "account"].every((view) => staffViews.includes(view)), "personal når arbets- och familjefunktionerna");
 assert(!app.includes('registerHubCard("child", { id: "hamtlista"'), "Hämtlista-kortet är borta");
-assert(app.includes("Öppna Hämtning") && app.includes("Hämtlistan, hämtpassen och veckoschemat finns under Hämtning"), "Kontaktpersoner länkar till Hämtning");
-for (const needle of ["share-pass", "print-pass", "open-pass", "remember_pickup_pass_token", "reveal_pickup_pass", "renderTermGrid", "edit-pickup-week", "save-pickup-week", "open-picker", "same-as-previous-week", "weekEditorSeed", "smartFillWeek", "reopenWeekDay", "hasEarlierSavedWeek", "Kopierade vecka", "Ej ifylld", "pickup-current-week", "pickup-add", "copy-pickup-week", "list_department_pickup_plans"]) {
+assert(app.includes("Öppna Schema") && app.includes("Hämtpersoner, hämtpass och veckoschema finns under Schema"), "Kontaktpersoner länkar till Schema");
+for (const needle of ["share-pass", "print-pass", "open-pass", "remember_pickup_pass_token", "reveal_pickup_pass", "renderTermGrid", "edit-pickup-week", "save-pickup-week", "open-picker", "same-as-previous-week", "weekEditorSeed", "smartFillWeek", "reopenWeekDay", "hasEarlierSavedWeek", "Kopierade vecka", "pickup-current-week", "pickup-add", "copy-pickup-week", "list_department_pickup_plans"]) {
   assert(app.includes(needle), `appen saknar ${needle}`);
 }
 assert(app.includes("save_pickup_day_handoffs") && app.includes("dropoff_person_kind"), "appen skickar separata lämnar- och hämtarval");
