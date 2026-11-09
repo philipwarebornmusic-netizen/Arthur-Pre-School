@@ -3724,17 +3724,24 @@ function renderParentHome() {
   const pickup = pickupCardCopy(child, summary);
   const renewal = renderPassRenewalCards(child);
   const editToday = `<button class="link" type="button" data-action="navigate" data-view="pickup">Visa hela schemat</button>`;
-  const absentToday = ["absent_sick", "absent_leave"].includes(attendance?.status);
+  const planStatus = ["in", "absent_sick", "absent_leave"].includes(attendance?.status) ? attendance.status : "in";
+  const absentToday = ["absent_sick", "absent_leave"].includes(planStatus);
+  const absenceTitle = planStatus === "absent_leave" ? "Anledning till ledighet, valfritt" : "Anledning till sjukdom, valfritt";
+  const statusChoices = [["in", "Kommer"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]]
+    .map(([value, label]) => `<label><input type="radio" name="status" value="${value}" ${planStatus === value ? "checked" : ""}><span>${label}</span></label>`)
+    .join("");
   const dailyPlan = weekend
     ? `<section class="card quick-panel is-disabled"><span class="menu-icon-badge">${navIcon("illness")}</span><div><h2>Sjukanmälan</h2><p class="form-hint">Dagens status kan ändras här på vardagar.</p></div></section>`
     : `<details id="daily-plan" class="card quick-panel" ${absentToday ? "open" : ""}>
       <summary><span class="menu-icon-badge">${navIcon("illness")}</span><span><strong>Anmäl sjuk eller ledig</strong><small>${absentToday ? `Registrerad som ${attendanceLabel(attendance.status).toLowerCase()}` : "Ändra dagens status"}</small></span><span class="menu-chevron" aria-hidden="true">${navIcon("chevron")}</span></summary>
       <form class="form-stack quick-panel-form" data-form="parent-attendance" data-child-id="${esc(child.id)}">
-        ${selectField("Vad gäller idag?", "status", [["in", "Kommer"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]], absentToday ? attendance.status : "in", true)}
-        <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
-        <label>Vem hämtar?<input name="pickup_by" type="text" value="${esc(attendance?.pickup_by || "")}" list="pickup-contact-options" placeholder="Exempelvis mormor eller farfar"></label>
-        ${pickupContacts.length ? `<datalist id="pickup-contact-options">${pickupContacts.map((contact) => `<option value="${esc(contact.name)}"></option>`).join("")}</datalist>` : ""}
-        ${state.attendanceNotesReady ? `<label data-absence-note-field ${absentToday ? "" : "hidden"}>Orsak till frånvaro, valfritt<textarea name="absence_note" maxlength="500" placeholder="Till exempel feber, hosta eller familjeledig">${esc(attendance?.absence_note || "")}</textarea><span class="form-hint">Anteckningen visas bara för behöriga vårdnadshavare och förskolans personal.</span></label>` : `<p class="form-hint">Frånvaroanteckningar är inte aktiverade i databasen ännu.</p>`}
+        <fieldset class="attendance-status-options"><legend>Vad gäller idag?</legend><div>${statusChoices}</div></fieldset>
+        <div data-attendance-present-fields ${absentToday ? "hidden" : ""}>
+          <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
+          <label>Vem hämtar?<input name="pickup_by" type="text" value="${esc(attendance?.pickup_by || "")}" list="pickup-contact-options" placeholder="Exempelvis mormor eller farfar"></label>
+          ${pickupContacts.length ? `<datalist id="pickup-contact-options">${pickupContacts.map((contact) => `<option value="${esc(contact.name)}"></option>`).join("")}</datalist>` : ""}
+        </div>
+        ${state.attendanceNotesReady ? `<label data-absence-note-field ${absentToday ? "" : "hidden"}><span data-absence-note-title>${absenceTitle}</span><input name="absence_note" maxlength="500" value="${esc(attendance?.absence_note || "")}" placeholder="${planStatus === "absent_leave" ? "Till exempel familjeledig" : "Till exempel feber eller hosta"}"><span class="form-hint">Visas bara för behöriga vårdnadshavare och förskolans personal.</span></label>` : `<p class="form-hint" data-absence-note-field ${absentToday ? "" : "hidden"}>Frånvaroanteckningar är inte aktiverade i databasen ännu.</p>`}
         <button class="primary" type="submit">Spara dagens status</button>
       </form>
     </details>`;
@@ -3747,15 +3754,17 @@ function renderParentHome() {
   return `${noticeHtml()}${childTabs()}<p class="hi">${esc(dayGreeting())}</p><h1 class="h1">${esc(childFirstName(child) || child.name)}</h1>
     <section class="soft-card is-today"><p class="soft-label">Idag</p><p class="soft-value"><span class="status-dot ${status.dot}"></span>${esc(status.text)}</p><p class="soft-sub">${esc(status.sub)}</p></section>
     ${dailyPlan}
-    <section class="soft-card is-pick"><p class="soft-label">Hämtning</p><p class="soft-value">${esc(pickup.value)}</p>${pickup.sub ? `<p class="soft-sub">${esc(pickup.sub)}</p>` : ""}${editToday}</section>
-    ${renderMealTodayCard(child)}
-    ${renewal}
-    ${renderPickupNotices()}
+    <div class="present-day-content" data-present-day-content ${absentToday ? "hidden" : ""}>
+      <section class="soft-card is-pick"><p class="soft-label">Hämtning</p><p class="soft-value">${esc(pickup.value)}</p>${pickup.sub ? `<p class="soft-sub">${esc(pickup.sub)}</p>` : ""}${editToday}</section>
+      ${renderMealTodayCard(child)}
+      ${renewal}
+      ${renderPickupNotices()}
+      ${renderPickupWeekNudge(child)}
+      ${renderParentTermSchedules(child)}
+    </div>
     ${renderIncidentCopies()}
     ${renderNoticeList("Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}
-    ${reminderBlock}
-    ${renderPickupWeekNudge(child)}
-    ${renderParentTermSchedules(child)}
+    <div class="home-reminder-content" data-home-reminder-content ${absentToday ? "hidden" : ""}>${reminderBlock}</div>
     ${latestRow}`;
 }
 
@@ -5669,7 +5678,7 @@ async function saveAttendancePlan(childId, values) {
     plan_status: values.status,
     plan_dropoff_at: values.dropoff_at || null,
     plan_pickup_at: values.pickup_at || null,
-    plan_pickup_by: values.pickup_by.trim() || null,
+    plan_pickup_by: values.pickup_by?.trim() || null,
   };
   if (state.attendanceNotesReady) args.plan_absence_note = values.absence_note?.trim() || null;
   await rpc("save_attendance_plan", args);
@@ -6424,8 +6433,22 @@ document.body.addEventListener("change", (event) => {
     applyWeekField(input.dataset.date, field, input.value);
   }
   if (input.name === "status" && input.form?.dataset.form === "parent-attendance") {
+    const absent = ["absent_sick", "absent_leave"].includes(input.value);
     const note = input.form.querySelector("[data-absence-note-field]");
-    if (note) note.hidden = !["absent_sick", "absent_leave"].includes(input.value);
+    const presentFields = input.form.querySelector("[data-attendance-present-fields]");
+    const dayContent = document.querySelector("[data-present-day-content]");
+    const reminderContent = document.querySelector("[data-home-reminder-content]");
+    if (note) note.hidden = !absent;
+    if (presentFields) {
+      presentFields.hidden = absent;
+      presentFields.querySelectorAll("input").forEach((field) => { field.disabled = absent; });
+    }
+    if (dayContent) dayContent.hidden = absent;
+    if (reminderContent) reminderContent.hidden = absent;
+    const noteTitle = input.form.querySelector("[data-absence-note-title]");
+    if (noteTitle) noteTitle.textContent = input.value === "absent_leave" ? "Anledning till ledighet, valfritt" : "Anledning till sjukdom, valfritt";
+    const noteInput = input.form.elements.absence_note;
+    if (noteInput) noteInput.placeholder = input.value === "absent_leave" ? "Till exempel familjeledig" : "Till exempel feber eller hosta";
   }
   if (input.matches("[data-schedule-attending]")) {
     const row = input.closest("[data-weekday]");

@@ -47,22 +47,23 @@ function fixedDate(iso) {
   };
 }
 
-function dashboard(iso) {
+function dashboard(iso, attendance = null) {
   const child = { id: "child-1", name: "Arthur", department_id: "department-1" };
   const context = {
     Date: fixedDate(iso),
     Intl,
     state: {
-      attendance: [],
+      attendance: attendance ? [attendance] : [],
       children: [child],
       contacts: [],
       posts: [],
       notices: [],
       incidentCopies: [],
       pickupWeekReady: false,
+      attendanceNotesReady: true,
     },
     selectedChild: () => child,
-    attendanceFor: () => null,
+    attendanceFor: () => attendance,
     contactsFor: () => [],
     childInfoChecklist: () => [],
     childBoxNeedsRefill: () => [],
@@ -122,6 +123,15 @@ assert(monday.html.includes('id="daily-plan"'), "vardagen ska behålla dagens pl
 assert(monday.reminders.some((item) => item.target === "daily-plan"), "vardagen ska påminna om dagsplanen");
 assert(monday.html.includes("Anmäl sjuk eller ledig"), "sjukanmälan ska ha en tydlig rubrik");
 assert(monday.html.indexOf('id="daily-plan"') < monday.html.indexOf('class="soft-card is-pick"'), "sjukanmälan ska ligga före hämtning och övrigt dagsinnehåll");
+
+const sick = dashboard("2026-10-26", { status: "absent_sick", absence_note: "Feber" });
+assert(sick.html.includes("Anledning till sjukdom, valfritt"), "sjuk ska visa anledning till sjukdom");
+assert(sick.html.includes("data-attendance-present-fields hidden"), "sjuk ska dölja lämning, hämtning och hämtare");
+assert(sick.html.includes("data-present-day-content hidden"), "sjuk ska dölja irrelevanta dagskort");
+
+const leave = dashboard("2026-10-26", { status: "absent_leave", absence_note: "Familjeledig" });
+assert(leave.html.includes("Anledning till ledighet, valfritt"), "ledig ska visa anledning till ledighet");
+assert(leave.html.includes("data-attendance-present-fields hidden"), "ledig ska dölja lämning, hämtning och hämtare");
 
 const roleContext = {};
 vm.createContext(roleContext);
