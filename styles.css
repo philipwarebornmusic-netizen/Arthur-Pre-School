@@ -806,6 +806,11 @@ body:has(.picker-sheet) .assistant-launcher { display: none; }
 .feature-choice-grid legend { padding: 0 6px; font-weight: 900; }
 .feature-choice-grid .check { min-width: 0; font-size: 13px; }
 
+.developer-feedback-form { max-width: 720px; }
+.feedback-context { margin: 0; padding: 14px 16px; background: var(--sky-soft); border-radius: 16px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.feedback-contact { align-items: flex-start; padding: 4px 2px; font-weight: 500 !important; line-height: 1.4; }
+.feedback-contact input { margin-top: 1px; }
+
 @media (min-width: 700px) {
   .home-quick-action { min-height: 104px; padding: 16px; }
   .teacher-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

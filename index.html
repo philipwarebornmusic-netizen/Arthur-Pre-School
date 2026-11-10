@@ -27,6 +27,16 @@
     <div id="assistantRoot" class="assistant-root"></div>
   </div>
   <div id="printRoot"></div>
+  <form name="developer-feedback" data-netlify="true" netlify-honeypot="bot-field" hidden>
+    <input type="hidden" name="form-name" value="developer-feedback">
+    <input name="bot-field">
+    <input name="category">
+    <textarea name="message"></textarea>
+    <input name="role">
+    <input name="context">
+    <input name="contact">
+    <input name="submitted-at">
+  </form>
   <script src="supabase-config.js"></script>
   <script src="share-print.js"></script>
   <script src="pickup-hub.js"></script>

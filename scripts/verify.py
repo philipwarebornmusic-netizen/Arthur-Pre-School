@@ -13,6 +13,9 @@ ROOT = Path(__file__).resolve().parent.parent
 TASKS_DIR = ROOT / "Agent" / "Tasks"
 REQUIRED_FILES = (
     "index.html",
+    "pitch.html",
+    "pitch.css",
+    "pitch.js",
     "app.js",
     "styles.css",
     "supabase-config.js",
@@ -86,19 +89,20 @@ def check_required_files(errors):
 
 
 def check_html_assets(errors):
-    index = ROOT / "index.html"
-    if not index.is_file():
-        return 0
-    parser = AssetParser()
-    parser.feed(index.read_text(encoding="utf-8"))
     checked = 0
-    for tag, attribute, value in parser.assets:
-        asset = local_asset(ROOT, value)
-        if asset is None:
+    for name in ("index.html", "pitch.html"):
+        document = ROOT / name
+        if not document.is_file():
             continue
-        checked += 1
-        if asset is False or not asset.is_file():
-            errors.append(f"index.html: missing local asset in {tag} {attribute}={value!r}")
+        parser = AssetParser()
+        parser.feed(document.read_text(encoding="utf-8"))
+        for tag, attribute, value in parser.assets:
+            asset = local_asset(ROOT, value)
+            if asset is None:
+                continue
+            checked += 1
+            if asset is False or not asset.is_file():
+                errors.append(f"{name}: missing local asset in {tag} {attribute}={value!r}")
     return checked
 
 
@@ -270,6 +274,17 @@ def check_assistant_actions(errors):
         errors.append(detail)
 
 
+def check_developer_feedback(errors):
+    script = ROOT / "scripts" / "developer_feedback_test.mjs"
+    if not script.exists():
+        errors.append("scripts/developer_feedback_test.mjs is missing")
+        return
+    result = subprocess.run(["node", str(script)], cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "developer feedback test failed").strip()
+        errors.append(detail)
+
+
 def check_child_care(errors):
     script = ROOT / "scripts" / "child_care_sql_test.py"
     if not script.exists():
@@ -318,6 +333,7 @@ def main():
     check_weekend_dashboard(errors)
     check_pickup_hub(errors)
     check_assistant_actions(errors)
+    check_developer_feedback(errors)
     check_menu_import(errors)
     check_contact_photos(errors)
     check_child_care(errors)

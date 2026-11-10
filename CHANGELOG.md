@@ -1,5 +1,13 @@
 # Ändringslogg
 
+## 2026-11-10 — Presentation och feedback till utvecklaren
+
+- Lade till en fristående svensk HTML-presentation för första mötet med en organisation på 14 förskolor. Tio responsiva slides visar problemet, nyttan för förälder, personal och ledning, Ärtans nuvarande funktioner samt ett tydligt förslag på en sex veckor lång pilot.
+- Förälder, personal och administratör hittar nu **Ge feedback** under Mer. Formuläret skickar kategori, meddelande, roll och aktuell vy till utvecklarens Netlify Forms-inkorg när appen publiceras.
+- Namn och e-post följer bara med när användaren aktivt väljer det. Formuläret varnar också för att skriva barns namn, hälsa, kontaktuppgifter eller annan känslig information.
+- Ärtan känner igen skrivna feedbackfrågor, visar exakt vad som ska skickas och kräver en separat bekräftelse. Alternativet att granska öppnar samma formulär med texten förifylld; assistenten skickar aldrig namn eller e-post.
+- Ett permanent beteendetest provar alla tre rollernas åtkomst, kommandotolkning, bekräftelse, frivillig kontakt, Netlify-payload och felhantering.
+
 ## 2026-11-10 — Ärtan kan ändra veckans hämtningstider
 
 - En vårdnadshavare kan be Ärtan att ändra alla återstående hämtningstider den här eller nästa vecka, till exempel till 16:30.

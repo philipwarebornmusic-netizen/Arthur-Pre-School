@@ -112,6 +112,8 @@ const state = {
   assistantOpen: false,
   assistantQuestion: "",
   assistantResponse: null,
+  feedbackDraft: "",
+  feedbackSourceView: "",
   postPreviewUrls: [],
   hubSection: "",
 };
@@ -766,6 +768,7 @@ function showView(view, { section = "", scrollTarget = "", push = true } = {}) {
   stopPickupScanner();
   state.scan = null;
   state.checkout = null;
+  if (view === "feedback" && state.view !== "feedback") state.feedbackSourceView = state.view;
   state.view = view;
   state.hubSection = section;
   state.notice = null;
@@ -1398,6 +1401,8 @@ async function logout() {
       assistantOpen: false,
       assistantQuestion: "",
       assistantResponse: null,
+      feedbackDraft: "",
+      feedbackSourceView: "",
       hubSection: "",
     });
     if (location.hash) history.replaceState({ hub: false, view: "home", section: "" }, "", `${location.pathname}${location.search}`);
@@ -1719,6 +1724,8 @@ function clearLoadedData() {
     contactPhotoUrls: {},
     familyPreviewUrl: "",
     selectedChildId: null,
+    feedbackDraft: "",
+    feedbackSourceView: "",
     hubSection: "",
   });
 }
@@ -1967,13 +1974,15 @@ function assistantQuickActions() {
     child: [["schedule", "Ändra lämning/hämtning"], ["reminders", "Vad saknas?"], ["consents", "Hur ser samtyckena ut?"], ["contact", "Kontakta förskolan"]],
     classlist: [["reminders", "Vad saknas?"], ["consents", "Hur ser samtyckena ut?"], ["messages", "Nytt från skolan?"], ["schedule", "Ändra lämning/hämtning"]],
     messages: [["birthdays", "Kalasinbjudningar"], ["schedule", "Ändra lämning/hämtning"], ["messages", "Sammanfatta skolans flöde"], ["playdates", "Hur fungerar lekträffar?"]],
-    account: [["schedule", "Ändra lämning/hämtning"], ["privacy", "Mina integritetsval"], ["contact", "Vem kan jag kontakta?"], ["reminders", "Vad behöver jag göra?"]],
+    account: [["feedback", "Ge feedback"], ["privacy", "Mina integritetsval"], ["contact", "Vem kan jag kontakta?"], ["reminders", "Vad behöver jag göra?"]],
+    feedback: [["feedback", "Skriv ny feedback"], ["reminders", "Vad behöver jag göra?"], ["contact", "Vem kan jag kontakta?"], ["privacy", "Mina integritetsval"]],
   };
   const staffActions = {
     attendance: [["attendance", "Sammanfatta närvaron"], ["calendar", "Publicerad termin"], ["publish", "Skriv till föräldrar"], ["people", "Öppna barn och inbjudningar"]],
     messages: [["publish", "Publicera ett inlägg"], ["private", "Skicka privat"], ["posts", "Sammanfatta flödet"], ["attendance", "Hur ser närvaron ut?"]],
     people: [["people", "Sammanfatta personer"], ["attendance", "Hur ser närvaron ut?"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"]],
-    account: [["private", "Kontakta en förälder"], ["attendance", "Hur ser närvaron ut?"], ["publish", "Skriv till föräldrar"], ["people", "Öppna barn och inbjudningar"]],
+    account: [["feedback", "Ge feedback"], ["private", "Kontakta en förälder"], ["attendance", "Hur ser närvaron ut?"], ["people", "Öppna barn och inbjudningar"]],
+    feedback: [["feedback", "Skriv ny feedback"], ["attendance", "Hur ser närvaron ut?"], ["private", "Skicka privat"], ["people", "Öppna barn och inbjudningar"]],
   };
   const adminActions = {
     overview: [["overview", "Sammanfatta organisationen"], ["attendance", "Öppna dagens närvaro"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"]],
@@ -1981,7 +1990,8 @@ function assistantQuickActions() {
     schools: [["schools", "Sammanfatta skolorna"], ["attendance", "Öppna dagens närvaro"], ["publish", "Skriv till föräldrar"], ["people", "Barn och inbjudningar"]],
     messages: [["publish", "Publicera ett inlägg"], ["private", "Skicka privat"], ["posts", "Sammanfatta flödet"], ["attendance", "Hur ser närvaron ut?"]],
     people: [["people", "Sammanfatta personer"], ["attendance", "Öppna dagens närvaro"], ["publish", "Skriv till föräldrar"], ["private", "Skicka privat"]],
-    account: [["attendance", "Öppna dagens närvaro"], ["overview", "Organisationens översikt"], ["private", "Kontakta en förälder"], ["publish", "Skriv till föräldrar"]],
+    account: [["feedback", "Ge feedback"], ["attendance", "Öppna dagens närvaro"], ["overview", "Organisationens översikt"], ["private", "Kontakta en förälder"]],
+    feedback: [["feedback", "Skriv ny feedback"], ["attendance", "Öppna dagens närvaro"], ["overview", "Organisationens översikt"], ["private", "Kontakta en förälder"]],
   };
   const roleActions = state.profile.role === "parent" ? parentActions : state.profile.role === "staff" ? staffActions : adminActions;
   return roleActions[state.view] || Object.values(roleActions)[0] || [];
@@ -1990,6 +2000,34 @@ function assistantQuickActions() {
 function assistantResult(text, source, action = {}) {
   return { text, source, ...action };
 }
+function assistantDeveloperFeedbackRequest(question) {
+  const raw = String(question || "").trim();
+  const text = raw.toLocaleLowerCase("sv-SE");
+  if (!/(?:feedback|återkoppling|utvecklar|developer|rapportera(?: ett)? fel)/.test(text)) return null;
+  const match = raw.match(/(?:feedback|återkoppling|meddelande till (?:developer|utvecklaren)|rapportera(?: ett)? fel)\s*(?::|-|att)?\s*(.*)$/i);
+  const message = String(match?.[1] || "")
+    .replace(/^(?:till\s+(?:developer|utvecklaren))?\s*(?::|-)?\s*(?:att\s+)?/i, "")
+    .trim();
+  if (message.length < 10) {
+    return assistantResult(
+      "Skriv din feedback i formuläret. Den skickas direkt till utvecklarens inkorg efter att du själv trycker på Skicka.",
+      "Ärtans feedbackflöde",
+      { actionLabel: "Öppna feedback", view: "feedback", draft: message },
+    );
+  }
+  return assistantResult(
+    `Jag kan skicka följande till utvecklaren: ”${message}” Rollen ${roleLabel(state.profile.role)} och den aktuella vyn följer med, men inte ditt namn eller din e-post. Bekräfta innan jag skickar.`,
+    "Ärtans feedbackflöde",
+    {
+      confirmationLabel: "Skicka feedback",
+      mutation: { kind: "developer-feedback", category: "idea", message, sourceView: state.view },
+      actionLabel: "Granska och lägg till kontakt",
+      view: "feedback",
+      draft: message,
+    },
+  );
+}
+
 function assistantRequestedClock(question) {
   const text = String(question || "");
   const contextual = [...text.matchAll(/\b(?:till|kl\.?|klockan)\s*([01]?\d|2[0-3])(?:[.:]([0-5]\d))?\b/gi)];
@@ -2110,7 +2148,7 @@ function parentWeekScheduleAnswer(child) {
 }
 
 function assistantResponseForQuestion(question) {
-  return assistantPickupChangeRequest(question) || assistantAnswer(assistantIntentForQuestion(question));
+  return assistantDeveloperFeedbackRequest(question) || assistantPickupChangeRequest(question) || assistantAnswer(assistantIntentForQuestion(question));
 }
 
 function assistantMutationsMatch(expected, actual) {
@@ -2131,6 +2169,20 @@ function assistantMutationsMatch(expected, actual) {
 }
 
 async function executeAssistantMutation(mutation) {
+  if (mutation?.kind === "developer-feedback") {
+    if (!state.profile) throw new Error("Du måste vara inloggad för att skicka feedback.");
+    await sendDeveloperFeedback({
+      category: mutation.category,
+      message: mutation.message,
+      includeContact: false,
+      sourceView: mutation.sourceView,
+    });
+    return assistantResult(
+      "Tack. Din feedback är skickad till utvecklaren utan namn eller e-post.",
+      "Ärtans feedbackinkorg",
+      { actionLabel: "Öppna feedback", view: "feedback" },
+    );
+  }
   if (mutation?.kind !== "pickup-week" || state.profile?.role !== "parent") throw new Error("Assistentåtgärden är inte giltig.");
   await loadData();
   const fresh = assistantPickupChangeRequest(mutation.question);
@@ -2154,6 +2206,14 @@ function schoolForChild(child) {
   return state.schools.find((school) => school.id === department?.preschool_id) || null;
 }
 
+function assistantFeedbackAnswer() {
+  return assistantResult(
+    "Du kan skicka feedback direkt till utvecklaren. Rollen och aktuell vy följer med. Namn och e-post skickas bara om du själv väljer det i formuläret.",
+    "Ärtans feedbackflöde",
+    { actionLabel: "Öppna feedback", view: "feedback" },
+  );
+}
+
 function parentAssistantAnswer(intent) {
   const child = selectedChild();
   if (!child && ["day", "schedule", "week-schedule", "reminders", "opening-hours", "consents", "health"].includes(intent)) {
@@ -2163,6 +2223,7 @@ function parentAssistantAnswer(intent) {
       { actionLabel: "Skicka förfrågan", view: "child" },
     );
   }
+  if (intent === "feedback") return assistantFeedbackAnswer();
   if (intent === "week-schedule") return parentWeekScheduleAnswer(child);
   if (intent === "schedule") {
     const attendance = attendanceFor(child.id);
@@ -2303,6 +2364,7 @@ function parentAssistantAnswer(intent) {
 
 function staffAssistantAnswer(intent) {
   const isAdmin = state.profile.role === "admin";
+  if (intent === "feedback") return assistantFeedbackAnswer();
   if (intent === "attendance") {
     const counts = state.children.reduce((result, child) => {
       const status = attendanceState(attendanceFor(child.id));
@@ -2403,6 +2465,7 @@ function staffAssistantAnswer(intent) {
 function assistantIntentForQuestion(question) {
   const text = question.trim().toLocaleLowerCase("sv-SE");
   const staff = state.profile.role !== "parent";
+  if (/(?:feedback|återkoppling|utvecklar|developer|rapportera(?: ett)? fel)/.test(text)) return "feedback";
   if (!staff && /(?:vecka|veckoschema).*(?:lämn|hämt|tid)|(?:lämn|hämt|tid).*(?:vecka|veckoschema)/.test(text)) return "week-schedule";
   if (/öppettid|öppet/.test(text)) return "opening-hours";
   if (/stäng|kalender|utvecklingssamtal|aktivitet|utflykt/.test(text)) return "calendar";
@@ -5834,6 +5897,73 @@ function renderOverview() {
     <article class="card"><h2>Kom igång</h2><ol class="steps"><li class="done">Organisation skapad</li><li class="${state.schools.length ? "done" : ""}">Skapa skola och avdelning</li><li class="${state.children.length ? "done" : ""}">Lägg till barn</li><li class="${state.invitations.length ? "done" : ""}">Bjud in personal och vårdnadshavare</li></ol></article>`;
 }
 
+const FEEDBACK_CATEGORIES = [
+  ["idea", "Förslag eller idé"],
+  ["problem", "Något fungerar inte"],
+  ["question", "Fråga till utvecklaren"],
+  ["praise", "Något fungerar bra"],
+];
+
+function feedbackContextLabel(view) {
+  const labels = {
+    home: "Min dag",
+    pickup: "Schema",
+    meals: "Matsedel",
+    messages: "Meddelanden",
+    attendance: "Närvaro",
+    more: "Mer",
+    child: "Barnet",
+    classlist: "Avdelningen",
+    events: "Händelser",
+    banners: "Viktig information",
+    lost: "Borttappat",
+    incidents: "Avvikelser",
+    overview: "Översikt",
+    schools: "Skolor",
+    people: "Personer",
+    account: "Konto",
+    feedback: "Feedback",
+  };
+  return labels[view] || "Ärtan";
+}
+
+function developerFeedbackFields(input) {
+  const includeContact = Boolean(input.includeContact);
+  return {
+    "form-name": "developer-feedback",
+    category: String(input.category || "idea"),
+    message: String(input.message || "").trim(),
+    role: roleLabel(state.profile?.role),
+    context: feedbackContextLabel(input.sourceView || state.feedbackSourceView || state.view),
+    contact: includeContact ? `${state.profile?.name || ""} · ${state.profile?.email || ""}`.trim() : "",
+    "submitted-at": new Date().toISOString(),
+  };
+}
+
+async function sendDeveloperFeedback(input) {
+  const fields = developerFeedbackFields(input);
+  if (fields.message.length < 10 || fields.message.length > 2000) throw new Error("Feedbacken måste vara mellan 10 och 2 000 tecken.");
+  const response = await fetch("/", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(fields).toString(),
+  });
+  if (!response.ok) throw new Error("Feedbacken kunde inte skickas. Försök igen om en stund.");
+  return fields;
+}
+
+function renderDeveloperFeedback() {
+  const source = feedbackContextLabel(state.feedbackSourceView || "feedback");
+  return `${noticeHtml()}<section class="hero-card"><p class="kicker">Direkt till teamet bakom Ärtan</p><h1 class="h1">Ge feedback</h1><p class="sub">Berätta vad som hjälper, vad som saknas eller vad som inte fungerar. Meddelandet hamnar i utvecklarens feedbackinkorg.</p></section>
+    <form class="card form-stack developer-feedback-form" data-form="developer-feedback">
+      ${selectField("Vad gäller det?", "category", FEEDBACK_CATEGORIES, "idea", true)}
+      <label for="developer-feedback-message">Din feedback<textarea id="developer-feedback-message" name="message" minlength="10" maxlength="2000" required placeholder="Beskriv vad du försökte göra och vad du önskar skulle hända.">${esc(state.feedbackDraft)}</textarea></label>
+      <p class="feedback-context">Vi skickar med rollen ${esc(roleLabel(state.profile.role))} och att du kom från ${esc(source)}. Skriv inte barnets namn, hälsa, kontaktuppgifter eller annan känslig information.</p>
+      <label class="check feedback-contact"><input type="checkbox" name="include_contact"> Skicka även mitt namn och min e-post så att utvecklaren kan återkomma</label>
+      <button class="primary" type="submit">Skicka feedback</button>
+    </form>`;
+}
+
 function renderAccount() {
   const privacySettings = state.profile.role === "parent" ? `<fieldset class="preference-group"><legend>Meddelanden och integritet</legend>
       <label class="check"><input type="checkbox" name="allow_parent_messages" ${state.profile.allow_parent_messages ? "checked" : ""}> Låt andra vårdnadshavare i min avdelning hitta och skriva till mig</label>
@@ -6090,6 +6220,7 @@ function navIcon(name) {
     lost: '<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/>',
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
     account: '<circle cx="12" cy="8" r="3"/><path d="M5 21c.7-4.5 3-6.8 7-6.8s6.3 2.3 7 6.8"/>',
+    feedback: '<path d="M4 5h16v12H9l-5 4z"/><path d="M8 9h8M8 13h5"/>',
     chevron: '<path d="m9 6 6 6-6 6"/>',
     document: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
     pass: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h6M7 14h4M17 10v4"/>',
@@ -6127,10 +6258,10 @@ function renderMore() {
     ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"],
   ];
   const groups = role === "admin"
-    ? [["Verksamheten", [["overview", "Översikt", "", "overview"], ["schools", "Skolor och förskolor", "", "school"], ["people", "Personer", "", "people"]]], ["Kommunikation", [["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"], ["incidents", "Avvikelser", incidentHubStatus(), "info"]]], ["Konto", [["account", "Konto", state.profile.email, "account"]]]]
+    ? [["Verksamheten", [["overview", "Översikt", "", "overview"], ["schools", "Skolor och förskolor", "", "school"], ["people", "Personer", "", "people"]]], ["Kommunikation", [["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"], ["incidents", "Avvikelser", incidentHubStatus(), "info"]]], ["Konto", [["feedback", "Ge feedback", "Till utvecklaren", "feedback"], ["account", "Konto", state.profile.email, "account"]]]]
     : role === "staff"
-      ? [["Arbete", [["people", "Barn", "", "child"], ["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"], ["incidents", "Avvikelser", incidentHubStatus(), "info"]]], ["Konto", [["account", "Konto", state.profile.email, "account"]]]]
-      : [["Barnet", parentChildItems], [isSchoolChild(child) ? "Skolan" : "Förskolan", parentSchoolItems], ["Konto", [["account", "Konto", state.profile.email, "account"]]]];
+      ? [["Arbete", [["people", "Barn", "", "child"], ["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"], ["incidents", "Avvikelser", incidentHubStatus(), "info"]]], ["Konto", [["feedback", "Ge feedback", "Till utvecklaren", "feedback"], ["account", "Konto", state.profile.email, "account"]]]]
+      : [["Barnet", parentChildItems], [isSchoolChild(child) ? "Skolan" : "Förskolan", parentSchoolItems], ["Konto", [["feedback", "Ge feedback", "Till utvecklaren", "feedback"], ["account", "Konto", state.profile.email, "account"]]]];
   return `${noticeHtml()}<h1 class="h1">Mer</h1><p class="sub">Välj vad du vill göra.</p>${groups.map(([label, items]) => renderMenuGroup(label, items)).join("")}<button class="link menu-logout" type="button" data-action="logout">Logga ut</button>`;
 }
 
@@ -6209,6 +6340,7 @@ function render() {
     schools: renderSchools,
     people: renderPeople,
     incidents: renderIncidents,
+    feedback: renderDeveloperFeedback,
     account: renderAccount,
   };
   const fallback = views[defaultViewForRole(state.profile.role)] || renderParentHome;
@@ -6272,6 +6404,20 @@ document.body.addEventListener("submit", (event) => {
   const values = Object.fromEntries(new FormData(form));
   const type = form.dataset.form;
   if (type === "review-only") return;
+  if (type === "developer-feedback") {
+    const sourceView = state.feedbackSourceView || "feedback";
+    runMutation(async () => {
+      await sendDeveloperFeedback({
+        category: values.category,
+        message: values.message,
+        includeContact: values.include_contact === "on",
+        sourceView,
+      });
+      state.feedbackDraft = "";
+      state.feedbackSourceView = "feedback";
+    }, "Tack. Din feedback är skickad till utvecklaren.");
+    return;
+  }
   if (type === "meal-import-review") {
     if (state.mealDemo || state.mealImport?.example) {
       state.notice = { type: "success", text: "Exemplet sparar inte de granskade rätterna." };
@@ -7417,6 +7563,7 @@ document.body.addEventListener("click", (event) => {
     const view = target.dataset.view;
     const scrollTarget = target.dataset.target || "";
     const section = view === "child" ? (HUB_SECTION_BY_TARGET[scrollTarget] || "") : "";
+    if (view === "feedback" && state.assistantResponse?.draft !== undefined) state.feedbackDraft = state.assistantResponse.draft;
     showView(view, { section, scrollTarget: section ? "" : scrollTarget });
     return;
   }
