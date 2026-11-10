@@ -259,6 +259,17 @@ def check_pickup_hub(errors):
         errors.append(detail)
 
 
+def check_assistant_actions(errors):
+    script = ROOT / "scripts" / "assistant_action_test.mjs"
+    if not script.exists():
+        errors.append("scripts/assistant_action_test.mjs is missing")
+        return
+    result = subprocess.run(["node", str(script)], cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "assistant action test failed").strip()
+        errors.append(detail)
+
+
 def check_child_care(errors):
     script = ROOT / "scripts" / "child_care_sql_test.py"
     if not script.exists():
@@ -306,6 +317,7 @@ def main():
     check_permanent_passes(errors)
     check_weekend_dashboard(errors)
     check_pickup_hub(errors)
+    check_assistant_actions(errors)
     check_menu_import(errors)
     check_contact_photos(errors)
     check_child_care(errors)

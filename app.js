@@ -1990,6 +1990,164 @@ function assistantQuickActions() {
 function assistantResult(text, source, action = {}) {
   return { text, source, ...action };
 }
+function assistantRequestedClock(question) {
+  const text = String(question || "");
+  const contextual = [...text.matchAll(/\b(?:till|kl\.?|klockan)\s*([01]?\d|2[0-3])(?:[.:]([0-5]\d))?\b/gi)];
+  const explicit = [...text.matchAll(/\b([01]?\d|2[0-3])[.:]([0-5]\d)\b/g)];
+  const match = contextual.at(-1) || explicit.at(-1);
+  if (!match) return "";
+  return `${match[1].padStart(2, "0")}:${String(match[2] || "00").padStart(2, "0")}`;
+}
+
+function assistantPickupChangeRequest(question) {
+  const text = String(question || "").trim().toLocaleLowerCase("sv-SE");
+  const asksForChange = /(?:ändra|justera|uppdatera|sätt)/.test(text);
+  const mentionsPickup = /(?:upphämt|hämtning|hämt)/.test(text);
+  const mentionsWeek = /(?:vecka|alla vardag)/.test(text);
+  if (state.profile?.role !== "parent" || !asksForChange || !mentionsPickup || !mentionsWeek) return null;
+  const child = selectedChild();
+  if (!child) return assistantResult("Du behöver vara kopplad till ett barn innan jag kan ändra ett schema.", "Ditt konto i ärtan");
+  if (isSchoolChild(child)) {
+    return assistantResult(
+      "Skolans lektionstider bestäms av skolan. Du kan själv ändra fritidsschemat under Schema.",
+      "Skolans och fritidshemmets scheman",
+      { actionLabel: "Öppna Schema", view: "pickup" },
+    );
+  }
+  if (!featureEnabled(child, "schedule") || !featureEnabled(child, "pickup") || !state.pickupWeekReady || typeof ArtanPickup === "undefined") {
+    return assistantResult("Veckoschemat är inte tillgängligt för ändringar just nu.", "Veckoschemat i ärtan", { actionLabel: "Öppna Schema", view: "pickup" });
+  }
+  if (/\bförra veckan\b|\bvecka\s*\d{1,2}\b/.test(text)) {
+    return assistantResult(
+      "Jag kan bara ändra den här veckan eller nästa vecka direkt. Skriv vilken av dem du menar.",
+      "Veckoschemat i ärtan",
+      { actionLabel: "Öppna Schema", view: "pickup" },
+    );
+  }
+  const pickupTime = assistantRequestedClock(question);
+  if (!pickupTime) {
+    return assistantResult("Vilken hämtningstid vill du använda? Skriv till exempel ”Ändra alla hämtningstider den här veckan till 16:30”.", "Veckoschemat i ärtan");
+  }
+  const currentMonday = ArtanPickup.weekMonday(todayIso());
+  const monday = /nästa vecka/.test(text) ? shiftIsoDate(currentMonday, 7) : currentMonday;
+  const input = pickupGridInput(child);
+  const week = ArtanPickup.buildTermGrid(input).weeks.find((item) => item.monday === monday);
+  if (!week) {
+    return assistantResult("Den veckan ligger inte i en publicerad termin.", "Publicerade terminer", { actionLabel: "Öppna Schema", view: "pickup" });
+  }
+  const targetDates = week.days
+    .filter((day) => day.open && day.iso >= todayIso() && !plannedAbsenceStatus(child.id, day.iso))
+    .map((day) => day.iso);
+  if (!targetDates.length) {
+    return assistantResult("Det finns inga öppna, återstående dagar att ändra den veckan.", "Veckoschemat i ärtan", { actionLabel: "Öppna Schema", view: "pickup" });
+  }
+  const seeded = new Map(ArtanPickup.weekEditorSeed(input, monday, state.profile.id).map((day) => [day.iso, day]));
+  const days = targetDates.map((iso) => seeded.get(iso)).filter(Boolean);
+  const incomplete = days.filter((day) => !day.dropoff || !day.dropoffPerson?.kind || !day.dropoffPerson.id || !day.picker?.kind || !day.picker.id);
+  if (days.length !== targetDates.length || incomplete.length) {
+    return assistantResult(
+      "Jag kan inte ändra alla dagarna direkt eftersom någon dag saknar lämningstid, lämnare eller hämtare. Öppna veckan och fyll i det som saknas först.",
+      "Veckoschemat i ärtan",
+      { actionLabel: "Öppna veckan", view: "pickup", target: "pickup-current-week" },
+    );
+  }
+  const impossible = days.find((day) => day.dropoff >= pickupTime);
+  if (impossible) {
+    return assistantResult(
+      `${ArtanPickup.weekdayName(impossible.iso, "full")} kan inte få hämtning ${pickupTime}, eftersom det är före lämningstiden ${impossible.dropoff}.`,
+      "Veckoschemat i ärtan",
+      { actionLabel: "Öppna veckan", view: "pickup", target: "pickup-current-week" },
+    );
+  }
+  const rows = days.map((day) => ({
+    target_child_id: child.id,
+    plan_date: day.iso,
+    dropoff_at: day.dropoff,
+    pickup_at: pickupTime,
+    dropoff_person_kind: day.dropoffPerson.kind,
+    dropoff_person_id: day.dropoffPerson.id,
+    picker_kind: day.picker.kind,
+    picker_id: day.picker.id,
+    pass_kind: day.picker.passKind || null,
+  }));
+  const labels = days.map((day) => ArtanPickup.weekdayName(day.iso, "full"));
+  return assistantResult(
+    `Jag kan ändra hämtningen till ${pickupTime} för ${new Intl.ListFormat("sv-SE").format(labels)}. Lämningstider och personer behålls. Bekräfta innan jag sparar.`,
+    "Veckoschemat i ärtan",
+    {
+      confirmationLabel: "Ändra hämtningstiderna",
+      mutation: { kind: "pickup-week", question: String(question), childId: child.id, pickupTime, rows },
+    },
+  );
+}
+
+function parentWeekScheduleAnswer(child) {
+  if (isSchoolChild(child)) {
+    const lessons = WEEKDAYS.map((label, index) => {
+      const entries = timetableForDepartment(child.department_id, index + 1);
+      if (!entries.length) return "";
+      return `${label}: ${entries.map((entry) => `${entry.starts_at}–${entry.ends_at} ${entry.subject}`).join(", ")}`;
+    }).filter(Boolean);
+    const afterSchool = afterSchoolForChild(child.id).filter((row) => row.attending).map((row) => `${WEEKDAYS[Number(row.weekday) - 1]} fritids till ${row.ends_at}`);
+    const lines = [...lessons, ...afterSchool];
+    return assistantResult(
+      lines.length ? lines.join("\n") : "Skolan har inte publicerat något schema ännu.",
+      "Skolans schema och ditt fritidsschema",
+      { actionLabel: "Öppna Schema", view: "pickup" },
+    );
+  }
+  if (typeof ArtanPickup === "undefined") return assistantResult("Veckoschemat kunde inte läsas just nu.", "Veckoschemat i ärtan");
+  const monday = ArtanPickup.weekMonday(todayIso());
+  const days = ArtanPickup.weekEditorSeed(pickupGridInput(child), monday, state.profile.id)
+    .filter((day) => day.open && !day.closed && day.dropoff && day.pickup);
+  return assistantResult(
+    days.length
+      ? days.map((day) => `${ArtanPickup.weekdayName(day.iso, "full")}: ${day.dropoff}–${day.pickup}`).join("\n")
+      : "Den här veckan saknar sparade eller föreslagna tider.",
+    "Veckoschemat i ärtan",
+    { actionLabel: "Öppna Schema", view: "pickup", target: "pickup-current-week" },
+  );
+}
+
+function assistantResponseForQuestion(question) {
+  return assistantPickupChangeRequest(question) || assistantAnswer(assistantIntentForQuestion(question));
+}
+
+function assistantMutationsMatch(expected, actual) {
+  if (expected?.kind !== "pickup-week" || actual?.kind !== "pickup-week") return false;
+  if (expected.childId !== actual.childId || expected.pickupTime !== actual.pickupTime || expected.rows?.length !== actual.rows?.length) return false;
+  return expected.rows.every((row, index) => {
+    const other = actual.rows[index];
+    return row.target_child_id === other?.target_child_id
+      && row.plan_date === other.plan_date
+      && row.dropoff_at === other.dropoff_at
+      && row.pickup_at === other.pickup_at
+      && row.dropoff_person_kind === other.dropoff_person_kind
+      && row.dropoff_person_id === other.dropoff_person_id
+      && row.picker_kind === other.picker_kind
+      && row.picker_id === other.picker_id
+      && row.pass_kind === other.pass_kind;
+  });
+}
+
+async function executeAssistantMutation(mutation) {
+  if (mutation?.kind !== "pickup-week" || state.profile?.role !== "parent") throw new Error("Assistentåtgärden är inte giltig.");
+  await loadData();
+  const fresh = assistantPickupChangeRequest(mutation.question);
+  if (!fresh?.mutation || fresh.mutation.kind !== "pickup-week" || fresh.mutation.childId !== mutation.childId) {
+    return fresh || assistantResult("Schemat har ändrats sedan frågan ställdes. Kontrollera veckan och försök igen.", "Veckoschemat i ärtan", { actionLabel: "Öppna Schema", view: "pickup" });
+  }
+  if (!assistantMutationsMatch(mutation, fresh.mutation)) {
+    return { ...fresh, text: `Schemat har ändrats sedan du frågade. Granska det nya förslaget och bekräfta igen. ${fresh.text}` };
+  }
+  for (const row of fresh.mutation.rows) await rpc("save_pickup_day_handoffs", row);
+  await loadData();
+  return assistantResult(
+    `Klart. Hämtningstiden är ändrad till ${fresh.mutation.pickupTime} för ${fresh.mutation.rows.length} ${fresh.mutation.rows.length === 1 ? "dag" : "dagar"}.`,
+    "Det sparade veckoschemat i ärtan",
+    { actionLabel: "Visa veckan", view: "pickup", target: "pickup-current-week" },
+  );
+}
 
 function schoolForChild(child) {
   const department = state.departments.find((item) => item.id === child?.department_id);
@@ -1998,13 +2156,14 @@ function schoolForChild(child) {
 
 function parentAssistantAnswer(intent) {
   const child = selectedChild();
-  if (!child && ["day", "schedule", "reminders", "opening-hours", "consents", "health"].includes(intent)) {
+  if (!child && ["day", "schedule", "week-schedule", "reminders", "opening-hours", "consents", "health"].includes(intent)) {
     return assistantResult(
       "Du är inte kopplad till något barn ännu. Personalen bjuder in dig till barnet, eller så skickar du en syskonförfrågan som personalen godkänner innan barnet kopplas.",
       "Ditt konto i ärtan",
       { actionLabel: "Skicka förfrågan", view: "child" },
     );
   }
+  if (intent === "week-schedule") return parentWeekScheduleAnswer(child);
   if (intent === "schedule") {
     const attendance = attendanceFor(child.id);
     const pickupContacts = contactsFor(child.id).filter((contact) => contact.can_pickup);
@@ -2244,6 +2403,7 @@ function staffAssistantAnswer(intent) {
 function assistantIntentForQuestion(question) {
   const text = question.trim().toLocaleLowerCase("sv-SE");
   const staff = state.profile.role !== "parent";
+  if (!staff && /(?:vecka|veckoschema).*(?:lämn|hämt|tid)|(?:lämn|hämt|tid).*(?:vecka|veckoschema)/.test(text)) return "week-schedule";
   if (/öppettid|öppet/.test(text)) return "opening-hours";
   if (/stäng|kalender|utvecklingssamtal|aktivitet|utflykt/.test(text)) return "calendar";
   if (/samtyck|bild|foto/.test(text)) return staff ? "privacy" : "consents";
@@ -2281,9 +2441,9 @@ function renderAssistant() {
     </button>
     ${state.assistantOpen ? `<section id="assistantPanel" class="assistant-panel" role="dialog" aria-modal="false" aria-labelledby="assistantTitle">
       <header class="assistant-header"><div class="assistant-heading">${botMascot(true)}<div><p class="kicker">Din digitala hjälpreda</p><h2 id="assistantTitle">Fråga Ärtan</h2></div></div><button class="assistant-close" type="button" data-action="assistant-close" aria-label="Stäng Ärtan">×</button></header>
-      <p class="assistant-intro">Jag använder bara det som redan finns i appen. Ingen chatthistorik sparas.</p>
+      <p class="assistant-intro">Jag använder bara det som redan finns i appen. Tydliga ändringar visas för bekräftelse innan de sparas. Ingen chatthistorik sparas.</p>
       <div class="assistant-quick-actions" aria-label="Snabbval">${quickActions.map(([intent, label]) => `<button type="button" data-action="assistant-quick" data-intent="${esc(intent)}">${esc(label)}</button>`).join("")}</div>
-      ${response ? `<section class="assistant-conversation" aria-live="polite">${state.assistantQuestion ? `<p class="assistant-question">${esc(state.assistantQuestion)}</p>` : ""}<div id="assistantAnswer" class="assistant-answer" tabindex="-1"><strong>Ärtan</strong><p>${esc(response.text)}</p>${response.source ? `<small>Källa: ${esc(response.source)}</small>` : ""}${response.actionLabel ? `<button class="primary assistant-answer-action" type="button" data-action="assistant-go" data-view="${esc(response.view)}" data-target="${esc(response.target || "")}">${esc(response.actionLabel)}</button>` : ""}</div></section>` : ""}
+      ${response ? `<section class="assistant-conversation" aria-live="polite">${state.assistantQuestion ? `<p class="assistant-question">${esc(state.assistantQuestion)}</p>` : ""}<div id="assistantAnswer" class="assistant-answer" tabindex="-1"><strong>Ärtan</strong><p>${esc(response.text)}</p>${response.source ? `<small>Källa: ${esc(response.source)}</small>` : ""}${response.confirmationLabel ? `<button class="primary assistant-answer-action" type="button" data-action="assistant-confirm" ${state.busy ? "disabled" : ""}>${esc(response.confirmationLabel)}</button>` : ""}${response.actionLabel ? `<button class="primary assistant-answer-action" type="button" data-action="assistant-go" data-view="${esc(response.view)}" data-target="${esc(response.target || "")}">${esc(response.actionLabel)}</button>` : ""}</div></section>` : ""}
       <form class="assistant-question-form" data-form="assistant-question"><label for="assistantQuestion">Skriv en fråga</label><div><input id="assistantQuestion" name="question" maxlength="240" required placeholder="Exempel: Vad behöver jag göra?"><button class="primary" type="submit">Fråga</button></div></form>
     </section>` : ""}`;
 }
@@ -6130,7 +6290,7 @@ document.body.addEventListener("submit", (event) => {
     const question = String(values.question || "").trim();
     if (!question) return;
     state.assistantQuestion = question;
-    state.assistantResponse = assistantAnswer(assistantIntentForQuestion(question));
+    state.assistantResponse = assistantResponseForQuestion(question);
     renderAssistant();
     requestAnimationFrame(() => document.getElementById("assistantAnswer")?.focus());
     return;
@@ -7242,6 +7402,15 @@ document.body.addEventListener("click", (event) => {
     state.assistantResponse = assistantAnswer(target.dataset.intent);
     renderAssistant();
     requestAnimationFrame(() => document.getElementById("assistantAnswer")?.focus());
+    return;
+  }
+  if (action === "assistant-confirm") {
+    const mutation = state.assistantResponse?.mutation;
+    if (!mutation) return;
+    runMutation(async () => {
+      state.assistantResponse = await executeAssistantMutation(mutation);
+      state.assistantOpen = true;
+    }, "");
     return;
   }
   if (action === "assistant-go") {

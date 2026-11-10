@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 2026-11-10 — Ärtan kan ändra veckans hämtningstider
+
+- En vårdnadshavare kan be Ärtan att ändra alla återstående hämtningstider den här eller nästa vecka, till exempel till 16:30.
+- Ärtan visar vilka dagar som påverkas och kräver en uttrycklig bekräftelse innan något sparas. Lämningstider, lämnare och hämtare behålls.
+- Förflutna dagar, stängda dagar och registrerad frånvaro ändras inte. Ofullständiga scheman och hämtning före lämning stoppas före sparning.
+- Frågor om veckans hämtningstider sammanfattar nu schemat i stället för att bara öppna dagens plan.
+
 ## 2026-11-09 — Anpassat för både förskola och skola
 
 - Min dag har nu tydliga genvägar till Sjukanmälan, Viktig information och Händelser. Skolelever ser dagens ämnen, aktuella uppgifter och veckans nya skolnotiser direkt.
