@@ -2,7 +2,9 @@
 
 ## 2026-11-10 — Presentation och feedback till utvecklaren
 
-- Lade till en fristående svensk HTML-presentation för första mötet med en organisation på 14 förskolor. Tio responsiva slides visar problemet, nyttan för förälder, personal och ledning, Ärtans nuvarande funktioner samt ett tydligt förslag på en sex veckor lång pilot.
+- Lade till en fristående svensk HTML-presentation för första mötet med en organisation på 14 förskolor. Tolv responsiva slides visar problemet, nyttan för förälder, personal och ledning, Ärtans nuvarande funktioner samt ett tydligt förslag på en sex veckor lång pilot.
+- Föräldraperspektivet visar nu schema, sjukanmälan, hämtpass, barnets låda, privata bilder samt frivilliga lekträffar och kalasinbjudningar där båda familjerna måste ha valt funktionen.
+- Lade till ett föreslaget introduktionspris på 99 kr per barn och år utan fast avgift de första 12 månaderna. Det är 45 procent under TYRA Premiums rörliga offentliga listpris och 41 procent under Unikum SKA + Närvaro; källor och skillnader mellan paketen redovisas på prissliden.
 - Förälder, personal och administratör hittar nu **Ge feedback** under Mer. Formuläret skickar kategori, meddelande, roll och aktuell vy till utvecklarens Netlify Forms-inkorg när appen publiceras.
 - Namn och e-post följer bara med när användaren aktivt väljer det. Formuläret varnar också för att skriva barns namn, hälsa, kontaktuppgifter eller annan känslig information.
 - Ärtan känner igen skrivna feedbackfrågor, visar exakt vad som ska skickas och kräver en separat bekräftelse. Alternativet att granska öppnar samma formulär med texten förifylld; assistenten skickar aldrig namn eller e-post.
