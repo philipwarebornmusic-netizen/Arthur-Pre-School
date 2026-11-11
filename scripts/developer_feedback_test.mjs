@@ -59,6 +59,7 @@ vm.runInContext([
   functionSource("sendDeveloperFeedback"),
   functionSource("assistantDeveloperFeedbackRequest"),
   functionSource("executeAssistantMutation"),
+  functionSource("botMascot"),
   functionSource("renderDeveloperFeedback"),
 ].join("\n"), context);
 
@@ -96,6 +97,7 @@ context.state.feedbackSent = true;
 const confirmationHtml = vm.runInContext("renderDeveloperFeedback()", context);
 assert(confirmationHtml.includes('role="status"') && confirmationHtml.includes("Tack för din feedback!"), "lyckad skickning ska ersätta formuläret med en tydlig kvittens");
 assert(confirmationHtml.includes('data-action="feedback-new"'), "kvittensen ska erbjuda ett tydligt sätt att skicka ett nytt meddelande");
+assert(confirmationHtml.includes('class="bot-mascot"') && confirmationHtml.includes("Ärtan, din digitala hjälpreda"), "Ärtans avatar ska synas och vara tillgängligt namngiven i kvittensen");
 assert(!confirmationHtml.includes('data-form="developer-feedback"'), "kvittensen ska inte lämna det inskickade formuläret synligt");
 context.state.feedbackSent = false;
 

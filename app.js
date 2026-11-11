@@ -2499,6 +2499,10 @@ function assistantAnswer(intent) {
 
 function renderAssistant() {
   if (!assistantRoot) return;
+  if (state.view === "feedback" && state.feedbackSent) {
+    assistantRoot.innerHTML = "";
+    return;
+  }
   if (!state.session || !state.profile) {
     assistantRoot.innerHTML = "";
     return;
@@ -5961,7 +5965,7 @@ async function sendDeveloperFeedback(input) {
 function renderDeveloperFeedback() {
   if (state.feedbackSent) {
     return `<section id="developerFeedbackConfirmation" class="card feedback-confirmation" role="status" tabindex="-1">
-      <div class="feedback-confirmation-mark" aria-hidden="true">✓</div>
+      ${botMascot(false)}
       <p class="kicker">Skickat</p>
       <h1 class="h1">Tack för din feedback!</h1>
       <p class="sub">Ditt meddelande har kommit fram till utvecklarens feedbackinkorg.</p>

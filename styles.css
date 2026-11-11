@@ -812,7 +812,7 @@ body:has(.picker-sheet) .assistant-launcher { display: none; }
 .feedback-contact input { margin-top: 1px; }
 .feedback-confirmation { display: grid; justify-items: center; max-width: 720px; margin-inline: auto; padding: clamp(32px, 8vw, 64px) clamp(22px, 6vw, 48px); background: linear-gradient(155deg, var(--sage-soft), var(--paper)); text-align: center; }
 .feedback-confirmation:focus { outline: 3px solid var(--sage); outline-offset: 3px; }
-.feedback-confirmation-mark { display: grid; place-items: center; width: 72px; height: 72px; margin-bottom: 24px; border-radius: 50%; background: var(--sage); color: white; font-size: 36px; font-weight: 900; box-shadow: 0 14px 34px rgb(101 139 105 / 24%); }
+.feedback-confirmation .bot-mascot { width: 128px; margin-bottom: 18px; filter: drop-shadow(0 14px 18px rgb(47 62 70 / 16%)); }
 .feedback-confirmation .h1 { max-width: 600px; margin-bottom: 12px; }
 .feedback-confirmation .sub { max-width: 520px; margin: 0 0 30px; }
 .feedback-confirmation .primary { width: min(100%, 320px); }
