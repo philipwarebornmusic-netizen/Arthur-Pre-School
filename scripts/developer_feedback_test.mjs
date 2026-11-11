@@ -39,7 +39,12 @@ const context = {
     profile: { role: "parent", name: "Exempel Förälder", email: "exempel@example.test" },
     view: "feedback",
     feedbackSourceView: "pickup",
+    feedbackSent: false,
   },
+  FEEDBACK_CATEGORIES: [["idea", "Förslag eller idé"]],
+  noticeHtml: () => "",
+  selectField: () => '<label>Vad gäller det?<select name="category"></select></label>',
+  esc: (value) => String(value),
   assistantResult: (text, source, action = {}) => ({ text, source, ...action }),
   fetch: async (url, options) => {
     requests.push({ url, options });
@@ -54,6 +59,7 @@ vm.runInContext([
   functionSource("sendDeveloperFeedback"),
   functionSource("assistantDeveloperFeedbackRequest"),
   functionSource("executeAssistantMutation"),
+  functionSource("renderDeveloperFeedback"),
 ].join("\n"), context);
 
 const anonymous = vm.runInContext(`developerFeedbackFields({ category: "problem", message: "Knappen svarar inte", includeContact: false, sourceView: "pickup" })`, context);
@@ -82,7 +88,16 @@ assert(requests.length === 1 && requests[0].url === "/" && requests[0].options.m
 const submitted = new URLSearchParams(requests[0].options.body);
 assert(submitted.get("form-name") === "developer-feedback" && submitted.get("message") === proposal.mutation.message, "Netlify-posten ska använda feedbackformulärets namn och exakta text");
 assert(submitted.get("contact") === "", "assistenten får inte lägga till kontaktuppgifter utan formulärets aktiva val");
-assert(result.text.includes("skickad till utvecklaren"), "en lyckad skickning ska ge en konkret kvittens");
+assert(result.text.includes("Tack för din feedback"), "en lyckad assistentskickning ska ge en konkret kvittens");
+
+const formHtml = vm.runInContext("renderDeveloperFeedback()", context);
+assert(formHtml.includes('data-form="developer-feedback"'), "feedbackvyn ska visa formuläret före skickning");
+context.state.feedbackSent = true;
+const confirmationHtml = vm.runInContext("renderDeveloperFeedback()", context);
+assert(confirmationHtml.includes('role="status"') && confirmationHtml.includes("Tack för din feedback!"), "lyckad skickning ska ersätta formuläret med en tydlig kvittens");
+assert(confirmationHtml.includes('data-action="feedback-new"'), "kvittensen ska erbjuda ett tydligt sätt att skicka ett nytt meddelande");
+assert(!confirmationHtml.includes('data-form="developer-feedback"'), "kvittensen ska inte lämna det inskickade formuläret synligt");
+context.state.feedbackSent = false;
 
 context.fetch = async () => ({ ok: false });
 let failed = false;

@@ -1,5 +1,10 @@
 # Ändringslogg
 
+## 2026-11-11 — Tydlig kvittens efter skickad feedback
+
+- Efter en lyckad skickning ersätts feedbackformuläret nu av en fokuserad bekräftelse med texten **Tack för din feedback!** och beskedet att meddelandet har kommit fram till utvecklarens feedbackinkorg.
+- Bekräftelsen har en knapp för att skicka mer feedback. Ärtans assistent använder samma tydliga kvittenstext efter en bekräftad skickning.
+
 ## 2026-11-10 — Presentation och feedback till utvecklaren
 
 - Lade till en fristående svensk HTML-presentation för första mötet med en organisation på 14 förskolor. Tolv responsiva slides visar problemet, nyttan för förälder, personal och ledning, Ärtans nuvarande funktioner samt ett tydligt förslag på en sex veckor lång pilot.

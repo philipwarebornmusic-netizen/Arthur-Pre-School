@@ -114,6 +114,7 @@ const state = {
   assistantResponse: null,
   feedbackDraft: "",
   feedbackSourceView: "",
+  feedbackSent: false,
   postPreviewUrls: [],
   hubSection: "",
 };
@@ -768,7 +769,10 @@ function showView(view, { section = "", scrollTarget = "", push = true } = {}) {
   stopPickupScanner();
   state.scan = null;
   state.checkout = null;
-  if (view === "feedback" && state.view !== "feedback") state.feedbackSourceView = state.view;
+  if (view === "feedback" && state.view !== "feedback") {
+    state.feedbackSourceView = state.view;
+    state.feedbackSent = false;
+  }
   state.view = view;
   state.hubSection = section;
   state.notice = null;
@@ -1403,6 +1407,7 @@ async function logout() {
       assistantResponse: null,
       feedbackDraft: "",
       feedbackSourceView: "",
+      feedbackSent: false,
       hubSection: "",
     });
     if (location.hash) history.replaceState({ hub: false, view: "home", section: "" }, "", `${location.pathname}${location.search}`);
@@ -1726,6 +1731,7 @@ function clearLoadedData() {
     selectedChildId: null,
     feedbackDraft: "",
     feedbackSourceView: "",
+    feedbackSent: false,
     hubSection: "",
   });
 }
@@ -2178,7 +2184,7 @@ async function executeAssistantMutation(mutation) {
       sourceView: mutation.sourceView,
     });
     return assistantResult(
-      "Tack. Din feedback är skickad till utvecklaren utan namn eller e-post.",
+      "Tack för din feedback! Meddelandet har skickats till utvecklarens feedbackinkorg utan namn eller e-post.",
       "Ärtans feedbackinkorg",
       { actionLabel: "Öppna feedback", view: "feedback" },
     );
@@ -5953,6 +5959,15 @@ async function sendDeveloperFeedback(input) {
 }
 
 function renderDeveloperFeedback() {
+  if (state.feedbackSent) {
+    return `<section id="developerFeedbackConfirmation" class="card feedback-confirmation" role="status" tabindex="-1">
+      <div class="feedback-confirmation-mark" aria-hidden="true">✓</div>
+      <p class="kicker">Skickat</p>
+      <h1 class="h1">Tack för din feedback!</h1>
+      <p class="sub">Ditt meddelande har kommit fram till utvecklarens feedbackinkorg.</p>
+      <button class="primary" type="button" data-action="feedback-new">Skicka mer feedback</button>
+    </section>`;
+  }
   const source = feedbackContextLabel(state.feedbackSourceView || "feedback");
   return `${noticeHtml()}<section class="hero-card"><p class="kicker">Direkt till teamet bakom Ärtan</p><h1 class="h1">Ge feedback</h1><p class="sub">Berätta vad som hjälper, vad som saknas eller vad som inte fungerar. Meddelandet hamnar i utvecklarens feedbackinkorg.</p></section>
     <form class="card form-stack developer-feedback-form" data-form="developer-feedback">
@@ -6415,7 +6430,10 @@ document.body.addEventListener("submit", (event) => {
       });
       state.feedbackDraft = "";
       state.feedbackSourceView = "feedback";
-    }, "Tack. Din feedback är skickad till utvecklaren.");
+      state.feedbackSent = true;
+    }, "").then(() => {
+      if (state.feedbackSent) requestAnimationFrame(() => document.getElementById("developerFeedbackConfirmation")?.focus());
+    });
     return;
   }
   if (type === "meal-import-review") {
@@ -7528,6 +7546,13 @@ document.body.addEventListener("click", (event) => {
   if (/^(share|print)-(term|post|attachment|message)$/.test(action)) {
     const [kind, what] = action.split("-");
     runShareAction(kind, what, target.dataset.id);
+    return;
+  }
+  if (action === "feedback-new") {
+    state.feedbackSent = false;
+    state.notice = null;
+    render();
+    requestAnimationFrame(() => document.getElementById("developer-feedback-message")?.focus());
     return;
   }
   if (action === "assistant-toggle" || action === "assistant-close") {
