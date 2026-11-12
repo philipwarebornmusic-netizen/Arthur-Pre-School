@@ -790,7 +790,7 @@ body:has(.picker-sheet) .assistant-launcher { display: none; }
 .day-overview .kicker { margin-bottom: 1px; font-size: 11px; }
 .day-overview-action { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; min-height: 36px; padding: 0; background: transparent; color: var(--ink); font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--line); }
 .day-overview-action .ico, .home-priority > .ico, .home-reminder > .ico, .home-update-card > .ico { width: 16px; height: 16px; }
-.day-overview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.day-overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 6px; }
 .day-overview-item { min-width: 0; padding: 10px; background: rgb(255 252 247 / 70%); border-radius: 15px; }
 .day-overview-item > span, .day-overview-item > strong, .day-overview-item > small { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .day-overview-item > span { color: var(--muted); font-size: 10px; font-weight: 500; }
@@ -821,6 +821,46 @@ body:has(.picker-sheet) .assistant-launcher { display: none; }
 .home-update-copy strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .home-update-copy > span { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 1; color: var(--muted); font-size: 11px; line-height: 1.25; }
 .today-subjects, .school-notices, .teacher-section, .schedule-tools { margin: 16px 0; }
+
+@media (max-width: 420px) {
+  .home-heading { margin-bottom: 14px; }
+  .home-assistant-slot .assistant-launcher { min-height: 54px; padding: 3px 8px 3px 3px; }
+  .home-assistant-slot .assistant-launcher .bot-mascot { width: 52px; height: 50px; margin: -2px 0; }
+  .home-reminders { gap: 8px; margin-bottom: 10px; }
+  .home-reminder { min-height: 48px; padding: 10px 14px; font-size: 13px; }
+  .day-overview { margin-bottom: 10px; padding: 18px 18px 19px; border-radius: 26px; }
+  .day-overview > header { margin-bottom: 14px; }
+  .day-overview h2 { font-size: 22px; }
+  .day-overview .kicker { font-size: 12px; }
+  .day-overview-action { font-size: 13px; }
+  .day-overview-grid { gap: 8px; }
+  .day-overview-item { min-height: 78px; padding: 13px; border-radius: 17px; }
+  .day-overview-item > span { font-size: 11px; }
+  .day-overview-item > strong { font-size: 20px; }
+  .day-overview-item > small { font-size: 11px; }
+  .day-overview-empty { padding: 12px 14px; border-radius: 17px; }
+  .day-overview-empty strong { font-size: 15px; }
+  .day-overview-empty span { font-size: 12px; }
+  .home-quick-grid { gap: 8px; margin-bottom: 10px; }
+  .home-quick-action { gap: 4px; min-height: 60px; padding: 9px 5px; border-radius: 18px; }
+  .home-quick-action .menu-icon-badge { flex-basis: 24px; width: 24px; height: 24px; }
+  .home-quick-action .menu-icon-badge .ico { width: 17px; height: 17px; }
+  .home-quick-action strong { font-size: 10.5px; letter-spacing: -.01em; }
+  .home-meal-row { min-height: 74px; margin-bottom: 10px; padding: 12px 16px; border-radius: 22px; }
+  .home-meal-copy small { font-size: 11px; }
+  .home-meal-copy strong { font-size: 15px; }
+  .home-meal-row .link { font-size: 12px; }
+  .home-section-head { margin: 20px 3px 10px; }
+  .home-section-head h2 { font-size: 21px; }
+  .home-section-head .link { font-size: 13px; }
+  .home-updates > div:last-child { gap: 9px; }
+  .home-update-card { min-height: 78px; padding: 11px 14px; border-radius: 20px; }
+  .home-update-card .menu-icon-badge { width: 42px; height: 42px; }
+  .home-update-copy { gap: 2px; }
+  .home-update-copy small { font-size: 11px; }
+  .home-update-copy strong { font-size: 14px; }
+  .home-update-copy > span { -webkit-line-clamp: 2; font-size: 12px; }
+}
 
 .today-subjects ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .today-subjects li { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 8px; padding-top: 8px; border-top: 1px solid var(--hair); }

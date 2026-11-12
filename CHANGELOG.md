@@ -1,5 +1,10 @@
 # Ändringslogg
 
+## 2026-11-12 — Luftigare Min dag på iPhone
+
+- Efter visuell kontroll på en riktig iPhone har dagskortet, snabbvalen, lunchraden och avdelningsuppdateringarna fått större text, rymligare tryckytor och en tydligare vertikal rytm.
+- Två tider delar nu dagskortets bredd i stället för att lämna en tom tredje kolumn. Layouten använder skärmhöjden bättre utan horisontell skroll eller överlappande kontroller.
+
 ## 2026-11-12 — Smartare och kompaktare Min dag
 
 - Min dag samlar lämning, hämtning, hämtare och aktuell närvaro i ett kompakt dagskort. Morgonen prioriterar dagens tider, dagen prioriterar närvaro och hämtning, kvällen visar nästa förskoledag och helgen hoppar till nästa öppna vardag.
