@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 2026-11-12 — Smartare och kompaktare Min dag
+
+- Min dag samlar lämning, hämtning, hämtare och aktuell närvaro i ett kompakt dagskort. Morgonen prioriterar dagens tider, dagen prioriterar närvaro och hämtning, kvällen visar nästa förskoledag och helgen hoppar till nästa öppna vardag.
+- Hälsning, barnnamn, avdelning, logotyp och flerbarnsväljare tar mindre plats. Frånvaro, Schema och Meddelanden är kompakta snabbval, och Ärtan ligger i sidhuvudet i stället för ovanpå innehåll.
+- Dagens lunch har blivit en kort rad med länk till veckans matsedel. Terminsinformation, öppettider och veckokalender renderas inte längre på Min dag.
+- Tomma genvägar för information och händelser är borttagna. Aktiva banners, åtgärdspåminnelser, senaste relevanta inlägg, publicerade bilder och kommande aktiviteter visas bara när data finns för det valda barnet.
+- Påminnelser för saknade tider, stängningsdagar, obesvarad OSA och andra åtgärder räknas från aktuell data och försvinner när saken är löst.
+- Beteendetestet för Min dag täcker morgon, dag, kväll, helg, stängning, frånvaro, tomlägen, bilder, aktiviteter, skolläge och byte mellan flera barn.
+
 ## 2026-11-11 — Tydlig kvittens efter skickad feedback
 
 - Efter en lyckad skickning ersätts feedbackformuläret nu av en fokuserad bekräftelse med Ärtans avatar, texten **Tack för din feedback!** och beskedet att meddelandet har kommit fram till utvecklarens feedbackinkorg.

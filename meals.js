@@ -272,10 +272,8 @@
 
   function todayCardHtml(card) {
     if (!card?.show) return "";
-    const file = card.file ? fileLinks([card.file]) : "";
-    const dish = card.dish ? `<p class="soft-value">${escapeHtml(card.dish)}</p>` : `<p class="soft-sub">${escapeHtml(card.note)}</p>`;
-    const extra = card.dish && card.note ? `<p class="soft-sub">${escapeHtml(card.note)}</p>` : "";
-    return `<section class="soft-card is-meal"><p class="soft-label">${escapeHtml(card.label)}</p>${dish}${extra}${file}<button class="link" type="button" data-action="open-meals" data-week="${escapeHtml(mondayOf(card.date))}">Hela veckan</button></section>`;
+    const meal = card.dish || card.note;
+    return `<section class="home-meal-row"><span class="home-meal-copy"><small>${escapeHtml(card.label)}</small><strong>${escapeHtml(meal)}</strong></span><button class="link" type="button" data-action="open-meals" data-week="${escapeHtml(mondayOf(card.date))}">Veckans matsedel</button></section>`;
   }
 
   function weekHtml(model) {

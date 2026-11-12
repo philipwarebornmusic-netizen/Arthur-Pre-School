@@ -622,10 +622,28 @@ function parentReminders(child) {
   const reminders = [];
   const attendance = attendanceFor(child.id);
   const preschoolAttendance = featureEnabled(child, "attendance") && !isSchoolChild(child);
-  if (preschoolAttendance && !isWeekend() && !attendance) {
-    reminders.push({ text: "Fyll i dagens plan med lämning och hämtning.", view: "home", target: "daily-plan" });
-  } else if (preschoolAttendance && !isWeekend() && attendance.status === "in" && !attendance.pickup_at) {
-    reminders.push({ text: "Komplettera dagens plan med hämtningstid.", view: "home", target: "daily-plan" });
+  const context = homeDayContext(child);
+  const target = context.day;
+  const attendanceHasTimes = context.isToday && attendance?.status === "in" && attendance.dropoff_at && attendance.pickup_at;
+  if (preschoolAttendance && target?.closed && context.isToday) {
+    reminders.push({
+      text: `Förskolan är stängd idag${target.closureReason ? `: ${target.closureReason}` : "."}`,
+      view: "pickup",
+      target: "pickup-current-week",
+      kind: "closure",
+    });
+  } else if (preschoolAttendance && target?.open && !target.saved && !attendanceHasTimes) {
+    const when = context.phase === "evening"
+      ? "morgondagens"
+      : context.phase === "weekend"
+        ? "nästa förskoledags"
+        : "dagens";
+    reminders.push({ text: `Lägg in ${when} lämning och hämtning.`, view: context.isToday ? "home" : "pickup", target: context.isToday ? "daily-plan" : "pickup-current-week", kind: "schedule" });
+  } else if (preschoolAttendance && !target && !(context.isToday && attendanceHasTimes)) {
+    const text = context.isToday ? "Lägg in dagens lämning och hämtning." : "Schema saknas för nästa förskoledag.";
+    reminders.push({ text, view: context.isToday ? "home" : "pickup", target: context.isToday ? "daily-plan" : "pickup-current-week", kind: "schedule" });
+  } else if (preschoolAttendance && context.isToday && attendance?.status === "in" && !attendance.pickup_at && !target?.pickup) {
+    reminders.push({ text: "Komplettera dagens plan med hämtningstid.", view: "home", target: "daily-plan", kind: "schedule" });
   }
   if (featureEnabled(child, "child_box")) {
     const boxNeedsRefill = childBoxNeedsRefill(child.id);
@@ -635,18 +653,19 @@ function parentReminders(child) {
         text: `${boxNeedsRefill.map((item) => labels.get(item.item_type)).filter(Boolean).join(" och ")} behöver fyllas på i barnets låda.`,
         view: "child",
         target: "child-box",
+        kind: "action",
       });
     }
   }
   childInfoChecklist(child)
     .filter((item) => !item.complete)
-    .forEach((item) => reminders.push({ text: item.reminder, view: "child", target: item.id }));
+    .forEach((item) => reminders.push({ text: item.reminder, view: "child", target: item.id, kind: "action" }));
   if ((state.incidentCopies || []).some((copy) => copy.child_name === child.name && !copy.acknowledged_at)) {
-    reminders.unshift({ text: "Bekräfta att du har läst informationen från förskolan.", view: "child", target: "incident-copies" });
+    reminders.unshift({ text: "Bekräfta att du har läst informationen från förskolan.", view: "child", target: "incident-copies", kind: "urgent" });
   }
   const now = Date.now();
   const eventReminders = featureEnabled(child, "events") ? (state.schoolEvents || []).filter((event) => {
-    if (event.child_id !== child.id) return false;
+    if (event.child_id !== child.id || !event.rsvp_enabled || event.response) return false;
     const start = new Date(event.starts_at).getTime();
     const end = new Date(event.ends_at).getTime();
     return now >= start - (7 * 24 * 60 * 60 * 1000) && now <= end;
@@ -655,13 +674,10 @@ function parentReminders(child) {
   eventReminders.forEach((event) => {
     if (seenEvents.has(event.event_id)) return;
     seenEvents.add(event.event_id);
-    const text = event.rsvp_enabled && !event.response
-      ? `Svara Ja eller Nej för ${event.title}.`
-      : `${event.title} börjar ${formatTimestamp(event.starts_at)}.`;
-    reminders.unshift({ text, view: "events", target: "" });
+    reminders.unshift({ text: `Svara Ja eller Nej för ${event.title}.`, view: "events", target: "", kind: "event" });
   });
   if (!isSchoolChild(child) && featureEnabled(child, "schedule") && featureEnabled(child, "pickup") && state.pickupWeekReady && typeof ArtanPickup !== "undefined" && ArtanPickup.buildTermGrid(pickupGridInput(child)).unfilled) {
-    reminders.unshift({ text: "Fyll i lämning och hämtning för den närmaste veckan.", view: "pickup", target: "pickup-current-week" });
+    reminders.push({ text: "Fyll i lämning och hämtning för den närmaste veckan.", view: "pickup", target: "pickup-current-week", kind: "schedule" });
   }
   return reminders.slice(0, 3);
 }
@@ -2499,6 +2515,7 @@ function assistantAnswer(intent) {
 
 function renderAssistant() {
   if (!assistantRoot) return;
+  document.querySelector("[data-home-assistant-slot] .assistant-launcher")?.remove();
   if (state.view === "feedback" && state.feedbackSent) {
     assistantRoot.innerHTML = "";
     return;
@@ -2519,6 +2536,9 @@ function renderAssistant() {
       ${response ? `<section class="assistant-conversation" aria-live="polite">${state.assistantQuestion ? `<p class="assistant-question">${esc(state.assistantQuestion)}</p>` : ""}<div id="assistantAnswer" class="assistant-answer" tabindex="-1"><strong>Ärtan</strong><p>${esc(response.text)}</p>${response.source ? `<small>Källa: ${esc(response.source)}</small>` : ""}${response.confirmationLabel ? `<button class="primary assistant-answer-action" type="button" data-action="assistant-confirm" ${state.busy ? "disabled" : ""}>${esc(response.confirmationLabel)}</button>` : ""}${response.actionLabel ? `<button class="primary assistant-answer-action" type="button" data-action="assistant-go" data-view="${esc(response.view)}" data-target="${esc(response.target || "")}">${esc(response.actionLabel)}</button>` : ""}</div></section>` : ""}
       <form class="assistant-question-form" data-form="assistant-question"><label for="assistantQuestion">Skriv en fråga</label><div><input id="assistantQuestion" name="question" maxlength="240" required placeholder="Exempel: Vad behöver jag göra?"><button class="primary" type="submit">Fråga</button></div></form>
     </section>` : ""}`;
+  const homeSlot = state.view === "home" && !state.assistantOpen ? document.querySelector("[data-home-assistant-slot]") : null;
+  const launcher = assistantRoot.querySelector(".assistant-launcher");
+  if (homeSlot && launcher) homeSlot.append(launcher);
 }
 
 function emptyState(title, text) {
@@ -3657,6 +3677,52 @@ function pickupCardCopy(child, summary) {
   return { value: "Ingen tid sparad", sub: note || "Öppna hela schemat för att fylla i veckan." };
 }
 
+function scheduleDayFor(child, iso) {
+  if (!child || !iso || typeof ArtanPickup === "undefined") return null;
+  const grid = ArtanPickup.buildTermGrid(pickupGridInput(child));
+  for (const week of grid.weeks) {
+    const day = week.days.find((item) => item.iso === iso);
+    if (day) return { day, monday: week.monday };
+  }
+  return null;
+}
+
+function nextOpenScheduleDay(child, afterIso) {
+  if (!child || typeof ArtanPickup === "undefined") return null;
+  const grid = ArtanPickup.buildTermGrid(pickupGridInput(child));
+  for (const week of grid.weeks) {
+    const day = week.days.find((item) => item.iso > afterIso && item.open);
+    if (day) return { day, monday: week.monday };
+  }
+  return null;
+}
+
+function homeDateLabel(iso, today, relative = true) {
+  if (!iso) return "Nästa förskoledag";
+  if (relative && iso === addDaysIso(today, 1)) return "Imorgon";
+  const label = new Intl.DateTimeFormat("sv-SE", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${iso}T12:00:00Z`));
+  return label.charAt(0).toLocaleUpperCase("sv-SE") + label.slice(1);
+}
+
+function homeDayContext(child, now = new Date()) {
+  const today = todayIso();
+  const hour = now.getHours();
+  const phase = isWeekend(today) ? "weekend" : hour < 11 ? "morning" : hour < 17 ? "day" : "evening";
+  if (phase === "weekend" || phase === "evening") {
+    const next = nextOpenScheduleDay(child, today);
+    return {
+      phase,
+      isToday: false,
+      targetIso: next?.day.iso || "",
+      day: next?.day || null,
+      monday: next?.monday || "",
+      label: homeDateLabel(next?.day.iso || "", today, phase !== "weekend"),
+    };
+  }
+  const current = scheduleDayFor(child, today);
+  return { phase, isToday: true, targetIso: today, day: current?.day || null, monday: current?.monday || "", label: "Idag" };
+}
+
 function mealEditorSchools() {
   if (!state.profile) return [];
   if (state.profile.role === "admin") return state.schools;
@@ -3691,9 +3757,7 @@ function mealClosedDates(preschoolId) {
 function renderMealTodayCard(child) {
   if (!child || state.profile?.role !== "parent") return "";
   const preschoolId = childSchoolId(child);
-  if (!state.mealsReady && !state.mealDemo) {
-    return `<section class="soft-card is-meal"><p class="soft-label">Matsedel</p><p class="soft-sub">Matsedeln är inte aktiverad i databasen ännu.</p></section>`;
-  }
+  if (!state.mealsReady && !state.mealDemo) return "";
   const bundle = mealBundle(preschoolId);
   const card = ArtanMeals.presentation({
     today: todayIso(),
@@ -4184,19 +4248,95 @@ function renderHomeAssignments(child) {
 }
 
 function renderHomeQuickActions(child) {
-  const bannerCount = activeSchoolBanners().length;
-  const eventCount = groupedSchoolEvents().filter((event) => new Date(event.ends_at).getTime() >= Date.now()).length;
   const actions = [];
   if (featureEnabled(child, "attendance") && !isWeekend()) {
-    actions.push(`<button type="button" class="home-quick-action" data-action="open-daily-plan" aria-controls="daily-plan"><span class="menu-icon-badge">${navIcon("illness")}</span><strong>Sjukanmälan</strong><small>Sjuk eller ledig</small></button>`);
+    actions.push(`<button type="button" class="home-quick-action" data-action="open-daily-plan" aria-controls="daily-plan"><span class="menu-icon-badge">${navIcon("illness")}</span><strong>Frånvaro</strong></button>`);
   }
-  if (featureEnabled(child, "important")) {
-    actions.push(`<button type="button" class="home-quick-action" data-action="navigate" data-view="banners"><span class="menu-icon-badge">${navIcon("banner")}</span><strong>Viktig information</strong><small>${bannerCount ? `${bannerCount} aktiva` : "Ingen ny"}</small></button>`);
+  if (featureEnabled(child, "schedule")) {
+    actions.push(`<button type="button" class="home-quick-action" data-action="navigate" data-view="pickup"><span class="menu-icon-badge">${navIcon("clock")}</span><strong>Schema</strong></button>`);
   }
-  if (featureEnabled(child, "events")) {
-    actions.push(`<button type="button" class="home-quick-action" data-action="navigate" data-view="events"><span class="menu-icon-badge">${navIcon("event")}</span><strong>Händelser</strong><small>${eventCount ? `${eventCount} kommande` : "Inga kommande"}</small></button>`);
+  actions.push(`<button type="button" class="home-quick-action" data-action="navigate" data-view="messages"><span class="menu-icon-badge">${navIcon("messages")}</span><strong>Meddelanden</strong></button>`);
+  return `<nav class="home-quick-grid" aria-label="Snabbval">${actions.join("")}</nav>`;
+}
+
+function homeScheduleValues(child, context, attendance) {
+  const day = context.day;
+  const present = context.isToday && attendance?.status === "in";
+  const dropoff = present && attendance.dropoff_at ? attendance.dropoff_at.slice(0, 5) : day?.dropoff || "";
+  const pickup = present && attendance.pickup_at ? attendance.pickup_at.slice(0, 5) : day?.pickup || "";
+  const picker = present && attendance.pickup_by ? attendance.pickup_by : day?.picker ? pickupPersonName(child, day.picker) : "";
+  return { dropoff, pickup, picker };
+}
+
+function renderHomeDayCard(child, context, attendance) {
+  const day = context.day;
+  const schoolMode = isSchoolChild(child);
+  const values = homeScheduleValues(child, context, attendance);
+  const absent = context.isToday && ["absent_sick", "absent_leave"].includes(attendance?.status);
+  const attendanceCopy = context.isToday
+    ? schoolMode && !absent
+      ? { text: "Ingen frånvaro anmäld" }
+      : todayStatusCopy(child, attendance)
+    : null;
+  const closed = Boolean(day?.closed);
+  const hasSchedule = schoolMode || Boolean((values.dropoff && values.pickup) || day?.saved);
+  const items = [];
+  if (context.isToday) {
+    items.push({ key: "status", label: schoolMode ? "Frånvaro" : "Närvaro", value: closed ? "Stängt" : attendanceCopy?.text || "Inte incheckad", sub: closed ? day.closureReason || "Förskolan är stängd" : "" });
   }
-  return actions.length ? `<section class="home-quick-grid" aria-label="Genvägar">${actions.join("")}</section>` : "";
+  if (!schoolMode && !closed && !absent && (hasSchedule || values.dropoff || values.pickup)) {
+    items.push({ key: "dropoff", label: "Lämning", value: values.dropoff || "Ej angiven", sub: "" });
+    items.push({ key: "pickup", label: "Hämtning", value: values.pickup || "Ej angiven", sub: values.picker ? `Hämtas av ${values.picker}` : "" });
+  }
+  if (!context.isToday && closed) {
+    items.push({ key: "status", label: context.label, value: "Stängt", sub: day.closureReason || "Förskolan är stängd" });
+  }
+  const priority = context.phase === "day" ? ["status", "pickup", "dropoff"] : ["dropoff", "pickup", "status"];
+  items.sort((left, right) => priority.indexOf(left.key) - priority.indexOf(right.key));
+  const empty = !items.length || (!schoolMode && !closed && !absent && !hasSchedule && context.isToday && items.length === 1);
+  const title = schoolMode
+    ? "Dagens skoldag"
+    : context.phase === "morning"
+      ? "Dagens tider"
+      : context.phase === "day"
+        ? "Koll på dagen"
+        : "Nästa förskoledag";
+  const canEditToday = context.isToday && !isWeekend() && featureEnabled(child, "attendance");
+  const action = canEditToday
+    ? `<button class="day-overview-action" type="button" data-action="open-daily-plan" aria-controls="daily-plan">${schoolMode ? "Anmäl frånvaro" : absent ? "Ändra frånvaro" : "Ändra tider"} ${navIcon("chevron")}</button>`
+    : `<button class="day-overview-action" type="button" data-action="navigate" data-view="pickup">Öppna schema ${navIcon("chevron")}</button>`;
+  const content = empty
+    ? `<div class="day-overview-empty"><strong>${context.isToday ? "Dagens tider saknas" : "Inget schema är sparat ännu"}</strong><span>Fyll i lämning och hämtning så visas dagen här.</span></div>`
+    : `<div class="day-overview-grid">${items.map((item) => `<div class="day-overview-item is-${item.key}"><span>${esc(item.label)}</span><strong>${esc(item.value)}</strong>${item.sub ? `<small>${esc(item.sub)}</small>` : ""}</div>`).join("")}</div>`;
+  return `<section class="day-overview phase-${esc(context.phase)}" data-home-phase="${esc(context.phase)}"><header><div><p class="kicker">${esc(context.label)}</p><h2>${esc(title)}</h2></div>${action}</header>${content}</section>`;
+}
+
+function renderHomeReminders(reminders) {
+  if (!reminders.length) return "";
+  return `<section class="home-reminders" aria-label="Påminnelser">${reminders.map((reminder) => `<button type="button" class="home-reminder is-${esc(reminder.kind || "action")}" data-action="bot-reminder" data-view="${esc(reminder.view)}" data-target="${esc(reminder.target)}"><span>${esc(reminder.text)}</span>${navIcon("chevron")}</button>`).join("")}</section>`;
+}
+
+function renderHomePriority(child) {
+  const banner = activeSchoolBanners().find((item) => !item.department_id || item.department_id === child.department_id);
+  if (!banner) return "";
+  return `<button type="button" class="home-priority severity-${esc(banner.severity || "important")}" data-action="navigate" data-view="banners"><span class="menu-icon-badge">${navIcon("banner")}</span><span><small>${esc(BANNER_SEVERITY[banner.severity] || "Viktig information")}</small><strong>${esc(banner.title)}</strong></span>${navIcon("chevron")}</button>`;
+}
+
+function renderHomeUpdates(child) {
+  const post = (state.posts || []).find((item) => (!item.child_id || item.child_id === child.id) && (!item.department_id || item.department_id === child.department_id));
+  const event = featureEnabled(child, "events")
+    ? groupedSchoolEvents().find((item) => new Date(item.ends_at).getTime() >= Date.now() && (!item.children?.length || item.children.some((target) => target.id === child.id)))
+    : null;
+  const cards = [];
+  if (post) {
+    const image = postImagesFor(post.id).find((item) => item.signed_url);
+    cards.push(`<button type="button" class="home-update-card has-post" data-action="navigate" data-view="messages" data-section="anslagstavla">${image ? `<img src="${esc(image.signed_url)}" alt="${esc(image.alt_text || post.title)}" width="${image.width || 640}" height="${image.height || 480}" loading="lazy">` : `<span class="menu-icon-badge">${navIcon("messages")}</span>`}<span class="home-update-copy"><small>${esc(formatTimestamp(post.created_at))}</small><strong>${esc(post.title)}</strong>${post.body ? `<span>${esc(post.body)}</span>` : ""}</span>${navIcon("chevron")}</button>`);
+  }
+  if (event) {
+    cards.push(`<button type="button" class="home-update-card has-event" data-action="navigate" data-view="events"><span class="menu-icon-badge">${navIcon("event")}</span><span class="home-update-copy"><small>${esc(formatTimestamp(event.starts_at))}</small><strong>${esc(event.title)}</strong>${event.location ? `<span>${esc(event.location)}</span>` : ""}</span>${navIcon("chevron")}</button>`);
+  }
+  if (!cards.length) return "";
+  return `<section class="home-updates"><div class="home-section-head"><h2>Nytt från avdelningen</h2><button class="link" type="button" data-action="navigate" data-view="messages">Visa allt</button></div><div>${cards.join("")}</div></section>`;
 }
 
 function renderTodaySubjects(child) {
@@ -4225,16 +4365,10 @@ function renderParentHome() {
   const showPickup = featureEnabled(child, "pickup") && !schoolMode;
   const weekend = isWeekend();
   const pickupContacts = contactsFor(child.id).filter((contact) => contact.can_pickup);
-  const latest = state.posts.find((post) => !post.child_id || post.child_id === child.id);
   const reminders = parentReminders(child);
-  const nextReminder = reminders[0];
-  const status = schoolMode && !weekend && !["absent_sick", "absent_leave"].includes(attendance?.status)
-    ? { text: "Ingen frånvaro anmäld", sub: departmentName(child.department_id), dot: "" }
-    : todayStatusCopy(child, attendance);
-  const summary = todayGridDay(child);
-  const pickup = pickupCardCopy(child, summary);
+  const baseContext = homeDayContext(child);
+  const context = schoolMode ? { ...baseContext, isToday: true, targetIso: todayIso(), day: null, label: "Idag" } : baseContext;
   const renewal = renderPassRenewalCards(child);
-  const editToday = `<button class="link" type="button" data-action="navigate" data-view="pickup">Visa hela schemat</button>`;
   const planStatus = ["in", "absent_sick", "absent_leave"].includes(attendance?.status) ? attendance.status : "in";
   const absentToday = ["absent_sick", "absent_leave"].includes(planStatus);
   const absenceTitle = planStatus === "absent_leave" ? "Anledning till ledighet, valfritt" : "Anledning till sjukdom, valfritt";
@@ -4244,15 +4378,17 @@ function renderParentHome() {
   const statusChoices = [["in", schoolMode ? "Ingen frånvaro" : "Kommer"], ["absent_sick", "Sjuk"], ["absent_leave", "Ledig"]]
     .map(([value, label]) => `<label><input type="radio" name="status" value="${value}" ${planStatus === value ? "checked" : ""}><span>${label}</span></label>`)
     .join("");
+  const currentDay = scheduleDayFor(child, today)?.day || null;
+  const scheduleValues = homeScheduleValues(child, { ...context, isToday: true, day: currentDay }, attendance);
   const dailyPlan = !showAttendance || weekend
     ? ""
     : `<details id="daily-plan" class="card quick-panel">
-      <summary><span class="menu-icon-badge">${navIcon("illness")}</span><span><strong>${schoolMode ? "Anmäl eller ändra frånvaro" : "Ändra dagens status"}</strong><small>${absentToday ? `${attendanceLabel(attendance.status)}${absencePeriodSummary}` : schoolMode ? "Ingen frånvaro anmäld" : "Kommer idag"}</small></span><span class="menu-chevron" aria-hidden="true">${navIcon("chevron")}</span></summary>
+      <summary><span class="menu-icon-badge">${navIcon("illness")}</span><span><strong>${schoolMode ? "Anmäl eller ändra frånvaro" : "Ändra dagens plan"}</strong><small>${absentToday ? `${attendanceLabel(attendance.status)}${absencePeriodSummary}` : schoolMode ? "Ingen frånvaro anmäld" : "Lämning, hämtning och frånvaro"}</small></span><span class="menu-chevron" aria-hidden="true">${navIcon("chevron")}</span></summary>
       <form class="form-stack quick-panel-form" data-form="parent-attendance" data-child-id="${esc(child.id)}">
         <fieldset class="attendance-status-options"><legend>Vad gäller idag?</legend><div>${statusChoices}</div></fieldset>
         ${schoolMode ? "" : `<div data-attendance-present-fields ${absentToday ? "hidden" : ""}>
-          <div class="form-grid">${field("Lämning", "dropoff_at", attendance?.dropoff_at?.slice(0, 5) || "", { type: "time" })}${field("Hämtning", "pickup_at", attendance?.pickup_at?.slice(0, 5) || "", { type: "time" })}</div>
-          <label>Vem hämtar?<input name="pickup_by" type="text" value="${esc(attendance?.pickup_by || "")}" list="pickup-contact-options" placeholder="Exempelvis mormor eller farfar"></label>
+          <div class="form-grid">${field("Lämning", "dropoff_at", scheduleValues.dropoff, { type: "time" })}${field("Hämtning", "pickup_at", scheduleValues.pickup, { type: "time" })}</div>
+          <label>Vem hämtar?<input name="pickup_by" type="text" value="${esc(scheduleValues.picker)}" list="pickup-contact-options" placeholder="Exempelvis mormor eller farfar"></label>
           ${pickupContacts.length ? `<datalist id="pickup-contact-options">${pickupContacts.map((contact) => `<option value="${esc(contact.name)}"></option>`).join("")}</datalist>` : ""}
         </div>`}
         ${state.multiDayAbsenceReady ? `<label class="absence-period-field" data-absence-period-field ${absentToday ? "" : "hidden"}><span>Till och med</span><input name="absence_ends_on" type="date" min="${today}" max="${addDaysIso(today, 30)}" value="${esc(absenceEndsOn)}" required ${absentToday ? "" : "disabled"}></label>` : ""}
@@ -4261,37 +4397,20 @@ function renderParentHome() {
         <button class="primary" type="submit" data-attendance-submit>${absentToday ? "Spara frånvaro" : "Spara dagens status"}</button>
       </form>
     </details>`;
-  const reminderBlock = reminders.length
-    ? `<section class="card"><h2>Att komma ihåg</h2><ul class="bot-reminders">${reminders.map((reminder) => `<li>${esc(reminder.text)}</li>`).join("")}</ul>${nextReminder ? `<button class="link" type="button" data-action="bot-reminder" data-view="${esc(nextReminder.view)}" data-target="${esc(nextReminder.target)}">Ta hand om nästa sak</button>` : ""}</section>`
-    : "";
-  const assignmentRow = renderHomeAssignments(child);
-  const latestRow = latest
-    ? `<p class="menu-label">Senaste meddelande</p><div class="menu-group"><button type="button" class="menu-row" data-action="navigate" data-view="messages" data-section="anslagstavla"><span class="menu-row-title">${esc(latest.title)}</span><span class="menu-row-status">${esc(formatTimestamp(latest.created_at))}</span></button></div>`
-    : "";
-  const todayCard = !showAttendance
-    ? ""
-    : weekend
-      ? `<section class="soft-card is-today"><p class="soft-label">Idag</p><p class="soft-value"><span class="status-dot ${status.dot}"></span>${esc(status.text)}</p><p class="soft-sub">${esc(status.sub)}</p></section>`
-      : `<button type="button" class="soft-card is-today today-status-card" data-action="open-daily-plan" aria-controls="daily-plan"><span class="soft-label">Idag</span><span class="soft-value"><span class="status-dot ${status.dot}"></span>${esc(status.text)}</span><span class="soft-sub">${esc(status.sub)}</span><span class="today-status-action">Ändra ${navIcon("chevron")}</span></button>`;
-  return `${noticeHtml()}${childTabs()}<p class="hi">${esc(dayGreeting())}</p><h1 class="h1">${esc(childFirstName(child) || child.name)}</h1>
-    ${renderHomeQuickActions(child)}
-    ${todayCard}
+  return `${noticeHtml()}${childTabs()}<header class="home-heading"><div><p class="home-greeting">${esc(dayGreeting())}</p><h1>${esc(childFirstName(child) || child.name)}</h1><p>${esc(departmentName(child.department_id))}</p></div><div class="home-assistant-slot" data-home-assistant-slot></div></header>
+    ${renderHomePriority(child)}
+    ${renderHomeReminders(reminders)}
+    ${renderHomeDayCard(child, context, attendance)}
     ${dailyPlan}
+    ${renderHomeQuickActions(child)}
     ${renderTodaySubjects(child)}
     ${featureEnabled(child, "meals") ? renderMealTodayCard(child) : ""}
-    ${assignmentRow}
-    ${latestRow}
+    ${renderHomeUpdates(child)}
+    ${renderHomeAssignments(child)}
     ${renderSchoolNotices(child)}
-    ${showPickup ? `<div class="present-day-content" data-present-day-content ${absentToday ? "hidden" : ""}>
-      <section class="soft-card is-pick"><p class="soft-label">Schema</p><p class="soft-value">${esc(pickup.value)}</p>${pickup.sub ? `<p class="soft-sub">${esc(pickup.sub)}</p>` : ""}${editToday}</section>
-      ${renewal}
-      ${renderPickupNotices()}
-      ${renderPickupWeekNudge(child)}
-      ${renderParentTermSchedules(child)}
-    </div>` : ""}
+    ${showPickup && !absentToday ? `${renewal}${renderPickupNotices()}` : ""}
     ${renderIncidentCopies()}
-    ${renderNoticeList(isSchoolChild(child) ? "Skolan" : "Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}
-    <div class="home-reminder-content" data-home-reminder-content>${reminderBlock}</div>`;
+    ${renderNoticeList(isSchoolChild(child) ? "Skolan" : "Förskolan", "Meddelanden till dig", (state.notices || []).filter((notice) => notice.kind === "incident_copy" || notice.kind === "incident_reminder"))}`;
 }
 
 function commentsFor(postId) {
@@ -6306,13 +6425,13 @@ function paintHeaderContext() {
   const child = role === "parent" ? selectedChild() : null;
   accountButton.hidden = false;
   accountButton.dataset.action = "navigate";
-  if (child) {
+  if (child && state.view !== "home") {
     accountButton.dataset.view = "child";
     accountButton.innerHTML = `<strong>${esc(childFirstName(child) || child.name)}</strong><small>${esc(departmentName(child.department_id))}</small>`;
     return;
   }
-  accountButton.dataset.view = "more";
-  const name = childFirstName({ name: state.profile?.name || "Mer" }) || "Mer";
+  accountButton.dataset.view = "account";
+  const name = childFirstName({ name: state.profile?.name || "Konto" }) || "Konto";
   accountButton.innerHTML = `<strong>${esc(name)}</strong><small>${esc(roleLabel(role))}</small>`;
 }
 
@@ -7417,6 +7536,16 @@ function runShareAction(kind, what, id) {
   }
 }
 
+function openDailyPlan() {
+  const details = document.getElementById("daily-plan");
+  if (!details) return;
+  details.open = true;
+  requestAnimationFrame(() => {
+    details.scrollIntoView({ behavior: "smooth", block: "start" });
+    details.querySelector('input[name="status"]:checked')?.focus({ preventScroll: true });
+  });
+}
+
 document.body.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
@@ -7704,13 +7833,7 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   if (action === "open-daily-plan") {
-    const details = document.getElementById("daily-plan");
-    if (!details) return;
-    details.open = true;
-    requestAnimationFrame(() => {
-      details.scrollIntoView({ behavior: "smooth", block: "start" });
-      details.querySelector('input[name="status"]:checked')?.focus({ preventScroll: true });
-    });
+    openDailyPlan();
     return;
   }
   if (action === "navigate" || action === "account") {
@@ -7747,6 +7870,11 @@ document.body.addEventListener("click", (event) => {
   if (action === "bot-reminder") {
     const view = target.dataset.view;
     const scrollTarget = target.dataset.target || "";
+    if (view === "home" && scrollTarget === "daily-plan") {
+      showView("home");
+      requestAnimationFrame(openDailyPlan);
+      return;
+    }
     const section = HUB_SECTION_BY_TARGET[scrollTarget] || "";
     showView(view, { section, scrollTarget: section ? "" : scrollTarget });
     return;
@@ -8556,12 +8684,28 @@ function startMealDemo(params) {
   state.schools = [{ id: example.preschoolId, name: "Exempelförskolan" }];
   state.departments = [{ id: example.departmentId, preschool_id: example.preschoolId, name: "Exempelavdelningen" }];
   state.staffAssignments = [{ staff_id: example.profileId, department_id: example.departmentId }];
-  state.children = [{ id: example.childId, name: "Nova Exempel", department_id: example.departmentId }];
+  const demoTermId = "00000000-0000-4000-8000-000000000010";
+  let nextOpen = addDaysIso(day, 1);
+  while (isWeekend(nextOpen)) nextOpen = addDaysIso(nextOpen, 1);
+  state.children = [{ id: example.childId, name: "Nova Exempel", birth_date: "2022-04-18", department_id: example.departmentId }];
   state.selectedChildId = example.childId;
-  state.attendance = [];
-  state.schoolTerms = [];
+  state.attendance = [{ child_id: example.childId, date: day, status: "in", checked_in_at: `${day}T08:12:00+01:00`, dropoff_at: "08:10:00", pickup_at: "16:15:00", pickup_by: "Exempel Förälder" }];
+  state.schoolTerms = [{ term_id: demoTermId, preschool_id: example.preschoolId, name: "Exempeltermin", starts_on: ArtanMeals.mondayOf(day), ends_on: addDaysIso(day, 60), opens_at: "06:30:00", closes_at: "18:30:00", term_status: "published" }];
   state.termClosures = [];
-  state.posts = [];
+  state.weeklySchedules = [1, 2, 3, 4, 5].map((weekday) => ({ term_id: demoTermId, child_id: example.childId, weekday, attending: true, dropoff_at: "08:10:00", pickup_at: "16:15:00" }));
+  state.pickupCalendars = {
+    [example.childId]: {
+      guardians: [{ id: example.profileId, name: "Exempel Förälder" }],
+      day_plans: [day, nextOpen].map((plan_date) => ({ plan_date, dropoff_at: "08:10:00", pickup_at: "16:15:00", picker_kind: "guardian", picker_id: example.profileId })),
+      standard_pickers: [],
+    },
+  };
+  state.health = [{ child_id: example.childId, updated_at: `${day}T07:00:00Z` }];
+  state.contacts = [{ id: "demo-contact", child_id: example.childId, name: "Exempel Förälder", relation: "Vårdnadshavare", can_pickup: true }];
+  state.consents = CONSENT_OPTIONS.map(([type]) => ({ child_id: example.childId, type, granted: true }));
+  state.posts = [{ id: "demo-post", department_id: example.departmentId, child_id: null, author_id: example.profileId, title: "Skapande med höstlöv", body: "Idag har barnen sorterat färger och skapat tillsammans.", created_at: `${day}T11:30:00Z` }];
+  state.postImages = [];
+  state.schoolEvents = [{ event_id: "demo-event", child_id: example.childId, child_name: "Nova Exempel", title: "Ljusfest på gården", starts_at: `${addDaysIso(day, 2)}T16:00:00Z`, ends_at: `${addDaysIso(day, 2)}T18:00:00Z`, location: "Gården", rsvp_enabled: false }];
   state.notices = [];
   state.mealPreschoolId = example.preschoolId;
   state.mealWeekStart = ArtanMeals.mondayOf(day);

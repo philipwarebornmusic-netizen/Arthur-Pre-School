@@ -8,7 +8,7 @@ const tabs = {
   staff: meals.tabsForRole("staff").map((item) => item[2]),
   admin: meals.tabsForRole("admin").map((item) => item[2]),
 };
-assert.deepEqual(tabs.parent, ["Min dag", "Hämtning", "Meddelanden", "Mer"]);
+assert.deepEqual(tabs.parent, ["Min dag", "Schema", "Meddelanden", "Mer"]);
 assert.deepEqual(tabs.staff, ["Närvaro", "Matsedel", "Meddelanden", "Mer"]);
 assert.deepEqual(tabs.admin, ["Närvaro", "Matsedel", "Meddelanden", "Mer"]);
 assert.equal(meals.tabsForRole("staff").length, 4);
@@ -89,9 +89,9 @@ assert.deepEqual(meals.replaceCleanup("", staged, false), { remove: [staged], ke
 assert.deepEqual(meals.replaceCleanup(previous, previous, true), { remove: [], keep: previous });
 
 const card = meals.todayCardHtml(fileOnly.todayCard);
-assert.equal(card.includes("soft-value"), false);
+assert.equal(card.includes("home-meal-row"), true);
 assert.equal(card.includes("Ingen rätt är ifylld"), true);
-assert.equal(card.includes("Hela veckan"), true);
+assert.equal(card.includes("Veckans matsedel"), true);
 assert.equal(card.includes("Idag serveras"), true);
 
 console.log("meal menu view tests passed");

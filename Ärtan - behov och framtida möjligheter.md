@@ -96,22 +96,22 @@ Hela funktionspaketet ska planeras, men införas i kontrollerade etapper. Ärtan
 
 Etapp 5 kräver separat rättslig bedömning och konsekvensbedömning innan utveckling eller test med riktiga barnbilder.
 
-## Funktionsinventering 2026-11-09
+## Funktionsinventering 2026-11-12
 
-Statusorden nedan beskriver produktionen efter publiceringen 2026-11-09.
+Statusorden nedan beskriver den lokalt verifierade produkten efter optimeringen av Min dag 2026-11-12.
 
 ### Önskad vardagsyta
 
-- [ ] **Korta rutor för dagens och veckans viktigaste — delvis implementerat.** Min dag visar barnets status, högst tre påminnelser, aktuell schemavecka och senaste meddelanden. Det saknas ett samlat, kompakt rutnät med exempelvis Idag, Hämtning, Veckan och Att göra.
+- [x] **Korta rutor för dagens och veckans viktigaste — implementerat.** Min dag samlar aktuell närvaro, lämning, hämtning och hämtare i ett kompakt dagskort. Påminnelser, lunch, meddelanden och aktiviteter visas bara när de är relevanta; terminsinformation och veckokalender ligger kvar i sina egna vyer.
 - [ ] **Röd/grön incheckningsikon längst upp — delvis implementerat.** Min dag visar status som text. Personalens närvarolista har färgkodade statusetiketter. Förälderns sidhuvud saknar fortfarande en tydlig ikon med grön status för incheckad och röd status för inte incheckad eller frånvarande; färg får inte vara den enda signalen.
-- [ ] **Mindre ikoner och mindre skroll — delvis implementerat.** Barnet, Skolor och Personer använder kompakta hubbkort och separata detaljvyer. Min dag, Hämtning, Meddelanden och Närvaro kan fortfarande bli långa. Nästa designsteg bör vara en kompakt översikt överst och progressiv öppning av detaljer, inte att ta bort information.
+- [x] **Mindre ikoner och mindre skroll — implementerat för Min dag.** Mobilvyn använder kompakta snabbval, ett situationsanpassat dagskort och progressiv öppning av frånvaroformuläret. Ärtan ligger statiskt i sidhuvudet och täcker inte innehåll eller knappar.
 - [x] **Ikon/status för blöjor och extrakläder — implementerat.** Barnets låda har Blöjor, Extrakläder, Regnkläder och Strumpor med Slut, Få eller Finns. Vårdnadshavare och behörig personal delar statusen. Databasstödet finns i den applicerade migrationen `supabase/021_child_box_absence_notes.sql`.
 
 ### Schema, händelser och information
 
 - [ ] **Lägga schema för flera veckor samtidigt — delvis implementerat.** Standardveckan kan fylla återkommande tider, en vecka kan kopieras till nästa och hela terminen visas. Det saknas val av ett godtyckligt veckointervall, förhandsgranskning av alla berörda datum och en atomisk sparaåtgärd för flera veckor.
 - [x] **Viktig banner från förskolan — publicerat 2026-11-09.** Tidsstyrda banners har målgrupp per skola eller avdelning, start/slut, allvarlighetsgrad och ansvarig avsändare. Aktiva banners visas på Min dag, Närvaro och Översikt. Databaskontraktet finns i `supabase/022_family_school_features.sql`.
-- [x] **Händelser i schema med påminnelser och OSA — publicerat 2026-11-09.** Verksamhetshändelser kan gälla en avdelning eller en hel skola. Vårdnadshavaren svarar Ja eller Nej per barn, och Min dag påminner från sju dagar före start till händelsens slut.
+- [x] **Händelser i schema med påminnelser och OSA — publicerat 2026-11-09.** Verksamhetshändelser kan gälla en avdelning eller en hel skola. Relevanta aktiviteter visas på Min dag, medan en separat åtgärdspåminnelse visas från sju dagar före start när barnets Ja/Nej-OSA fortfarande saknas.
 - [ ] **Kontaktuppgifter till förskola, rektor och avdelning — delvis implementerat.** Förskolan lagrar telefon, adress, ort och öppettider. Dessa visas främst för administratören, och Ärtan kan svara om öppettider. Avdelningar har bara namn; rektor, avdelningstelefon, e-post och en tydlig föräldrasida saknas.
 
 ### Bilder, portfolio och borttappat
