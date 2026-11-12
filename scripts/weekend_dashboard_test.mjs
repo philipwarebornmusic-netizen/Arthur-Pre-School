@@ -235,6 +235,7 @@ const updates = dashboard("2026-10-26", {
 });
 assert(updates.html.includes("Nytt från avdelningen") && updates.html.includes("Skogsutflykt") && updates.html.includes("Ljusfest"), "relevanta inlägg och aktiviteter ska samlas på Min dag");
 assert(updates.html.includes("https://example.test/skog.jpg") && updates.html.includes('alt="Barnens löv"'), "publicerade bilder ska visas med alternativtext");
+assert((updates.html.match(/data-view="messages" data-section="anslagstavla"/g) || []).length === 2, "både senaste inlägget och Visa allt ska öppna hela anslagstavlan");
 
 const siblings = [
   { id: "child-1", name: "Arthur", department_id: "department-1" },

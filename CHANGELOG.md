@@ -1,5 +1,13 @@
 # Ändringslogg
 
+## 2026-11-12 — Sjukanmälan i schemat och tydligare Mer
+
+- Dagens rad i veckoschemat har nu valet **Sjuk**. Det öppnar dagens frånvaroformulär med sjukstatus förvald och visar direkt period och valfri sjukdomsanledning. Förflutna och framtida dagar får inte valet.
+- **Anslagstavlan** ligger nu även under Förskolan på Mer med aktuellt antal inlägg, så äldre publiceringar går att hitta utan att först öppna Meddelanden. **Visa allt** på Min dag leder till samma fullständiga historik.
+- Varje schemarad visar nu två tydliga, tryckbara val: **Lämnas av** och **Hämtas av**. Vårdnadshavaren väljer person separat för varje moment i stället för att behöva upptäcka de tidigare små punktknapparna.
+- Mer har gjorts om från smala, höga ikonrutor till skannbara grupperade rader med tydligare rubriker, status och navigeringspilar. Ärtan ligger i sidhuvudet i stället för ovanpå innehållet.
+- Mobilvyerna är visuellt kontrollerade utan horisontell skroll eller avklippta etiketter. Ett beteendetest låser att sjukvalet bara visas för dagens öppna schemarad när frånvaro är tillgänglig.
+
 ## 2026-11-12 — Luftigare Min dag på iPhone
 
 - Efter visuell kontroll på en riktig iPhone har dagskortet, snabbvalen, lunchraden och avdelningsuppdateringarna fått större text, rymligare tryckytor och en tydligare vertikal rytm.

@@ -217,18 +217,30 @@ const sheet = ArtanPickup.renderWeekEditor({
   weekNumber: 43,
   canCopyPrevious: true,
   days: [
-    { iso: "2026-10-19", weekday: 1, dropoff: "08:00", pickup: "16:30", ledig: false, open: true, dropoffInitials: "AB", dropoffKind: "guardian", pickupInitials: "MK", pickupKind: "contact" },
+    { iso: "2026-10-19", weekday: 1, dropoff: "08:00", pickup: "16:30", ledig: false, open: true, dropoffInitials: "AB", dropoffKind: "guardian", dropoffName: "Alex", pickupInitials: "MK", pickupKind: "contact", pickupName: "Mormor Karin" },
     { iso: "2026-10-23", weekday: 5, closed: true, open: false },
   ],
 });
 assert(sheet.includes("Vecka 43") && sheet.includes("Mån 19 okt") && sheet.includes(">Ledig<") && sheet.includes('type="time"') && sheet.includes("Spara veckan") && sheet.includes("is-closed"), "veckovyn visar datum, tider och stängt");
 assert(sheet.includes('data-week-day="2026-10-19"') && sheet.includes('data-week-day="2026-10-23"'), "varje veckorad kan scrollas fram");
-assert(sheet.includes('data-person-role="dropoff"') && sheet.includes('data-person-role="pickup"'), "veckovyn väljer lämnare och hämtare var för sig");
+assert(sheet.includes('data-person-role="dropoff"') && sheet.includes("Lämnas av") && sheet.includes("Alex") && sheet.includes('data-person-role="pickup"') && sheet.includes("Hämtas av") && sheet.includes("Mormor Karin"), "veckovyn visar tydliga separata val för lämnare och hämtare");
 assert(sheet.includes('data-action="same-as-previous-week"') && sheet.includes("Samma som förra veckan"), "veckovyn kan fyllas från förra veckan");
 assert(!ArtanPickup.renderWeekEditor({ weekNumber: 43, canCopyPrevious: false, days: [] }).includes("same-as-previous-week"), "knappen döljs utan sparad vecka");
 assert(ArtanPickup.renderWeekEditor({ weekNumber: 47, canCopyPrevious: true, note: "Kopierade vecka 45", days: [] }).includes("Kopierade vecka 45"), "äldre vecka förklaras neutralt");
 assert(sheet.includes("Fyll i en dag, så följer de andra tomma dagarna med. Ledig hoppar över dagen."), "hinten förklarar ifyllnaden");
 assert(!sheet.includes('data-week-ledig" checked') && !sheet.includes("checked"), "Ledig är avmarkerad när dagen inte är ledig");
+
+const reportSickSheet = ArtanPickup.renderWeekEditor({
+  weekNumber: 46,
+  canReportSick: true,
+  days: [
+    { iso: "2026-11-12", weekday: 4, open: true, today: true, dropoff: "08:00", pickup: "16:30" },
+    { iso: "2026-11-13", weekday: 5, open: true, today: false, dropoff: "08:00", pickup: "16:30" },
+  ],
+});
+assert(reportSickSheet.includes('data-action="report-sick" data-date="2026-11-12"'), "dagens schemarad kan öppna sjukanmälan");
+assert((reportSickSheet.match(/data-action="report-sick"/g) || []).length === 1, "framtida schemarader ska inte erbjuda sjukanmälan");
+assert(!ArtanPickup.renderWeekEditor({ canReportSick: false, days: [{ iso: "2026-11-12", open: true, today: true }] }).includes('data-action="report-sick"'), "sjukvalet döljs när frånvaro inte är tillgänglig");
 
 const sickSheet = ArtanPickup.renderWeekEditor({
   weekNumber: 46,
@@ -456,7 +468,7 @@ assert(staffTabs.some(([view, , label]) => view === "meals" && label === "Matsed
 const staffViews = mealApi.allowedViews("staff");
 assert(["attendance", "meals", "messages", "people", "more", "events", "banners", "lost", "incidents", "account"].every((view) => staffViews.includes(view)), "personal når arbets- och familjefunktionerna");
 assert(!app.includes('registerHubCard("child", { id: "hamtlista"'), "Hämtlista-kortet är borta");
-assert(app.includes("Öppna Schema") && app.includes("Hämtpersoner, hämtpass och veckoschema finns under Schema"), "Kontaktpersoner länkar till Schema");
+assert(app.includes("Öppna Schema") && app.includes("Lämnare, hämtare, hämtpass och veckoschema finns under Schema"), "Kontaktpersoner länkar till Schema");
 for (const needle of ["share-pass", "print-pass", "open-pass", "remember_pickup_pass_token", "reveal_pickup_pass", "renderTermGrid", "edit-pickup-week", "save-pickup-week", "open-picker", "same-as-previous-week", "weekEditorSeed", "smartFillWeek", "reopenWeekDay", "hasEarlierSavedWeek", "Kopierade vecka", "pickup-current-week", "pickup-add", "copy-pickup-week", "list_department_pickup_plans"]) {
   assert(app.includes(needle), `appen saknar ${needle}`);
 }

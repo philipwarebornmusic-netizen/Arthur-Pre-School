@@ -2537,8 +2537,9 @@ function renderAssistant() {
       <form class="assistant-question-form" data-form="assistant-question"><label for="assistantQuestion">Skriv en fråga</label><div><input id="assistantQuestion" name="question" maxlength="240" required placeholder="Exempel: Vad behöver jag göra?"><button class="primary" type="submit">Fråga</button></div></form>
     </section>` : ""}`;
   const homeSlot = state.view === "home" && !state.assistantOpen ? document.querySelector("[data-home-assistant-slot]") : null;
+  const moreSlot = state.view === "more" && !state.assistantOpen ? document.querySelector("[data-more-assistant-slot]") : null;
   const launcher = assistantRoot.querySelector(".assistant-launcher");
-  if (homeSlot && launcher) homeSlot.append(launcher);
+  if ((homeSlot || moreSlot) && launcher) (homeSlot || moreSlot).append(launcher);
 }
 
 function emptyState(title, text) {
@@ -2666,7 +2667,7 @@ const SCHOOL_FEATURE_LABELS = Object.freeze({
   meals: "Matsedel",
   assignments: "Uppgifter och utveckling",
   schedule: "Schema",
-  pickup: "Hämtpersoner och hämtpass",
+  pickup: "Lämnare, hämtare och pass",
   documents: "Intyg och bilagor",
   teachers: "Lärare",
   portfolio: "Portfolio",
@@ -3184,6 +3185,7 @@ function weekEditorModel(child, editor) {
     error: editor.error || "",
     note: editor.note || "",
     canCopyPrevious: ArtanPickup.hasEarlierSavedWeek(pickupGridInput(child), editor.monday),
+    canReportSick: featureEnabled(child, "attendance"),
     days: editor.days.map((day) => {
       const source = byIso.get(day.iso) || {};
       const dropoff = personPresentation(child, day.dropoffPerson);
@@ -3395,9 +3397,9 @@ function renderPickupSection(child) {
     const openable = pass.pass_status === "active" || pass.pass_status === "scheduled";
     return `<li><div><strong>${esc(pass.person_relation || "")} ${esc(pass.person_name || "Personuppgiften är rensad")}</strong><span>${esc(formatDate(pass.pickup_date))} · ${esc(pass.window_start)}–${esc(pass.window_end)} · ${esc(passStatusLabel(pass.pass_status))}</span></div><div class="invite-actions">${openable ? `<button class="link" type="button" data-action="open-pass" data-id="${esc(pass.pass_id)}" data-kind="day">Visa pass</button><button class="link danger-link" type="button" data-action="revoke-pass" data-id="${esc(pass.pass_id)}">Återkalla</button>` : ""}</div></li>`;
   }).join("")}</ul>` : `<p class="form-hint">Inget hämtpass är skapat.</p>`;
-  return `<section class="schedule-tools"><div class="section-head"><div><p class="kicker">Vid behov</p><h2>Hämtning och behörigheter</h2></div></div>
+  return `<section class="schedule-tools"><div class="section-head"><div><p class="kicker">Vid behov</p><h2>Lämning, hämtning och behörigheter</h2></div></div>
     ${renderCreatedPass(child.id)}
-    <details class="compact-tool" id="pickup-list"><summary><span>${navIcon("people")}<strong>Hämtpersoner</strong></span><small>${contacts.length || "Inga"} sparade</small></summary><div class="compact-tool-body"><p class="form-hint">Personer som brukar hämta. Personalen ser eventuell bild vid utcheckning.</p>${contacts.length ? `<ul class="contact-list">${contacts.map((contact) => renderPickupContactItem(contact)).join("")}</ul>` : `<p class="form-hint">Ingen person är tillagd ännu.</p>`}<form class="form-stack" data-form="pickup-contact" data-child-id="${esc(child.id)}"><h3>Lägg till person</h3><div class="form-grid">${field("Namn", "name", "", { required: true, maxlength: "80" })}${field("Relation", "relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "phone", "", { type: "tel", maxlength: "40", autocomplete: "tel" })}<button class="secondary" type="submit">Spara person</button></form></div></details>
+    <details class="compact-tool" id="pickup-list"><summary><span>${navIcon("people")}<strong>Lämnare och hämtare</strong></span><small>${contacts.length || "Inga"} sparade</small></summary><div class="compact-tool-body"><p class="form-hint">Personer som kan lämna eller hämta. Personalen ser eventuell bild vid utcheckning.</p>${contacts.length ? `<ul class="contact-list">${contacts.map((contact) => renderPickupContactItem(contact)).join("")}</ul>` : `<p class="form-hint">Ingen person är tillagd ännu.</p>`}<form class="form-stack" data-form="pickup-contact" data-child-id="${esc(child.id)}"><h3>Lägg till person</h3><div class="form-grid">${field("Namn", "name", "", { required: true, maxlength: "80" })}${field("Relation", "relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "phone", "", { type: "tel", maxlength: "40", autocomplete: "tel" })}<button class="secondary" type="submit">Spara person</button></form></div></details>
     <details class="compact-tool" id="pickup-passes"><summary><span>${navIcon("pass")}<strong>Hämtpass för en dag</strong></span><small>${passes.length || "Inga"} sparade</small></summary><div class="compact-tool-body"><p class="form-hint">Ett engångspass gäller ett barn, en dag och ett tidsfönster.</p>${passRows}<form class="form-stack" data-form="pickup-pass" data-child-id="${esc(child.id)}"><h3>Skapa hämtpass</h3>${field("Datum", "pickup_date", todayIso(), { type: "date", required: true, min: todayIso(), max: maxDate })}<div class="form-grid">${field("Från", "window_start", "14:00", { type: "time", required: true })}${field("Till", "window_end", "17:00", { type: "time", required: true })}</div><div class="form-grid">${field("Hämtas av", "person_name", "", { required: true, maxlength: "80" })}${field("Relation", "person_relation", "", { required: true, maxlength: "80", placeholder: "Till exempel mormor" })}</div>${field("Telefon, valfritt", "person_phone", "", { type: "tel", maxlength: "40" })}<button class="secondary" type="submit">Skapa pass</button></form></div></details>
     ${renderPermanentPassSection(child)}
   </section>`;
@@ -4336,7 +4338,7 @@ function renderHomeUpdates(child) {
     cards.push(`<button type="button" class="home-update-card has-event" data-action="navigate" data-view="events"><span class="menu-icon-badge">${navIcon("event")}</span><span class="home-update-copy"><small>${esc(formatTimestamp(event.starts_at))}</small><strong>${esc(event.title)}</strong>${event.location ? `<span>${esc(event.location)}</span>` : ""}</span>${navIcon("chevron")}</button>`);
   }
   if (!cards.length) return "";
-  return `<section class="home-updates"><div class="home-section-head"><h2>Nytt från avdelningen</h2><button class="link" type="button" data-action="navigate" data-view="messages">Visa allt</button></div><div>${cards.join("")}</div></section>`;
+  return `<section class="home-updates"><div class="home-section-head"><h2>Nytt från avdelningen</h2><button class="link" type="button" data-action="navigate" data-view="messages" data-section="anslagstavla">Visa allt</button></div><div>${cards.join("")}</div></section>`;
 }
 
 function renderTodaySubjects(child) {
@@ -4804,7 +4806,7 @@ function renderChildHealth(child) {
 
 function renderChildContacts(child) {
   const contacts = contactsFor(child.id);
-  return `<section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2><p class="form-hint">Ändra namn, relation, telefon, om personen får hämta och om kontakten är primär. Ta bort frågar en gång till innan kontakten försvinner. Hämtpersoner, hämtpass och veckoschema finns under Schema.</p><button class="secondary" type="button" data-action="navigate" data-view="pickup">Öppna Schema</button>
+  return `<section id="child-contacts" class="card child-step"><p class="kicker">Steg 3 av 4</p><h2>Kontaktpersoner</h2><p class="form-hint">Ändra namn, relation, telefon, om personen får hämta och om kontakten är primär. Ta bort frågar en gång till innan kontakten försvinner. Lämnare, hämtare, hämtpass och veckoschema finns under Schema.</p><button class="secondary" type="button" data-action="navigate" data-view="pickup">Öppna Schema</button>
       ${renderPickupContactPhotos(child)}
       <div class="contact-editors">${contacts.map((contact) => renderContactEditor(child, contact)).join("")}${renderContactEditor(child)}</div>
     </section>`;
@@ -6374,7 +6376,7 @@ function moreDestinations(role) {
 }
 
 function renderMenuGroup(label, items) {
-  return `<section class="menu-section"><h2 class="menu-label">${esc(label)}</h2><div class="menu-icon-grid">${items.map(([view, title, status, icon = "more", section = "", scrollTarget = ""]) => `<button type="button" class="menu-icon-tile" data-action="navigate" data-view="${esc(view)}" ${section ? `data-section="${esc(section)}"` : ""} ${scrollTarget ? `data-target="${esc(scrollTarget)}"` : ""}><span class="menu-icon-badge">${navIcon(icon)}</span><span class="menu-row-title">${esc(title)}</span>${status ? `<span class="menu-row-status">${esc(status)}</span>` : ""}</button>`).join("")}</div></section>`;
+  return `<section class="menu-section"><h2 class="menu-label">${esc(label)}</h2><div class="menu-group">${items.map(([view, title, status, icon = "more", section = "", scrollTarget = ""]) => `<button type="button" class="menu-row" data-action="navigate" data-view="${esc(view)}" ${section ? `data-section="${esc(section)}"` : ""} ${scrollTarget ? `data-target="${esc(scrollTarget)}"` : ""}><span class="menu-icon-badge">${navIcon(icon)}</span><span class="menu-row-copy"><span class="menu-row-title">${esc(title)}</span>${status ? `<span class="menu-row-status">${esc(status)}</span>` : ""}</span><span class="menu-chevron">${navIcon("chevron")}</span></button>`).join("")}</div></section>`;
 }
 
 function renderMore() {
@@ -6391,6 +6393,7 @@ function renderMore() {
     ...(featureEnabled(child, "classlist") ? [["classlist", isSchoolChild(child) ? "Klasslista" : "Avdelningen", "", "people"]] : []),
   ];
   const parentSchoolItems = [
+    ["messages", "Anslagstavlan", state.posts.length ? `${state.posts.length} ${state.posts.length === 1 ? "inlägg" : "inlägg"}` : "Inga inlägg ännu", "messages", "anslagstavla"],
     ...(featureEnabled(child, "important") ? [["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"]] : []),
     ...(featureEnabled(child, "events") ? [["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"]] : []),
     ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"],
@@ -6400,7 +6403,7 @@ function renderMore() {
     : role === "staff"
       ? [["Arbete", [["people", "Barn", "", "child"], ["events", "Händelser och OSA", eventCount ? String(eventCount) : "", "event"], ["banners", "Viktig information", bannerCount ? String(bannerCount) : "", "banner"], ["lost", "Borttappat", openLost ? String(openLost) : "", "lost"], ["incidents", "Avvikelser", incidentHubStatus(), "info"]]], ["Konto", [["feedback", "Ge feedback", "Till utvecklaren", "feedback"], ["account", "Konto", state.profile.email, "account"]]]]
       : [["Barnet", parentChildItems], [isSchoolChild(child) ? "Skolan" : "Förskolan", parentSchoolItems], ["Konto", [["feedback", "Ge feedback", "Till utvecklaren", "feedback"], ["account", "Konto", state.profile.email, "account"]]]];
-  return `${noticeHtml()}<h1 class="h1">Mer</h1><p class="sub">Välj vad du vill göra.</p>${groups.map(([label, items]) => renderMenuGroup(label, items)).join("")}<button class="link menu-logout" type="button" data-action="logout">Logga ut</button>`;
+  return `${noticeHtml()}<section class="more-page"><header class="more-heading"><div><h1 class="h1">Mer</h1><p class="sub">Allt om barnet, förskolan och ditt konto.</p></div><div class="more-assistant-slot" data-more-assistant-slot></div></header><div class="more-groups">${groups.map(([label, items]) => renderMenuGroup(label, items)).join("")}</div><button class="link menu-logout" type="button" data-action="logout">Logga ut</button></section>`;
 }
 
 function renderNav() {
@@ -7546,6 +7549,20 @@ function openDailyPlan() {
   });
 }
 
+function openSickReport() {
+  state.pickupEditor = null;
+  showView("home");
+  requestAnimationFrame(() => {
+    const form = document.querySelector('[data-form="parent-attendance"]');
+    const sick = form?.querySelector('input[name="status"][value="absent_sick"]');
+    if (!sick) return;
+    sick.checked = true;
+    sick.dispatchEvent(new Event("change", { bubbles: true }));
+    openDailyPlan();
+    requestAnimationFrame(() => form.elements.absence_note?.focus({ preventScroll: true }));
+  });
+}
+
 document.body.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
@@ -7830,6 +7847,10 @@ document.body.addEventListener("click", (event) => {
       await rpc("clear_meal_photo", { target_preschool_id: preschoolId, served: iso });
       await loadMeals();
     }, "Bilden är borttagen.");
+    return;
+  }
+  if (action === "report-sick") {
+    if (target.dataset.date === todayIso()) openSickReport();
     return;
   }
   if (action === "open-daily-plan") {
